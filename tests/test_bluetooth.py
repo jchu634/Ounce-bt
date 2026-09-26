@@ -40,6 +40,8 @@ def test_startup_pairing_requires_ui_action_unless_headless(monkeypatch, headles
             await asyncio.Future()
 
         monkeypatch.setattr(application, "setup_logging", lambda: None)
+        monkeypatch.setattr(application, "missing_firmware", lambda _: None)
+        monkeypatch.setattr(application, "prepare_bluetooth", lambda *_: None)
         monkeypatch.setattr(application, "serve_web", serve)
         monkeypatch.setattr(
             application, "open_transport", AsyncMock(return_value=transport())
@@ -52,6 +54,7 @@ def test_startup_pairing_requires_ui_action_unless_headless(monkeypatch, headles
             "load",
             lambda _: Config(
                 input_specs=[],
+                bt_address="98:B6:E9:12:34:57",
                 web_host=None if headless else "127.0.0.1",
                 web_port=None if headless else 9127,
             ),

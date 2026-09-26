@@ -69,7 +69,7 @@ class Config:
 
     web_host: str | None = "127.0.0.1"
     web_port: int | None = 9127
-    bt_address: str = "98:b6:e9:12:34:57"
+    bt_address: str = ""
     transport_spec: str = "usb:0"
     device_config: str = "pro_controller.json"
     input_specs: list[str] = field(default_factory=lambda: ["controller"])

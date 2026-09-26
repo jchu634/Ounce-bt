@@ -65,6 +65,7 @@ class Fixture:
         self.command_queue: queue.Queue = queue.Queue()
         self.manager = InputManager(self.command_queue, self.macros_dir)
         self.manager.bind_loop(None)
+        monkeypatch.setattr("lib.config.config_path", lambda: tmp_path / "config.json")
         self.config_store = ConfigStore(Config(transport_spec="usb:0"))
         self.manager.set_controller_service(
             StubControllerService(

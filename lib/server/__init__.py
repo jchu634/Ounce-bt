@@ -31,6 +31,7 @@ import logging
 from pathlib import Path
 
 from starlette.applications import Starlette
+from starlette.background import BackgroundTask
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -78,7 +79,6 @@ def _error(message: str, detail: str | None = None, status: int = 400) -> JSONRe
     if detail is not None:
         body["detail"] = detail
     return JSONResponse(body, status_code=status)
-
 
 
 async def macro_ws_endpoint(websocket: WebSocket) -> None:
@@ -214,7 +214,6 @@ async def _dispatch_ws(text: str, websocket: WebSocket, manager: InputManager) -
         return
 
 
-
 async def bluetooth_control(request: Request) -> Response:
     service: BluetoothService = request.app.state.bluetooth
     try:
@@ -322,9 +321,7 @@ async def macro_delete(request: Request) -> Response:
     name = request.path_params["name"]
     running = manager.status().get("macro") or {}
     if running.get("name") == name:
-        return _error(
-            f"macro '{name}' is currently running", status=409
-        )
+        return _error(f"macro '{name}' is currently running", status=409)
     try:
         store.delete(name)
     except UnsafeNameError as e:
@@ -333,7 +330,6 @@ async def macro_delete(request: Request) -> Response:
         return _error(str(e), status=404)
     logger.info(f"Deleted macro '{name}'")
     return JSONResponse({"name": name, "deleted": True})
-
 
 
 async def controllers_get(request: Request) -> Response:
@@ -374,14 +370,12 @@ async def controller_select(request: Request) -> Response:
     return JSONResponse(payload)
 
 
-
 async def presets_list(request: Request) -> Response:
     store: ConfigStore = request.app.state.config_store
     manager: InputManager = request.app.state.manager
     active = manager.current_preset_name or store.config.preset
     infos = [
-        {**info, "active": info["filename"] == active}
-        for info in list_preset_infos()
+        {**info, "active": info["filename"] == active} for info in list_preset_infos()
     ]
     return JSONResponse({"presets": infos, "active": active})
 
@@ -441,10 +435,7 @@ async def preset_delete(request: Request) -> Response:
             f"'{name}' is a built-in preset and cannot be deleted",
             status=403,
         )
-    if (
-        store.config.preset == name
-        or name in store.config.controller_presets.values()
-    ):
+    if store.config.preset == name or name in store.config.controller_presets.values():
         return _error(
             f"preset '{name}' is active or assigned to a controller",
             status=409,
@@ -489,7 +480,6 @@ async def preset_activate(request: Request) -> Response:
     return JSONResponse(payload)
 
 
-
 async def config_get(request: Request) -> Response:
     store: ConfigStore = request.app.state.config_store
     return JSONResponse(store.snapshot())
@@ -505,10 +495,7 @@ async def config_patch(request: Request) -> Response:
     if not isinstance(body, dict):
         return _error("expected a JSON object")
     requested_preset = body.get("preset")
-    if (
-        requested_preset is not None
-        and requested_preset != manager.current_preset_name
-    ):
+    if requested_preset is not None and requested_preset != manager.current_preset_name:
         # Apply first: the persisted config must never claim a preset that
         # the runtime rejected or could not load.
         try:
@@ -561,7 +548,6 @@ class SPAStaticFiles(StaticFiles):
             raise
 
 
-
 async def _frontend_not_built(request: Request) -> Response:
     return JSONResponse(
         {
@@ -572,12 +558,36 @@ async def _frontend_not_built(request: Request) -> Response:
     )
 
 
+async def startup_status(request: Request) -> JSONResponse:
+    firmware = request.app.state.missing_firmware
+    return JSONResponse(
+        {"kind": "missing_firmware", "filename": firmware}
+        if firmware
+        else {"kind": "ready"}
+    )
+
+
+async def close_application(request: Request) -> JSONResponse:
+    event = request.app.state.shutdown_event
+    if event is None:
+        return _error("Application shutdown is unavailable", status=409)
+    # A JSON content type prevents cross-origin HTML forms from closing the app.
+    if request.headers.get("content-type", "").split(";", 1)[0] != "application/json":
+        return _error("Expected application/json", status=415)
+    async def request_shutdown():
+        event.set()
+
+    return JSONResponse({"closing": True}, background=BackgroundTask(request_shutdown))
+
+
 def build_app(
     manager: InputManager,
     config_store: ConfigStore,
     frontend_dist: Path,
     macro_store: JsonDocStore | None = None,
     bluetooth: BluetoothService | None = None,
+    missing_firmware: str | None = None,
+    shutdown_event: asyncio.Event | None = None,
 ) -> Starlette:
     """Construct the Starlette application.
 
@@ -590,7 +600,13 @@ def build_app(
         macro_store = JsonDocStore(manager.macros_dir)
 
     routes = [
-        Route("/api/bluetooth", bluetooth_control, methods=["GET", "PUT", "POST", "DELETE"]),
+        Route("/api/startup", startup_status, methods=["GET"]),
+        Route("/api/application/close", close_application, methods=["POST"]),
+        Route(
+            "/api/bluetooth",
+            bluetooth_control,
+            methods=["GET", "PUT", "POST", "DELETE"],
+        ),
         WebSocketRoute("/ws", macro_ws_endpoint),
         Route("/api/config", config_get, methods=["GET"]),
         Route("/api/config", config_patch, methods=["PATCH"]),
@@ -607,9 +623,7 @@ def build_app(
         Route("/api/presets/{name}", preset_get, methods=["GET"]),
         Route("/api/presets/{name}", preset_put, methods=["PUT"]),
         Route("/api/presets/{name}", preset_delete, methods=["DELETE"]),
-        Route(
-            "/api/presets/{name}/activate", preset_activate, methods=["POST"]
-        ),
+        Route("/api/presets/{name}/activate", preset_activate, methods=["POST"]),
     ]
 
     if frontend_dist.exists() and (frontend_dist / "index.html").exists():
@@ -633,4 +647,6 @@ def build_app(
     app.state.bluetooth = bluetooth if bluetooth is not None else BluetoothService()
     app.state.config_store = config_store
     app.state.macro_store = macro_store
+    app.state.missing_firmware = missing_firmware
+    app.state.shutdown_event = shutdown_event
     return app

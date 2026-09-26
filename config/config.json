@@ -4,7 +4,7 @@
   "controller_presets": {
     "g1": "playstation"
   },
-  "device_config": "pro_controller.json",
+  "device_config": ".\\pro_controller.json",
   "input_specs": [
     "controller"
   ],

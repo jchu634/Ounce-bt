@@ -36,6 +36,7 @@ from lib.input.presets import (
 from lib.input.state import ControllerState
 from lib.sdp_records import DEVICE_CLASS_GAMEPAD, sdp_record
 from lib.server import build_app
+from lib.startup import missing_firmware, prepare_bluetooth
 from lib.switch_protocol import ControllerProtocol
 
 HID_CONTROL_PSM = 0x0011
@@ -311,7 +312,9 @@ def make_l2cap_handler(psm, state):
     return handler
 
 
-async def serve_web(app, host: str, port: int) -> None:
+async def serve_web(
+    app, host: str, port: int, stop_event: asyncio.Event | None = None
+) -> None:
     """Run the Starlette app under uvicorn until cancelled.
 
     Shutdown is driven by task cancellation; ``should_exit`` is set on
@@ -325,11 +328,21 @@ async def serve_web(app, host: str, port: int) -> None:
         lifespan="off",
     )
     server = uvicorn.Server(config)
+
+    async def stop_when_requested():
+        await stop_event.wait()
+        server.should_exit = True
+
+    stop_task = asyncio.create_task(stop_when_requested()) if stop_event else None
     try:
         await server.serve()
     except asyncio.CancelledError:
         server.should_exit = True
         raise
+    finally:
+        if stop_task:
+            stop_task.cancel()
+            await asyncio.gather(stop_task, return_exceptions=True)
 
 
 async def main():
@@ -433,6 +446,28 @@ async def main():
         macro_rate_hz=config.macro_rate_hz,
     )
     manager.bind_loop(asyncio.get_running_loop())
+
+    firmware = missing_firmware(project_root)
+    if firmware:
+        message = f"Missing firmware: {project_root / firmware}. Firmware is not distributed with this application."
+        logger.error(message)
+        if not config.web_enabled:
+            raise SystemExit(message)
+        stop_event = asyncio.Event()
+        app = build_app(
+            manager,
+            config_store,
+            project_root / "frontend" / "dist",
+            missing_firmware=firmware,
+            shutdown_event=stop_event,
+        )
+        try:
+            await serve_web(app, config.web_host, config.web_port, stop_event)
+        finally:
+            manager.shutdown()
+        return
+
+    prepare_bluetooth(config, project_root)
 
     # Load the configured preset as the initial fallback. Once pygame selects
     # a controller, its saved GUID mapping or detected controller type replaces
