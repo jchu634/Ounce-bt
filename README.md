@@ -2,39 +2,30 @@
 
 Nintendo Switch Pro Controller emulation using the [Bumble](https://github.com/nickoala/bumble) Bluetooth framework, with a Starlette-served web UI and WebSocket for live macro control.
 
-### Quick start
+### Development Setup
+
+#### Frontend
+
+```bash
+
+cd frontend
+
+# Install deps
+pnpm install
+
+# Run frontend
+pnpm run dev
+```
+
+#### Backend
 
 ```bash
 # Install Python deps
 uv sync
 
-# Build the frontend (optional -- only needed for the web UI)
-cd frontend && pnpm install && pnpm build && cd ..
-
-# Pair with the Switch
-uv run main.py pro_controller.json usb:0 --input controller:0
+# Run Backend
+uv run main.py --input controller
 ```
-
-On the Switch: **Controllers → Change Grip/Order** → select "Pro Controller".
-
-The home page's **Switch connection** panel has **Start pairing** and
-**Stop pairing** buttons. Bluetooth starts idle. Click **Start pairing**
-to make the controller discoverable. Pairing stops after the controller
-handshake completes. With `--no-web`, pairing still starts automatically.
-Stopping pairing cancels an
-unfinished connection and leaves an established session running.
-
-To reconnect, select a saved address under **Paired Switch** and click
-**Reconnect** with the console awake and in range. Saved devices come from
-Bumble's Bluetooth key store for the current controller address. Keep the
-same controller address and key store across restarts. Connection errors
-appear in the panel so you can retry.
-
-The connection panel sits above the capture input button in the sidebar.
-**Disconnect** closes the current connection and keeps the saved pairing.
-**Delete pairing** removes the selected Switch's saved Bluetooth keys from
-this computer, disconnecting that Switch first if active. You must pair
-again before reconnecting it. Other saved devices and app settings remain.
 
 ### Command-line interface
 
@@ -51,7 +42,7 @@ All positionals are optional; any value may instead come from the config store.
 | `bt_address`      | `98:b6:e9:12:34:57`   | Controller Bluetooth address                                                       |
 | `--input SPEC`    | _(from config)_       | Add an input source (`controller`, `controller:<idx>`, `macro:<path>`); repeatable |
 | `--web-host HOST` | `127.0.0.1`           | Web server bind host                                                               |
-| `--web-port PORT` | `8000`                | Web server bind port                                                               |
+| `--web-port PORT` | `9127`                | Web server bind port                                                               |
 | `--no-web`        | off                   | Don't launch the web server / WebSocket                                            |
 
 CLI flags override the config store for that single run; they do **not** write back. To persist changes, use `PATCH /api/config`.
@@ -63,7 +54,7 @@ A JSON file at `%APPDATA%\ounce-bt\config.json` (or `$XDG_CONFIG_HOME/ounce-bt/c
 | Key                     | Default               | Notes                        |
 | ----------------------- | --------------------- | ---------------------------- |
 | `web_host`              | `127.0.0.1`           | Web server bind host         |
-| `web_port`              | `8000`                | Web server bind port         |
+| `web_port`              | `9127`                | Web server bind port         |
 | `bt_address`            | `98:b6:e9:12:34:57`   | Controller Bluetooth address |
 | `transport_spec`        | _(none)_              | e.g. `usb:0`                 |
 | `device_config`         | `pro_controller.json` | Bumble device config path    |
@@ -71,36 +62,6 @@ A JSON file at `%APPDATA%\ounce-bt\config.json` (or `$XDG_CONFIG_HOME/ounce-bt/c
 | `last_camera_device_id` | `""`                  | Set by the frontend          |
 | `tick_rate_hz`          | `132`                 | Main controller loop rate    |
 | `macro_rate_hz`         | `120`                 | Macro player enqueue rate    |
-
-### Web server
-
-The Starlette app runs on the same asyncio loop as the controller mainloop and shares the input command queue. Routes:
-
-| Route               | Method | Purpose                                                        |
-| ------------------- | ------ | -------------------------------------------------------------- |
-| `/`                 | GET    | Serves the built frontend from `frontend/dist/` (SPA fallback) |
-| `/ws`               | WS     | Macro command channel (see below)                              |
-| `/api/config`       | GET    | Return current config                                          |
-| `/api/bluetooth`    | GET    | Radio, pairing, connection status and saved peer addresses     |
-| `/api/bluetooth`    | PUT    | Start/stop pairing with `{"pairing": true/false}`              |
-| `/api/bluetooth`    | POST   | Reconnect a saved bond with `{"address": "..."}`               |
-| `/api/bluetooth`    | POST   | Disconnect and stop pairing with `{"action": "disconnect"}`    |
-| `/api/bluetooth`    | DELETE | Delete the selected saved pairing with `{"address": "..."}`    |
-| `/api/config`       | PATCH  | Merge-update config (persists to disk)                         |
-| `/api/control-mode` | GET    | `{"mode": "manual"\|"macro", "macro": {...}\|null}`            |
-| `/api/control-mode` | PUT    | Set mode; flipping to `manual` cancels any running macro       |
-| `/api/macros`       | GET    | List macro file names under `macros/`                          |
-
-If `frontend/dist/` does not exist, the server logs a warning and serves the API only.
-
-### Control modes
-
-The `InputManager` enforces a single active input mode at a time:
-
-- **`manual`** — physical gamepad (pygame) threads run and WebSocket `event`/`state` frames are accepted; no macro may be active.
-- **`macro`** — physical gamepad threads are paused and WebSocket `event`/`state` frames are refused with an error; exactly one macro plays.
-
-Mode transitions happen automatically: `macro.start` flips to `macro`; `macro.cancel`, natural macro end, or `PUT /api/control-mode {"mode":"manual"}` flips back to `manual`.
 
 ### WebSocket protocol
 
@@ -170,7 +131,7 @@ JSON files under `macros/`. Schema:
 
 ```bash
 cd frontend
-pnpm dev    # http://localhost:5173 -- proxies /ws and /api to :8000
+pnpm dev    # http://localhost:5173 -- proxies /ws and /api to :9127
 pnpm build  # emits frontend/dist/ which Starlette serves in prod
 ```
 

@@ -51,7 +51,7 @@ class Config:
     automatically when the on-disk file is missing keys."""
 
     web_host: str = "127.0.0.1"
-    web_port: int = 8000
+    web_port: int = 9127
     bt_address: str = "98:b6:e9:12:34:57"
     transport_spec: str | None = None
     device_config: str = "pro_controller.json"

@@ -362,7 +362,7 @@ async def main():
         "--web-port",
         type=int,
         default=None,
-        help="web server bind port (default: from config, or 8000)",
+        help="web server bind port (default: from config, or 9127)",
     )
     parser.add_argument(
         "--no-web",
