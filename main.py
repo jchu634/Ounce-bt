@@ -2,21 +2,28 @@ import argparse
 import asyncio
 import logging
 import queue
-from pathlib import Path
 from time import perf_counter
 
 import bumble.logging
 import uvicorn
 from bumble.device import Device
 from bumble.hci import Address, HCI_Write_Default_Link_Policy_Settings_Command
+from bumble.keys import JsonKeyStore
 from bumble.l2cap import ClassicChannelSpec
 from bumble.pairing import PairingConfig, PairingDelegate
 from bumble.transport import open_transport
 
 from lib.bluetooth import BluetoothService
-from lib.config import Config, ConfigStore, config_path
+from lib.config import (
+    Config,
+    ConfigStore,
+    application_dir,
+    config_path,
+    resolve_config_file,
+)
 from lib.controller import ControllerTypes
 from lib.input import NEUTRAL, apply_to_protocol, parse_rumble
+from lib.input import presets as presets_module
 from lib.input.controller_service import ControllerService
 from lib.input.macro_source import MacroPlayerThread, load_macro
 from lib.input.manager import InputManager
@@ -39,6 +46,7 @@ logger = logging.getLogger("switch_pair")
 
 
 def setup_logging():
+    bumble.logging.setup_basic_logging("info")
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
 
@@ -365,9 +373,9 @@ async def main():
         help="web server bind port (default: from config, or 9127)",
     )
     parser.add_argument(
-        "--no-web",
+        "--nolog",
         action="store_true",
-        help="do not launch the web server / WebSocket",
+        help="disable logging for this run",
     )
     parser.add_argument(
         "--preset",
@@ -377,12 +385,6 @@ async def main():
         "(default: from config, or xbox)",
     )
     args = parser.parse_args()
-
-    setup_logging()
-
-    logger.info("=" * 60)
-    logger.info("Pro Controller (Bumble) - Switch pairing")
-    logger.info("=" * 60)
 
     # Load persistent config (under %APPDATA%), override with CLI flags.
     # CLI flags are session-only and do not write back; use the
@@ -404,6 +406,10 @@ async def main():
         overrides["preset"] = args.preset
 
     config = Config.load(overrides or None)
+    if config.nolog or args.nolog:
+        logging.disable(logging.CRITICAL)
+    else:
+        setup_logging()
     config_store = ConfigStore(config)
     logger.info(f"Config path: {config_path()}")
     logger.info(f"Config: {config_store.snapshot()}")
@@ -418,8 +424,9 @@ async def main():
     # the asyncio main loop is the consumer. The InputManager arbitrates
     # between physical / WebSocket input and macro playback.
     command_queue: queue.Queue[ControllerState] = queue.Queue()
-    project_root = Path(__file__).resolve().parent
-    macros_dir = project_root / "macros"
+    project_root = application_dir()
+    macros_dir = config.resolve_folder(config.macros_dir)
+    presets_module.PRESETS_DIR = config.resolve_folder(config.presets_dir)
     manager = InputManager(
         command_queue,
         macros_dir,
@@ -480,7 +487,7 @@ async def main():
     # WS endpoint can submit states directly to ``command_queue``.
     bluetooth = BluetoothService()
     web_task: asyncio.Task | None = None
-    if not args.no_web:
+    if config.web_enabled:
         frontend_dist = project_root / "frontend" / "dist"
         app = build_app(manager, config_store, frontend_dist, bluetooth=bluetooth)
         web_task = asyncio.create_task(serve_web(app, config.web_host, config.web_port))
@@ -489,20 +496,29 @@ async def main():
             f"(ws://{config.web_host}:{config.web_port}/ws)"
         )
     else:
-        logger.info("Web server disabled (--no-web)")
+        logger.info("Web server disabled (host or port is unset)")
 
     async with await open_transport(config.transport_spec) as hci_transport:
         device = Device.from_config_file_with_hci(
-            config.device_config, hci_transport.source, hci_transport.sink
+            str(resolve_config_file(config.device_config)),
+            hci_transport.source,
+            hci_transport.sink,
         )
 
         # Classic / HID service configuration
         device.classic_enabled = True
         device.public_address = Address(config.bt_address)
+        if config.pairing_dir:
+            pairing_dir = config.resolve_folder(config.pairing_dir)
+            filename = str(device.public_address).lower().replace(":", "-") + ".json"
+            device.keystore = JsonKeyStore(
+                namespace=str(device.public_address),
+                filename=str(pairing_dir / filename),
+            )
         device.class_of_device = DEVICE_CLASS_GAMEPAD
         # Headless mode has no pairing button. Web sessions start idle.
-        device.discoverable = args.no_web
-        device.connectable = args.no_web
+        device.discoverable = not config.web_enabled
+        device.connectable = not config.web_enabled
         device.pairing_config_factory = lambda _: PairingConfig(
             sc=True,
             mitm=False,
@@ -538,10 +554,12 @@ async def main():
         bluetooth.attach(device, state, make_l2cap_handler)
 
         logger.info(f"Powered on. address={device.public_address} name={device.name!r}")
-        if args.no_web:
+        if not config.web_enabled:
             logger.info("Advertising as Pro Controller. Waiting for a Switch...")
         else:
-            logger.info("Bluetooth ready. Use Start pairing or Reconnect in the web UI.")
+            logger.info(
+                "Bluetooth ready. Use Start pairing or Reconnect in the web UI."
+            )
 
         # Start input sources now that the radio is up. They are daemon
         # threads; they keep producing states whether or not a session
@@ -596,7 +614,7 @@ async def main():
                     ):
                         continue
                     bluetooth.connected = True
-                    if not args.no_web:
+                    if config.web_enabled:
                         await bluetooth.set_pairing(False)
                     active_preset = manager.current_preset or preset
                     await run_mainloop(
@@ -647,5 +665,4 @@ async def run_until_disconnected(awaitable, state):
 
 
 if __name__ == "__main__":
-    bumble.logging.setup_basic_logging("info")
     asyncio.run(main())

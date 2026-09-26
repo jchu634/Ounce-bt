@@ -1,0 +1,22 @@
+{
+  "bt_address": "",
+  "controller_guid": "",
+  "controller_presets": {
+    "g1": "playstation"
+  },
+  "device_config": "pro_controller.json",
+  "input_specs": [
+    "controller"
+  ],
+  "last_camera_device_id": "",
+  "macro_rate_hz": 120,
+  "macros_dir": "macros",
+  "nolog": false,
+  "pairing_dir": null,
+  "preset": "playstation",
+  "presets_dir": "presets",
+  "tick_rate_hz": 132,
+  "transport_spec": "usb:0",
+  "web_host": "127.0.0.1",
+  "web_port": 9127
+}
