@@ -2,8 +2,6 @@
 
 import os
 import secrets
-import shutil
-import tempfile
 from pathlib import Path
 
 from lib.config import Config
@@ -11,21 +9,31 @@ from lib.config import Config
 FIRMWARE_NAME = "rtl8761bu_fw.bin"
 CONFIG_NAME = "rtl8761bu_config.bin"
 CONFIG_HEADER = bytes([0x55, 0xAB, 0x23, 0x87, 0x09, 0x00, 0x30, 0x00, 0x06])
-_firmware_only_dir: tempfile.TemporaryDirectory | None = None
+
+def _address_offset(contents: bytes) -> int:
+    """Find the six-byte BD_ADDR entry in a Realtek config binary."""
+    if len(contents) < 6 or contents[:4] != CONFIG_HEADER[:4]:
+        raise ValueError(f"{CONFIG_NAME} has an invalid header")
+    if int.from_bytes(contents[4:6], "little") != len(contents) - 6:
+        raise ValueError(f"{CONFIG_NAME} has an invalid length")
+    offset = 6
+    while offset + 3 <= len(contents):
+        entry_type = int.from_bytes(contents[offset : offset + 2], "little")
+        size = contents[offset + 2]
+        offset += 3
+        if offset + size > len(contents):
+            break
+        if entry_type == 0x0030 and size == 6:
+            return offset
+        offset += size
+    raise ValueError(f"{CONFIG_NAME} has no six-byte Bluetooth address entry")
 
 
 def prepare_bluetooth(config: Config, root: Path) -> None:
     """Keep the saved identity and Realtek address override in sync."""
-    global _firmware_only_dir
-    if config.debug_use_firmware_bt_address:
-        # Bumble looks for firmware and its optional address config in the same
-        # directory. Isolate the firmware so an old config cannot override it.
-        if _firmware_only_dir is not None:
-            _firmware_only_dir.cleanup()
-        _firmware_only_dir = tempfile.TemporaryDirectory(prefix="ounce-bt-firmware-")
-        shutil.copyfile(root / FIRMWARE_NAME, Path(_firmware_only_dir.name) / FIRMWARE_NAME)
-        os.environ["BUMBLE_RTK_FIRMWARE_DIR"] = _firmware_only_dir.name
-        return
+    path = root / CONFIG_NAME
+    contents = path.read_bytes()
+    address_offset = _address_offset(contents)
     generated = not config.bt_address or not config.bt_address.strip()
     address = (
         "98:B6:E9:" + ":".join(f"{b:02X}" for b in secrets.token_bytes(3))
@@ -36,11 +44,10 @@ def prepare_bluetooth(config: Config, root: Path) -> None:
     if len(parts) != 6 or any(len(part) != 2 for part in parts):
         raise ValueError("bt_address must contain six colon-separated hex bytes")
     mac = bytes(int(part, 16) for part in parts)
-    path = root / CONFIG_NAME
-    contents = CONFIG_HEADER + mac[::-1]
-    if not path.is_file() or path.read_bytes() != contents:
+    updated = contents[:address_offset] + mac[::-1] + contents[address_offset + 6 :]
+    if updated != contents:
         temporary = path.with_suffix(".bin.tmp")
-        temporary.write_bytes(contents)
+        temporary.write_bytes(updated)
         temporary.replace(path)
     if generated:
         config.bt_address = address
@@ -50,5 +57,8 @@ def prepare_bluetooth(config: Config, root: Path) -> None:
 
 
 def missing_firmware(root: Path) -> str | None:
-    path = root / FIRMWARE_NAME
-    return None if path.is_file() and path.stat().st_size else FIRMWARE_NAME
+    for name in (FIRMWARE_NAME, CONFIG_NAME):
+        path = root / name
+        if not path.is_file() or not path.stat().st_size:
+            return name
+    return None

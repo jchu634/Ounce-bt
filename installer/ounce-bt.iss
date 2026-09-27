@@ -26,6 +26,7 @@ CloseApplications=yes
 [Files]
 Source: "{#BuildDir}\*"; DestDir: "{app}"; Excludes: "config,config.json,pro_controller.json,macros,rtl8761bu_fw.bin,rtl8761bu_config.bin"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{code:FirmwareSource}"; DestDir: "{app}"; DestName: "rtl8761bu_fw.bin"; Flags: external ignoreversion skipifsourcedoesntexist uninsneveruninstall; Check: HasFirmware
+Source: "{code:ConfigBinarySource}"; DestDir: "{app}"; DestName: "rtl8761bu_config.bin"; Flags: external ignoreversion skipifsourcedoesntexist uninsneveruninstall; Check: HasConfigBinary
 
 [Icons]
 Name: "{autoprograms}\Ounce-bt"; Filename: "{app}\Ounce-bt.exe"; WorkingDir: "{app}"
@@ -69,10 +70,22 @@ begin
   FoldersPage.Values[0] := ExpandConstant('{userdocs}\Ounce-bt\presets');
   FoldersPage.Values[1] := ExpandConstant('{userdocs}\Ounce-bt\macros');
 
-  FirmwarePage := CreateInputFilePage(FoldersPage.ID, 'Bluetooth firmware',
-    'Optionally supply your own Realtek RTL8761BU firmware.',
-    'Select rtl8761bu_fw.bin, or leave this blank to add it to the application folder later. Firmware is not included in this installer.');
-  FirmwarePage.Add('Firmware file:', 'Firmware (*.bin)|*.bin|All files (*.*)|*.*', '.bin');
+  FirmwarePage := CreateInputFilePage(FoldersPage.ID, 'Bluetooth files',
+    'Supply the Realtek RTL8761BU firmware and config binary.',
+    'Select both files. Existing files in the application folder are kept when upgrading. Neither file is included in this installer.');
+  FirmwarePage.Add('rtl8761bu_fw.bin:', 'Binary files (*.bin)|*.bin|All files (*.*)|*.*', '.bin');
+  FirmwarePage.Add('rtl8761bu_config.bin:', 'Binary files (*.bin)|*.bin|All files (*.*)|*.*', '.bin');
+end;
+
+function NonemptyFile(Path: String): Boolean;
+var
+  FileInfo: TFindRec;
+begin
+  Result := FileExists(Path) and FindFirst(Path, FileInfo);
+  if Result then begin
+    Result := (FileInfo.SizeHigh <> 0) or (FileInfo.SizeLow <> 0);
+    FindClose(FileInfo);
+  end;
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
@@ -81,24 +94,26 @@ begin
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
-var
-  FirmwareInfo: TFindRec;
 begin
   Result := True;
   if CurPageID = FoldersPage.ID then begin
     Result := (Trim(FoldersPage.Values[0]) <> '') and (Trim(FoldersPage.Values[1]) <> '');
     if not Result then MsgBox('Choose both a presets folder and a macros folder.', mbError, MB_OK);
   end;
-  if (CurPageID = FirmwarePage.ID) and (FirmwarePage.Values[0] <> '') then begin
-    Result := FileExists(FirmwarePage.Values[0]);
-    if Result then begin
-      Result := FindFirst(FirmwarePage.Values[0], FirmwareInfo);
-      if Result then begin
-        Result := (FirmwareInfo.SizeHigh <> 0) or (FirmwareInfo.SizeLow <> 0);
-        FindClose(FirmwareInfo);
-      end;
+  if CurPageID = FirmwarePage.ID then begin
+    if FirmwarePage.Values[0] <> '' then
+      Result := NonemptyFile(FirmwarePage.Values[0])
+    else
+      Result := NonemptyFile(ExpandConstant('{app}\rtl8761bu_fw.bin'));
+    if not Result then begin
+      MsgBox('Select a nonempty rtl8761bu_fw.bin file.', mbError, MB_OK);
+      Exit;
     end;
-    if not Result then MsgBox('Select an existing, nonempty firmware file.', mbError, MB_OK);
+    if FirmwarePage.Values[1] <> '' then
+      Result := NonemptyFile(FirmwarePage.Values[1])
+    else
+      Result := NonemptyFile(ExpandConstant('{app}\rtl8761bu_config.bin'));
+    if not Result then MsgBox('Select a nonempty rtl8761bu_config.bin file.', mbError, MB_OK);
   end;
 end;
 
@@ -110,6 +125,16 @@ end;
 function HasFirmware: Boolean;
 begin
   Result := FirmwarePage.Values[0] <> '';
+end;
+
+function ConfigBinarySource(Param: String): String;
+begin
+  Result := FirmwarePage.Values[1];
+end;
+
+function HasConfigBinary: Boolean;
+begin
+  Result := FirmwarePage.Values[1] <> '';
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

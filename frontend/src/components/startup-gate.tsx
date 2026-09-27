@@ -103,11 +103,11 @@ export function StartupGate({ children }: { children: ReactNode }) {
         <DialogHeader>
           {state.kind === "missing_firmware" ? (
             <>
-              <DialogTitle>Required firmware is missing</DialogTitle>
+              <DialogTitle>Required Bluetooth file is missing</DialogTitle>
               <DialogDescription>
-                Firmware is not distributed with Ounce-bt for licensing and legal reasons. Place your
-                separately obtained {state.filename} file in the application root folder, beside the
-                executable, then restart the application.
+                Place your separately obtained {state.filename} file in the application root folder,
+                beside the executable, then restart the application. Both rtl8761bu_fw.bin and
+                rtl8761bu_config.bin are required.
               </DialogDescription>
             </>
           ) : (

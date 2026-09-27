@@ -469,7 +469,7 @@ async def main(
 
     firmware = missing_firmware(project_root)
     if firmware:
-        message = f"Missing firmware: {project_root / firmware}. Firmware is not distributed with this application."
+        message = f"Missing required Bluetooth file: {project_root / firmware}. Bluetooth files are not distributed with this application."
         logger.error(message)
         if not config.web_enabled:
             raise SystemExit(message)
@@ -596,8 +596,7 @@ async def main(
 
         # Classic / HID service configuration
         device.classic_enabled = True
-        if not config.debug_use_firmware_bt_address:
-            device.public_address = Address(config.bt_address)
+        device.public_address = Address(config.bt_address)
         device.class_of_device = DEVICE_CLASS_GAMEPAD
         # Headless mode has no pairing button. Web sessions start idle.
         device.discoverable = not config.web_enabled
