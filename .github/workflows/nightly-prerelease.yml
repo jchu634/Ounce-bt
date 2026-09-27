@@ -1,0 +1,159 @@
+name: Nightly prerelease
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Branch, tag, or commit to build
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: nightly-prerelease
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.16.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.13"
+          enable-cache: true
+      - name: Build with Nuitka
+        run: ./scripts/build-windows.ps1
+      - name: Smoke-test executable
+        run: |
+          $app = Start-Process -FilePath (Resolve-Path build/windows/main.dist/Ounce-bt.exe) -ArgumentList '--help' -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput build/windows/smoke-stdout.log -RedirectStandardError build/windows/smoke-stderr.log
+          Get-Content build/windows/smoke-stdout.log, build/windows/smoke-stderr.log
+          if ($app.ExitCode -ne 0) { throw 'Compiled application failed to start.' }
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+      - name: Build installer
+        run: |
+          $version = uv run --no-project --python 3.14 python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read application version.' }
+          & "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe" "/DAppVersion=$version" installer/ounce-bt.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup failed.' }
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ounce-bt-windows-x64-installer
+          path: dist/*-setup.exe
+          if-no-files-found: error
+      - name: Upload standalone app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ounce-bt-windows-x64-standalone
+          path: build/windows/main.dist/
+          if-no-files-found: error
+      - name: Upload build report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuitka-report
+          path: build/windows/nuitka-report.xml
+          if-no-files-found: ignore
+
+  prerelease:
+    needs: windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: Ounce-bt-windows-x64-installer
+          path: release-assets
+      - uses: actions/download-artifact@v4
+        with:
+          name: Ounce-bt-windows-x64-standalone
+          path: release-assets/Ounce-bt-windows-x64-standalone
+      - name: Prepare nightly release metadata
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          commit="$(git rev-parse HEAD)"
+          short_sha="${commit:0:7}"
+          date="$(date -u +%Y%m%d)"
+          tag="nightly-${date}-${short_sha}"
+          previous_tag="$(git tag --list 'nightly-*' --sort=-creatordate | head -n 1 || true)"
+          if [[ -n "$previous_tag" ]]; then
+            base="${previous_tag#nightly-}"
+            base="${base%%-*}"
+            previous_date="${base:0:4}-${base:4:2}-${base:6:2}"
+            since="${previous_date}T00:00:00Z"
+            prs="$(gh pr list --state merged --base "$SOURCE_REF" --search "merged:>${previous_date}" --json number,title,url --limit 100)"
+          else
+            since="$(git log -1 --format=%cI HEAD^ 2>/dev/null || git log -1 --format=%cI HEAD)"
+            prs='[]'
+          fi
+          {
+            echo "tag=$tag"
+            echo "commit=$commit"
+            echo "since=$since"
+            echo "previous_tag=$previous_tag"
+          } >> "$GITHUB_OUTPUT"
+          printf '%s' "$prs" > /tmp/merged-prs.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          prs = json.loads(Path('/tmp/merged-prs.json').read_text())
+          if prs:
+              lines = [f"- #{pr['number']} {pr['title']} ([PR]({pr['url']}))" for pr in prs]
+          else:
+              lines = ['- No merged pull requests found for this nightly window.']
+          Path('/tmp/pr-notes.md').write_text('\n'.join(lines) + '\n')
+          PY
+      - name: Create prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NIGHTLY_TAG: ${{ steps.release.outputs.tag }}
+          COMMIT: ${{ steps.release.outputs.commit }}
+          SINCE: ${{ steps.release.outputs.since }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Nightly build"
+            echo
+            echo "Built from commit [\`${COMMIT:0:7}\`]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$COMMIT)."
+            echo "Changes since: $SINCE"
+            echo
+            echo '## Merged pull requests'
+            cat /tmp/pr-notes.md
+            echo
+            echo '> This is an automated prerelease build.'
+          } > /tmp/release-notes.md
+          gh release create "$NIGHTLY_TAG" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$COMMIT" \
+            --title "Nightly $NIGHTLY_TAG" \
+            --notes-file /tmp/release-notes.md \
+            --prerelease
