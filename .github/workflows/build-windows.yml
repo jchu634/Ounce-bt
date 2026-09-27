@@ -1,0 +1,65 @@
+name: Build Windows app
+
+on:
+  push:
+    tags: ["*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.16.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.13"
+          enable-cache: true
+      - name: Build with Nuitka
+        run: ./scripts/build-windows.ps1
+      - name: Smoke-test executable
+        run: |
+          $app = Start-Process -FilePath (Resolve-Path build/windows/main.dist/Ounce-bt.exe) -ArgumentList '--help' -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput build/windows/smoke-stdout.log -RedirectStandardError build/windows/smoke-stderr.log
+          Get-Content build/windows/smoke-stdout.log, build/windows/smoke-stderr.log
+          if ($app.ExitCode -ne 0) { throw 'Compiled application failed to start.' }
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+      - name: Build installer
+        run: |
+          $version = uv run --no-project --python 3.14 python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read application version.' }
+          & "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe" "/DAppVersion=$version" installer/ounce-bt.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup failed.' }
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ounce-bt-windows-x64-installer
+          path: dist/*-setup.exe
+          if-no-files-found: error
+      - name: Upload standalone app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ounce-bt-windows-x64-standalone
+          path: build/windows/main.dist/
+          if-no-files-found: error
+      - name: Upload build report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuitka-report
+          path: build/windows/nuitka-report.xml
+          if-no-files-found: ignore
