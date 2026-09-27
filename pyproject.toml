@@ -1,14 +1,15 @@
 [project]
 name = "ounce-bt"
-version = "0.1.0"
+version = "0.1.1"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-  "bumble @ git+https://github.com/jchu634/bumble.git@4d945ce885af58c8706286856754b37094559f83",
+  "bumble==0.0.235",
   "inputs>=0.5",
   "opencv-python>=5.0.0.93",
   "pygame-ce>=2.5.6",
+  "pywebview>=6.2.1",
   "starlette>=1.6.0",
   "uvicorn>=0.52.1",
   "websockets>=15.0.1",

@@ -2,21 +2,28 @@ import argparse
 import asyncio
 import logging
 import queue
-from pathlib import Path
 from time import perf_counter
 
 import bumble.logging
 import uvicorn
 from bumble.device import Device
 from bumble.hci import Address, HCI_Write_Default_Link_Policy_Settings_Command
+from bumble.keys import JsonKeyStore
 from bumble.l2cap import ClassicChannelSpec
 from bumble.pairing import PairingConfig, PairingDelegate
 from bumble.transport import open_transport
 
 from lib.bluetooth import BluetoothService
-from lib.config import Config, ConfigStore, config_path
+from lib.config import (
+    Config,
+    ConfigStore,
+    application_dir,
+    config_path,
+    resolve_config_file,
+)
 from lib.controller import ControllerTypes
 from lib.input import NEUTRAL, apply_to_protocol, parse_rumble
+from lib.input import presets as presets_module
 from lib.input.controller_service import ControllerService
 from lib.input.macro_source import MacroPlayerThread, load_macro
 from lib.input.manager import InputManager
@@ -29,6 +36,7 @@ from lib.input.presets import (
 from lib.input.state import ControllerState
 from lib.sdp_records import DEVICE_CLASS_GAMEPAD, sdp_record
 from lib.server import build_app
+from lib.startup import missing_firmware, prepare_bluetooth
 from lib.switch_protocol import ControllerProtocol
 
 HID_CONTROL_PSM = 0x0011
@@ -39,6 +47,7 @@ logger = logging.getLogger("switch_pair")
 
 
 def setup_logging():
+    bumble.logging.setup_basic_logging("info")
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
 
@@ -303,7 +312,9 @@ def make_l2cap_handler(psm, state):
     return handler
 
 
-async def serve_web(app, host: str, port: int) -> None:
+async def serve_web(
+    app, host: str, port: int, stop_event: asyncio.Event | None = None, ready=None
+) -> None:
     """Run the Starlette app under uvicorn until cancelled.
 
     Shutdown is driven by task cancellation; ``should_exit`` is set on
@@ -315,16 +326,38 @@ async def serve_web(app, host: str, port: int) -> None:
         port=port,
         log_level="info",
         lifespan="off",
+        timeout_graceful_shutdown=5,
     )
     server = uvicorn.Server(config)
+
+    async def stop_when_requested():
+        await stop_event.wait()
+        server.should_exit = True
+
+    async def report_ready():
+        while not server.started:
+            await asyncio.sleep(0.01)
+        ready.set()
+
+    ready_task = asyncio.create_task(report_ready()) if ready is not None else None
+    stop_task = asyncio.create_task(stop_when_requested()) if stop_event else None
+    server_task = asyncio.create_task(server.serve())
     try:
-        await server.serve()
+        await asyncio.shield(server_task)
     except asyncio.CancelledError:
         server.should_exit = True
+        await server_task
         raise
+    finally:
+        if ready_task:
+            ready_task.cancel()
+            await asyncio.gather(ready_task, return_exceptions=True)
+        if stop_task:
+            stop_task.cancel()
+            await asyncio.gather(stop_task, return_exceptions=True)
 
 
-async def main():
+def load_options():
     parser = argparse.ArgumentParser(
         description="Pro Controller (Bumble) for Nintendo Switch"
     )
@@ -362,12 +395,12 @@ async def main():
         "--web-port",
         type=int,
         default=None,
-        help="web server bind port (default: from config, or 8000)",
+        help="web server bind port (default: from config, or 9127)",
     )
     parser.add_argument(
-        "--no-web",
+        "--nolog",
         action="store_true",
-        help="do not launch the web server / WebSocket",
+        help="disable logging for this run",
     )
     parser.add_argument(
         "--preset",
@@ -377,12 +410,6 @@ async def main():
         "(default: from config, or xbox)",
     )
     args = parser.parse_args()
-
-    setup_logging()
-
-    logger.info("=" * 60)
-    logger.info("Pro Controller (Bumble) - Switch pairing")
-    logger.info("=" * 60)
 
     # Load persistent config (under %APPDATA%), override with CLI flags.
     # CLI flags are session-only and do not write back; use the
@@ -404,28 +431,66 @@ async def main():
         overrides["preset"] = args.preset
 
     config = Config.load(overrides or None)
-    config_store = ConfigStore(config)
-    logger.info(f"Config path: {config_path()}")
-    logger.info(f"Config: {config_store.snapshot()}")
-
     if not config.transport_spec:
         parser.error(
             "transport_spec is required (provide it as the second positional "
             "argument or set transport_spec in config.json)"
         )
 
+    return config, args
+
+
+async def main(
+    config=None, args=None, *, ws_token=None, ready=None, shutdown_event=None
+):
+    if config is None:
+        config, args = load_options()
+    if config.nolog or args.nolog:
+        logging.disable(logging.CRITICAL)
+    else:
+        setup_logging()
+    config_store = ConfigStore(config)
+    logger.info(f"Config path: {config_path()}")
+    logger.info(f"Config: {config_store.snapshot()}")
+
     # Shared, thread-safe command queue. Input-source threads are producers;
     # the asyncio main loop is the consumer. The InputManager arbitrates
     # between physical / WebSocket input and macro playback.
     command_queue: queue.Queue[ControllerState] = queue.Queue()
-    project_root = Path(__file__).resolve().parent
-    macros_dir = project_root / "macros"
+    project_root = application_dir()
+    macros_dir = config.resolve_folder(config.macros_dir)
+    presets_module.PRESETS_DIR = config.resolve_folder(config.presets_dir)
     manager = InputManager(
         command_queue,
         macros_dir,
         macro_rate_hz=config.macro_rate_hz,
     )
     manager.bind_loop(asyncio.get_running_loop())
+
+    firmware = missing_firmware(project_root)
+    if firmware:
+        message = f"Missing required Bluetooth file: {project_root / firmware}. Bluetooth files are not distributed with this application."
+        logger.error(message)
+        if not config.web_enabled:
+            raise SystemExit(message)
+        stop_event = shutdown_event or asyncio.Event()
+        app = build_app(
+            manager,
+            config_store,
+            project_root / "frontend" / "dist",
+            missing_firmware=firmware,
+            shutdown_event=stop_event,
+            ws_token=ws_token,
+        )
+        try:
+            await serve_web(
+                app, config.web_host, config.web_port, stop_event, ready=ready
+            )
+        finally:
+            manager.shutdown()
+        return
+
+    prepare_bluetooth(config, project_root)
 
     # Load the configured preset as the initial fallback. Once pygame selects
     # a controller, its saved GUID mapping or detected controller type replaces
@@ -480,20 +545,53 @@ async def main():
     # WS endpoint can submit states directly to ``command_queue``.
     bluetooth = BluetoothService()
     web_task: asyncio.Task | None = None
-    if not args.no_web:
+    stop_event = shutdown_event or asyncio.Event()
+    app = None
+    if config.web_enabled:
         frontend_dist = project_root / "frontend" / "dist"
-        app = build_app(manager, config_store, frontend_dist, bluetooth=bluetooth)
-        web_task = asyncio.create_task(serve_web(app, config.web_host, config.web_port))
+        app = build_app(
+            manager, config_store, frontend_dist, bluetooth=bluetooth,
+            shutdown_event=stop_event, ws_token=ws_token
+        )
+        app.state.transport_pending = True
+        web_task = asyncio.create_task(
+            serve_web(app, config.web_host, config.web_port, stop_event, ready=ready)
+        )
         logger.info(
             f"Web UI: http://{config.web_host}:{config.web_port} "
             f"(ws://{config.web_host}:{config.web_port}/ws)"
         )
     else:
-        logger.info("Web server disabled (--no-web)")
+        logger.info("Web server disabled (host or port is unset)")
 
-    async with await open_transport(config.transport_spec) as hci_transport:
+    try:
+        transport = await open_transport(config.transport_spec)
+        if app is not None:
+            app.state.transport_pending = False
+    except Exception as error:
+        causes = [error]
+        while causes[-1].__cause__ is not None:
+            causes.append(causes[-1].__cause__)
+        if app is None or not any(
+            "LIBUSB_ERROR_NOT_SUPPORTED" in str(cause) for cause in causes
+        ):
+            raise
+        logger.exception("Bluetooth USB transport is not supported")
+        app.state.usb_driver_error = True
+        try:
+            await stop_event.wait()
+        finally:
+            manager.shutdown()
+            if web_task is not None:
+                web_task.cancel()
+                await asyncio.gather(web_task, return_exceptions=True)
+        return
+
+    async with transport as hci_transport:
         device = Device.from_config_file_with_hci(
-            config.device_config, hci_transport.source, hci_transport.sink
+            str(resolve_config_file(config.device_config)),
+            hci_transport.source,
+            hci_transport.sink,
         )
 
         # Classic / HID service configuration
@@ -501,8 +599,8 @@ async def main():
         device.public_address = Address(config.bt_address)
         device.class_of_device = DEVICE_CLASS_GAMEPAD
         # Headless mode has no pairing button. Web sessions start idle.
-        device.discoverable = args.no_web
-        device.connectable = args.no_web
+        device.discoverable = not config.web_enabled
+        device.connectable = not config.web_enabled
         device.pairing_config_factory = lambda _: PairingConfig(
             sc=True,
             mitm=False,
@@ -528,6 +626,13 @@ async def main():
         )
 
         await device.power_on()
+        if config.pairing_dir:
+            pairing_dir = config.resolve_folder(config.pairing_dir)
+            filename = str(device.public_address).lower().replace(":", "-") + ".json"
+            device.keystore = JsonKeyStore(
+                namespace=str(device.public_address),
+                filename=str(pairing_dir / filename),
+            )
         # Enable authentication + encryption + secure connections policy.
         await device.send_command(
             HCI_Write_Default_Link_Policy_Settings_Command(
@@ -538,10 +643,12 @@ async def main():
         bluetooth.attach(device, state, make_l2cap_handler)
 
         logger.info(f"Powered on. address={device.public_address} name={device.name!r}")
-        if args.no_web:
+        if not config.web_enabled:
             logger.info("Advertising as Pro Controller. Waiting for a Switch...")
         else:
-            logger.info("Bluetooth ready. Use Start pairing or Reconnect in the web UI.")
+            logger.info(
+                "Bluetooth ready. Use Start pairing or Reconnect in the web UI."
+            )
 
         # Start input sources now that the radio is up. They are daemon
         # threads; they keep producing states whether or not a session
@@ -581,7 +688,7 @@ async def main():
                 logger.info("Both HID channels open; starting controller session.")
                 state.hid_opened = True
                 protocol = ControllerProtocol(
-                    ControllerTypes.PRO_CONTROLLER, config.bt_address
+                    ControllerTypes.PRO_CONTROLLER, str(device.public_address)
                 )
 
                 try:
@@ -596,7 +703,7 @@ async def main():
                     ):
                         continue
                     bluetooth.connected = True
-                    if not args.no_web:
+                    if config.web_enabled:
                         await bluetooth.set_pairing(False)
                     active_preset = manager.current_preset or preset
                     await run_mainloop(
@@ -647,5 +754,7 @@ async def run_until_disconnected(awaitable, state):
 
 
 if __name__ == "__main__":
-    bumble.logging.setup_basic_logging("info")
-    asyncio.run(main())
+    from lib.desktop import run_application
+
+    config, args = load_options()
+    run_application(config, args, main)

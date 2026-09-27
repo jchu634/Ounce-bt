@@ -36,7 +36,8 @@ from lib.input.state import Button
 
 logger = logging.getLogger("switch_pair")
 
-PRESETS_DIR = Path(__file__).resolve().parents[2] / "presets"
+BUILTIN_PRESETS_DIR = Path(__file__).resolve().parents[2] / "presets"
+PRESETS_DIR = BUILTIN_PRESETS_DIR
 BUILTIN_PRESETS = frozenset({"xbox", "playstation", "switch_pro"})
 
 # SDL GUIDs store the USB vendor ID as a little-endian 16-bit value at
@@ -206,6 +207,8 @@ def read_preset_text(name: str) -> str:
     """Raw text of a preset by name (builtin or custom). Raises
     :class:`FileNotFoundError` when absent."""
     _, path = _preset_doc_path(name)
+    if name in BUILTIN_PRESETS and not path.is_file():
+        path = BUILTIN_PRESETS_DIR / f"{name}.json"
     return path.read_text(encoding="utf-8")
 
 
@@ -356,7 +359,8 @@ def list_presets() -> list[str]:
 def _resolve_preset_path(source: str | Path) -> Path:
     source = str(source).strip()
     if source in BUILTIN_PRESETS:
-        return PRESETS_DIR / f"{source}.json"
+        path = PRESETS_DIR / f"{source}.json"
+        return path if path.is_file() else BUILTIN_PRESETS_DIR / f"{source}.json"
     # Custom presets saved in the presets directory resolve by name too.
     by_name = PRESETS_DIR / f"{source}.json"
     if by_name.is_file():

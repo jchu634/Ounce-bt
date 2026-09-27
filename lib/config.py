@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import threading
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
@@ -41,8 +42,24 @@ def _config_dir() -> Path:
     return Path.home() / ".config" / APP_NAME
 
 
+def application_dir() -> Path:
+    # Nuitka onefile extracts __file__ into a temporary directory. argv[0]
+    # locates the executable and its external, writable configuration.
+    if "__compiled__" in globals() or getattr(sys, "frozen", False):
+        return Path(sys.argv[0]).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+def resolve_config_file(name: str) -> Path:
+    path = Path(name).expanduser()
+    if path.is_absolute():
+        return path
+    local = application_dir() / "config" / path
+    return local if local.is_file() else _config_dir() / path
+
+
 def config_path() -> Path:
-    return _config_dir() / "config.json"
+    return resolve_config_file("config.json")
 
 
 @dataclass
@@ -50,12 +67,18 @@ class Config:
     """Runtime configuration. Add new fields here; defaults are picked up
     automatically when the on-disk file is missing keys."""
 
-    web_host: str = "127.0.0.1"
-    web_port: int = 8000
-    bt_address: str = "98:b6:e9:12:34:57"
-    transport_spec: str | None = None
+    web_host: str | None = "127.0.0.1"
+    web_port: int | None = 9127
+    webview_enabled: bool = True
+    ws_auth_required: bool = True
+    bt_address: str = ""
+    transport_spec: str = "usb:0"
     device_config: str = "pro_controller.json"
-    input_specs: list[str] = field(default_factory=list)
+    input_specs: list[str] = field(default_factory=lambda: ["controller"])
+    macros_dir: str = "macros"
+    presets_dir: str = "presets"
+    pairing_dir: str | None = None
+    nolog: bool = False
     last_camera_device_id: str = ""
     tick_rate_hz: int = 132
     macro_rate_hz: int = 120
@@ -65,6 +88,14 @@ class Config:
 
     def __post_init__(self) -> None:
         self.controller_presets = _normalize_controller_presets(self.controller_presets)
+
+    @property
+    def web_enabled(self) -> bool:
+        return bool(self.web_host and self.web_port)
+
+    def resolve_folder(self, folder: str) -> Path:
+        path = Path(folder).expanduser()
+        return path if path.is_absolute() else application_dir() / path
 
     @classmethod
     def _valid_keys(cls) -> set[str]:
@@ -83,21 +114,30 @@ class Config:
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
-            except (json.JSONDecodeError, OSError) as e:
+                if not isinstance(data, dict):
+                    raise TypeError("config must be a JSON object")
+            except (ValueError, TypeError, OSError) as e:
                 logger.warning(f"Could not read config {path}: {e}; using defaults")
                 data = {}
         if overrides:
             data = {**data, **overrides}
         valid = cls._valid_keys()
-        filtered = {k: v for k, v in data.items() if k in valid and v is not None}
-        return cls(**filtered)
+        nullable = {"web_host", "web_port", "pairing_dir"}
+        filtered = {
+            k: v
+            for k, v in data.items()
+            if k in valid and (v is not None or k in nullable)
+        }
+        config = cls(**filtered)
+        config._path = path
+        return config
 
     def to_dict(self) -> dict:
         return asdict(self)
 
     def save(self) -> None:
         """Atomically persist current state to disk."""
-        path = config_path()
+        path = getattr(self, "_path", None) or config_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".json.tmp")
         with open(tmp, "w", encoding="utf-8") as f:

@@ -36,10 +36,12 @@ def test_startup_pairing_requires_ui_action_unless_headless(monkeypatch, headles
         async def transport():
             yield SimpleNamespace(source=None, sink=None)
 
-        async def serve(*args):
+        async def serve(*args, **kwargs):
             await asyncio.Future()
 
         monkeypatch.setattr(application, "setup_logging", lambda: None)
+        monkeypatch.setattr(application, "missing_firmware", lambda _: None)
+        monkeypatch.setattr(application, "prepare_bluetooth", lambda *_: None)
         monkeypatch.setattr(application, "serve_web", serve)
         monkeypatch.setattr(
             application, "open_transport", AsyncMock(return_value=transport())
@@ -48,11 +50,16 @@ def test_startup_pairing_requires_ui_action_unless_headless(monkeypatch, headles
             application.Device, "from_config_file_with_hci", Mock(return_value=device)
         )
         monkeypatch.setattr(
-            application.Config, "load", lambda _: Config(transport_spec="usb:0")
+            application.Config,
+            "load",
+            lambda _: Config(
+                input_specs=[],
+                bt_address="98:B6:E9:12:34:57",
+                web_host=None if headless else "127.0.0.1",
+                web_port=None if headless else 9127,
+            ),
         )
-        monkeypatch.setattr(
-            "sys.argv", ["main.py"] + (["--no-web"] if headless else [])
-        )
+        monkeypatch.setattr("sys.argv", ["main.py"])
         task = asyncio.create_task(application.main())
         try:
             await asyncio.wait_for(powered.wait(), 2)
@@ -162,8 +169,12 @@ def test_hid_close_reports_one_failure_but_manual_disconnect_does_not():
         service, _, connection = await setup_service()
         service._on_connection(connection)
         state = service.state
-        control = SimpleNamespace(state="closed", State=SimpleNamespace(OPEN="open"), on=Mock())
-        interrupt = SimpleNamespace(state="closed", State=SimpleNamespace(OPEN="open"), on=Mock())
+        control = SimpleNamespace(
+            state="closed", State=SimpleNamespace(OPEN="open"), on=Mock()
+        )
+        interrupt = SimpleNamespace(
+            state="closed", State=SimpleNamespace(OPEN="open"), on=Mock()
+        )
         make_l2cap_handler(0x11, state)(control)
         make_l2cap_handler(0x13, state)(interrupt)
 

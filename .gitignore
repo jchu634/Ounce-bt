@@ -14,3 +14,9 @@ wheels/
 
 # Macros
 **/macros/*.json
+
+# Binaries
+*.bin
+
+# Builds
+dist/

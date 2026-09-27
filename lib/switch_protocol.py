@@ -27,6 +27,8 @@ from enum import Enum
 from time import perf_counter
 from typing import ClassVar
 
+from bumble.hci import Address
+
 from lib.controller import ControllerTypes
 
 
@@ -357,15 +359,8 @@ class ControllerProtocol:
         # Unknown Byte, always 2
         self.report[19] = 0x02
 
-        # Controller Bluetooth Address
-        address = self.bt_address.strip().split(":")  # Getting from adapter
-        address_location = 20
-        for address_byte_str in address:
-            # Converting string address bytes to hex
-            # and assigning to report
-            address_byte = int(address_byte_str, 16)
-            self.report[address_location] = address_byte
-            address_location += 1
+        # Bumble appends /P to public addresses when formatting them.
+        self.report[20:26] = bytes(Address(self.bt_address))[::-1]
 
         # Unknown byte, always 1
         self.report[26] = 0x01
