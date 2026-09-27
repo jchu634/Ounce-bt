@@ -27,13 +27,18 @@ export function StartupGate({ children }: { children: ReactNode }) {
     let retry: ReturnType<typeof setTimeout> | undefined;
     async function check() {
       try {
-        const response = await fetch("/api/startup", { signal: controller.signal });
+        const response = await fetch("/api/startup", {
+          signal: controller.signal,
+        });
         if (!response.ok) throw new Error("Startup check failed");
         const body: unknown = await response.json();
         if (typeof body !== "object" || body === null || !("kind" in body)) {
           throw new Error("Invalid startup response");
         }
-        if (!("ws_auth_required" in body) || typeof body.ws_auth_required !== "boolean") {
+        if (
+          !("ws_auth_required" in body) ||
+          typeof body.ws_auth_required !== "boolean"
+        ) {
           throw new Error("Invalid startup security settings");
         }
         configureWebSocketAuth(body.ws_auth_required);
@@ -105,26 +110,37 @@ export function StartupGate({ children }: { children: ReactNode }) {
             <>
               <DialogTitle>Required Bluetooth file is missing</DialogTitle>
               <DialogDescription>
-                Place your separately obtained {state.filename} file in the application root folder,
-                beside the executable, then restart the application. Both rtl8761bu_fw.bin and
-                rtl8761bu_config.bin are required.
+                Firmware is not distributed with Ounce-bt for licensing reasons.
+                Place your separately obtained {state.filename} file in the
+                application root folder, beside the executable, then restart the
+                application. Both rtl8761bu_fw.bin and rtl8761bu_config.bin are
+                required.
               </DialogDescription>
             </>
           ) : (
             <>
               <DialogTitle>Bluetooth adapter could not start</DialogTitle>
               <DialogDescription>
-                Bumble could not open the USB Bluetooth adapter at usb:0. Configure the adapter to use
-                the WinUSB driver, then restart Ounce-bt. Error: LIBUSB_ERROR_NOT_SUPPORTED.
+                Bumble could not open the USB Bluetooth adapter at usb:0.
+                Configure the adapter to use the WinUSB driver, then restart
+                Ounce-bt. Error: LIBUSB_ERROR_NOT_SUPPORTED.
               </DialogDescription>
             </>
           )}
         </DialogHeader>
         {error && <p role="alert">{error}</p>}
-        {closed && <p role="status">The backend has stopped. You can close this window.</p>}
+        {closed && (
+          <p role="status">
+            The backend has stopped. You can close this window.
+          </p>
+        )}
         <DialogFooter>
           <Button disabled={closing} onClick={() => void closeApplication()}>
-            {closed ? "Application closed" : closing ? "Closing…" : "Close application"}
+            {closed
+              ? "Application closed"
+              : closing
+                ? "Closing…"
+                : "Close application"}
           </Button>
         </DialogFooter>
       </DialogContent>
