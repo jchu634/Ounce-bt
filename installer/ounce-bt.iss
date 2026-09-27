@@ -63,7 +63,7 @@ end;
 procedure InitializeWizard;
 begin
   FoldersPage := CreateInputDirPage(wpSelectDir, 'Presets and macros',
-    'Choose where Ounce-bt stores your files.',
+    'Optionally change where Ounce-bt stores your preset and macro files.',
     'Existing application settings are preserved when upgrading.', False, '');
   FoldersPage.Add('Presets folder:');
   FoldersPage.Add('Macros folder:');
@@ -71,8 +71,8 @@ begin
   FoldersPage.Values[1] := ExpandConstant('{userdocs}\Ounce-bt\macros');
 
   FirmwarePage := CreateInputFilePage(FoldersPage.ID, 'Bluetooth files',
-    'Supply the Realtek RTL8761BU firmware and config binary.',
-    'Select both files. Existing files in the application folder are kept when upgrading. Neither file is included in this installer.');
+    'Optionally supply the required Realtek RTL8761BU firmware and config binaries.',
+    'Skip, if you want to add them later.',
   FirmwarePage.Add('rtl8761bu_fw.bin:', 'Binary files (*.bin)|*.bin|All files (*.*)|*.*', '.bin');
   FirmwarePage.Add('rtl8761bu_config.bin:', 'Binary files (*.bin)|*.bin|All files (*.*)|*.*', '.bin');
 end;
