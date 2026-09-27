@@ -1,10 +1,27 @@
 from lib.config import Config, ConfigStore
+from scripts.regenerate_config import regenerate_config
 
 
 def test_controller_preset_guids_are_normalized():
     config = Config(controller_presets={"ABCDEF": "playstation"})
 
     assert config.controller_presets == {"abcdef": "playstation"}
+
+
+def test_regenerate_config_changes_only_bluetooth_address(tmp_path):
+    import json
+
+    path = tmp_path / "config.json"
+    path.write_text('{"bt_address":"old","preset":"playstation","custom":7}')
+
+    address = regenerate_config(path)
+
+    assert address.startswith("98:B6:E9:")
+    assert json.loads(path.read_text()) == {
+        "bt_address": address,
+        "preset": "playstation",
+        "custom": 7,
+    }
 
 
 def test_invalid_controller_preset_update_is_ignored():

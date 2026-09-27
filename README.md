@@ -78,6 +78,10 @@ The workflow does not publish a GitHub release.
 ### Configuration
 
 Configuration is loaded from `config/config.json`.
+For a fresh test identity, run `uv run python scripts/regenerate_config.py`.
+The script changes only `bt_address` in the repository config. Use
+`--config PATH` for another installation. Restart the app so it writes the
+new address into `rtl8761bu_config.bin`, then pair the Switch again.
 If that file is absent, the app checks:
 
 - Windows: `%APPDATA%/ounce-bt/config.json`
