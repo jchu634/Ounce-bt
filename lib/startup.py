@@ -33,7 +33,6 @@ def prepare_bluetooth(config: Config, root: Path) -> None:
     """Keep the saved identity and Realtek address override in sync."""
     path = root / CONFIG_NAME
     contents = path.read_bytes()
-    address_offset = _address_offset(contents)
     generated = not config.bt_address or not config.bt_address.strip()
     address = (
         "98:B6:E9:" + ":".join(f"{b:02X}" for b in secrets.token_bytes(3))
@@ -44,7 +43,11 @@ def prepare_bluetooth(config: Config, root: Path) -> None:
     if len(parts) != 6 or any(len(part) != 2 for part in parts):
         raise ValueError("bt_address must contain six colon-separated hex bytes")
     mac = bytes(int(part, 16) for part in parts)
-    updated = contents[:address_offset] + mac[::-1] + contents[address_offset + 6 :]
+    if contents == CONFIG_HEADER[:4] + b"\x00\x00":
+        updated = CONFIG_HEADER + mac[::-1]
+    else:
+        address_offset = _address_offset(contents)
+        updated = contents[:address_offset] + mac[::-1] + contents[address_offset + 6 :]
     if updated != contents:
         temporary = path.with_suffix(".bin.tmp")
         temporary.write_bytes(updated)

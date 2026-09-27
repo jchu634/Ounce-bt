@@ -47,6 +47,21 @@ def test_existing_address_generates_matching_binary_without_saving(
     )
 
 
+def test_empty_realtek_config_gains_address_entry(tmp_path, monkeypatch):
+    monkeypatch.setattr("lib.config.config_path", lambda: tmp_path / "config.json")
+    path = tmp_path / CONFIG_NAME
+    path.write_bytes(bytes.fromhex("55ab23870000"))
+    config = Config()
+
+    prepare_bluetooth(config, tmp_path)
+
+    assert config.bt_address.startswith("98:B6:E9:")
+    assert Config.load().bt_address == config.bt_address
+    assert path.read_bytes() == CONFIG_HEADER + bytes.fromhex(
+        config.bt_address.replace(":", "")
+    )[::-1]
+
+
 def test_address_update_preserves_other_config_entries(tmp_path):
     config = Config(bt_address="98:B6:E9:01:02:03")
     other_entry = b"\x01\x00\x02\xAA\xBB"

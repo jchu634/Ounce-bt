@@ -108,8 +108,9 @@ Command-line values override configuration for the current run and are not saved
 
 The Realtek firmware and config binary are not distributed with Ounce-bt.
 Place `rtl8761bu_fw.bin` and `rtl8761bu_config.bin` in the same folder as the
-executable. The config binary must contain a six-byte Bluetooth address entry.
-On startup, Ounce-bt writes its saved or newly generated address into that entry.
+executable. On startup, Ounce-bt writes its saved or newly generated address
+into the config binary. It adds the address entry if the binary contains only
+the empty `55 AB 23 87 00 00` header.
 
 If either file is missing, the frontend will notify you.
 
