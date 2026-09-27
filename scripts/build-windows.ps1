@@ -3,11 +3,12 @@ param(
     [string]$PythonVersion = '3.14',
     [switch]$SkipFrontend
 )
-
+$env:PreferredToolArchitecture = "x64"
 $ErrorActionPreference = 'Stop'
+
 Set-StrictMode -Version Latest
 if ($env:OS -ne 'Windows_NT')
-{ throw 'This build supports Windows only.' 
+{ throw 'This build supports Windows only.'
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -18,7 +19,7 @@ function Invoke-Checked
     param([string]$Command, [string[]]$Arguments)
     & $Command @Arguments
     if ($LASTEXITCODE -ne 0)
-    { throw "$Command failed with exit code $LASTEXITCODE" 
+    { throw "$Command failed with exit code $LASTEXITCODE"
     }
 }
 
