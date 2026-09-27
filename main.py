@@ -469,7 +469,7 @@ async def main(
 
     firmware = missing_firmware(project_root)
     if firmware:
-        message = f"Missing firmware: {project_root / firmware}. Firmware is not distributed with this application."
+        message = f"Missing required Bluetooth file: {project_root / firmware}. Bluetooth files are not distributed with this application."
         logger.error(message)
         if not config.web_enabled:
             raise SystemExit(message)
@@ -597,13 +597,6 @@ async def main(
         # Classic / HID service configuration
         device.classic_enabled = True
         device.public_address = Address(config.bt_address)
-        if config.pairing_dir:
-            pairing_dir = config.resolve_folder(config.pairing_dir)
-            filename = str(device.public_address).lower().replace(":", "-") + ".json"
-            device.keystore = JsonKeyStore(
-                namespace=str(device.public_address),
-                filename=str(pairing_dir / filename),
-            )
         device.class_of_device = DEVICE_CLASS_GAMEPAD
         # Headless mode has no pairing button. Web sessions start idle.
         device.discoverable = not config.web_enabled
@@ -633,6 +626,13 @@ async def main(
         )
 
         await device.power_on()
+        if config.pairing_dir:
+            pairing_dir = config.resolve_folder(config.pairing_dir)
+            filename = str(device.public_address).lower().replace(":", "-") + ".json"
+            device.keystore = JsonKeyStore(
+                namespace=str(device.public_address),
+                filename=str(pairing_dir / filename),
+            )
         # Enable authentication + encryption + secure connections policy.
         await device.send_command(
             HCI_Write_Default_Link_Policy_Settings_Command(
@@ -688,7 +688,7 @@ async def main(
                 logger.info("Both HID channels open; starting controller session.")
                 state.hid_opened = True
                 protocol = ControllerProtocol(
-                    ControllerTypes.PRO_CONTROLLER, config.bt_address
+                    ControllerTypes.PRO_CONTROLLER, str(device.public_address)
                 )
 
                 try:
