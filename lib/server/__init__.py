@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 from pathlib import Path
 
 from starlette.applications import Starlette
@@ -82,7 +83,16 @@ def _error(message: str, detail: str | None = None, status: int = 400) -> JSONRe
 
 
 async def macro_ws_endpoint(websocket: WebSocket) -> None:
-    await websocket.accept()
+    token = websocket.app.state.ws_token
+    if token is not None:
+        protocols = websocket.scope.get("subprotocols", [])
+        supplied = next((p[11:] for p in protocols if p.startswith("ounce-auth.")), "")
+        if "ounce-bt" not in protocols or not secrets.compare_digest(
+            supplied.encode("utf-8"), token.encode("utf-8")
+        ):
+            await websocket.close(code=1008)
+            return
+    await websocket.accept(subprotocol="ounce-bt" if token is not None else None)
     manager: InputManager = websocket.app.state.manager
     # Guarantee thread-safe broadcasts even when the manager was built
     # without a bound loop (tests / library embedding).
@@ -560,10 +570,13 @@ async def _frontend_not_built(request: Request) -> Response:
 
 async def startup_status(request: Request) -> JSONResponse:
     firmware = request.app.state.missing_firmware
-    return JSONResponse(
+    status = (
         {"kind": "missing_firmware", "filename": firmware}
         if firmware
         else {"kind": "ready"}
+    )
+    return JSONResponse(
+        {**status, "ws_auth_required": request.app.state.ws_token is not None}
     )
 
 
@@ -574,6 +587,7 @@ async def close_application(request: Request) -> JSONResponse:
     # A JSON content type prevents cross-origin HTML forms from closing the app.
     if request.headers.get("content-type", "").split(";", 1)[0] != "application/json":
         return _error("Expected application/json", status=415)
+
     async def request_shutdown():
         event.set()
 
@@ -588,6 +602,7 @@ def build_app(
     bluetooth: BluetoothService | None = None,
     missing_firmware: str | None = None,
     shutdown_event: asyncio.Event | None = None,
+    ws_token: str | None = None,
 ) -> Starlette:
     """Construct the Starlette application.
 
@@ -649,4 +664,9 @@ def build_app(
     app.state.macro_store = macro_store
     app.state.missing_firmware = missing_firmware
     app.state.shutdown_event = shutdown_event
+    app.state.ws_token = (
+        (ws_token or secrets.token_urlsafe(32))
+        if config_store.config.ws_auth_required
+        else None
+    )
     return app

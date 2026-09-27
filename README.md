@@ -24,44 +24,41 @@ pnpm run dev
 uv sync
 
 # Run Backend
-uv run main.py --input controller
+uv run main.py
 ```
 
-### Command-line interface
+### Configuration
 
-```
-python main.py [device_config] [transport_spec] [bt_address] [options]
-```
+Configuration is loaded from `config/config.json`.
+If that file is absent, the app checks:
 
-All positionals are optional; any value may instead come from the config store.
+- Windows: `%APPDATA%/ounce-bt/config.json`
+- Linux: `$XDG_CONFIG_HOME/ounce-bt/config.json`, defaulting to `~/.config/ounce-bt/config.json`
 
-| Flag              | Default               | Purpose                                                                            |
-| ----------------- | --------------------- | ---------------------------------------------------------------------------------- |
-| `device_config`   | `pro_controller.json` | Bumble device config JSON                                                          |
-| `transport_spec`  | _(required)_          | e.g. `usb:0`                                                                       |
-| `bt_address`      | `98:b6:e9:12:34:57`   | Controller Bluetooth address                                                       |
-| `--input SPEC`    | _(from config)_       | Add an input source (`controller`, `controller:<idx>`, `macro:<path>`); repeatable |
-| `--web-host HOST` | `127.0.0.1`           | Web server bind host                                                               |
-| `--web-port PORT` | `9127`                | Web server bind port                                                               |
-| `--no-web`        | off                   | Don't launch the web server / WebSocket                                            |
+#### Arguments
 
-CLI flags override the config store for that single run; they do **not** write back. To persist changes, use `PATCH /api/config`.
+Settings can also be overridden for a single run with command-line arguments. Run `uv run main.py --help` for the full help text.
 
-### Configuration store
+| Argument                                             | Description                                                |
+| ---------------------------------------------------- | ---------------------------------------------------------- |
+| `[device_config]`                                    | Optional Bumble device configuration JSON path.            |
+| `[transport_spec]`                                   | Optional Bluetooth transport, defaults to `usb:0`.         |
+| `[bt_address]`                                       | Optional controller Bluetooth address.                     |
+| `--input controller\|controller:<idx>\|macro:<path>` | Enable an input source; repeat to enable multiple sources. |
+| `--web-host HOST`                                    | Web server bind host. Defaults to `127.0.0.1`.             |
+| `--web-port PORT`                                    | Web server bind port. Defaults to `9127`.                  |
+| `--nolog`                                            | Disable logging for this run.                              |
+| `--preset NAME\|PATH`                                | Controller mapping preset                                  |
 
-A JSON file at `%APPDATA%\ounce-bt\config.json` (or `$XDG_CONFIG_HOME/ounce-bt/config.json` on POSIX) holds runtime settings. Loaded at startup, mutated at runtime via the API, written atomically on change.
+Command-line values override configuration for the current run and are not saved.
 
-| Key                     | Default               | Notes                        |
-| ----------------------- | --------------------- | ---------------------------- |
-| `web_host`              | `127.0.0.1`           | Web server bind host         |
-| `web_port`              | `9127`                | Web server bind port         |
-| `bt_address`            | `98:b6:e9:12:34:57`   | Controller Bluetooth address |
-| `transport_spec`        | _(none)_              | e.g. `usb:0`                 |
-| `device_config`         | `pro_controller.json` | Bumble device config path    |
-| `input_specs`           | `[]`                  | List of `--input` specs      |
-| `last_camera_device_id` | `""`                  | Set by the frontend          |
-| `tick_rate_hz`          | `132`                 | Main controller loop rate    |
-| `macro_rate_hz`         | `120`                 | Macro player enqueue rate    |
+### BT Firmware
+
+The bluetooth firmware is not distributed with Ounce-bt for licensing reasons.\
+`rtl8761bu_fw.bin` can be found easily from the linux kernel git.\
+Place it in the same folder as the executable.
+
+If firmware is missing, the frontend will notify you.
 
 ### WebSocket protocol
 

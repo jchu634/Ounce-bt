@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Button } from "@/src/components/ui/button";
+import { configureWebSocketAuth, desktopApi } from "@/src/lib/desktop";
 import {
   Dialog,
   DialogContent,
@@ -31,6 +32,10 @@ export function StartupGate({ children }: { children: ReactNode }) {
         if (typeof body !== "object" || body === null || !("kind" in body)) {
           throw new Error("Invalid startup response");
         }
+        if (!("ws_auth_required" in body) || typeof body.ws_auth_required !== "boolean") {
+          throw new Error("Invalid startup security settings");
+        }
+        configureWebSocketAuth(body.ws_auth_required);
         if (body.kind === "ready") {
           setState({ kind: "ready" });
         } else if (
@@ -60,6 +65,11 @@ export function StartupGate({ children }: { children: ReactNode }) {
     setClosing(true);
     setError(null);
     try {
+      const api = desktopApi();
+      if (api) {
+        await api.close_application();
+        return;
+      }
       const response = await fetch("/api/application/close", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

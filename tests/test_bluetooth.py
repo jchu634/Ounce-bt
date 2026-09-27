@@ -36,7 +36,7 @@ def test_startup_pairing_requires_ui_action_unless_headless(monkeypatch, headles
         async def transport():
             yield SimpleNamespace(source=None, sink=None)
 
-        async def serve(*args):
+        async def serve(*args, **kwargs):
             await asyncio.Future()
 
         monkeypatch.setattr(application, "setup_logging", lambda: None)

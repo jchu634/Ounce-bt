@@ -5,9 +5,7 @@
     "g1": "playstation"
   },
   "device_config": ".\\pro_controller.json",
-  "input_specs": [
-    "controller"
-  ],
+  "input_specs": ["controller"],
   "last_camera_device_id": "",
   "macro_rate_hz": 120,
   "macros_dir": "macros",
@@ -18,5 +16,8 @@
   "tick_rate_hz": 132,
   "transport_spec": "usb:0",
   "web_host": "127.0.0.1",
-  "web_port": 9127
+  "web_port": 9127,
+  "no_log": true,
+  "webview_enabled": true,
+  "ws_auth_required": true
 }

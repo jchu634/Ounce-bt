@@ -68,6 +68,7 @@ def test_missing_firmware_signal_and_close(tmp_path):
         assert client.get("/api/startup").json() == {
             "kind": "missing_firmware",
             "filename": FIRMWARE_NAME,
+            "ws_auth_required": True,
         }
         assert client.post("/api/application/close").status_code == 415
         assert not stop.is_set()
@@ -89,7 +90,7 @@ def test_missing_firmware_never_opens_transport(tmp_path, monkeypatch, headless)
     monkeypatch.setattr("sys.argv", ["main.py"])
     served = []
 
-    async def serve(app, host, port, stop):
+    async def serve(app, host, port, stop, **kwargs):
         served.append(app.state.missing_firmware)
         stop.set()
 

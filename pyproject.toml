@@ -9,6 +9,7 @@ dependencies = [
   "inputs>=0.5",
   "opencv-python>=5.0.0.93",
   "pygame-ce>=2.5.6",
+  "pywebview>=6.2.1",
   "starlette>=1.6.0",
   "uvicorn>=0.52.1",
   "websockets>=15.0.1",

@@ -69,6 +69,8 @@ class Config:
 
     web_host: str | None = "127.0.0.1"
     web_port: int | None = 9127
+    webview_enabled: bool = True
+    ws_auth_required: bool = True
     bt_address: str = ""
     transport_spec: str = "usb:0"
     device_config: str = "pro_controller.json"

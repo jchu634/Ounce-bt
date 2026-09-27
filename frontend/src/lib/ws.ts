@@ -1,4 +1,5 @@
 import type { ControllersFrame, ServerFrame, StatusFrame, WsInbound } from "./types";
+import { websocketProtocols } from "./desktop";
 
 export type ConnectionState = "connecting" | "open" | "closed";
 
@@ -29,12 +30,12 @@ class ControllerSocket {
     this.open();
   }
 
-  private open(): void {
+  private async open(): Promise<void> {
     if (this.ws !== null) return;
     this.setState("connecting");
     let ws: WebSocket;
     try {
-      ws = new WebSocket(wsUrl());
+      ws = new WebSocket(wsUrl(), await websocketProtocols());
     } catch {
       this.scheduleReconnect();
       return;

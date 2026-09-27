@@ -313,7 +313,7 @@ def make_l2cap_handler(psm, state):
 
 
 async def serve_web(
-    app, host: str, port: int, stop_event: asyncio.Event | None = None
+    app, host: str, port: int, stop_event: asyncio.Event | None = None, ready=None
 ) -> None:
     """Run the Starlette app under uvicorn until cancelled.
 
@@ -326,6 +326,7 @@ async def serve_web(
         port=port,
         log_level="info",
         lifespan="off",
+        timeout_graceful_shutdown=5,
     )
     server = uvicorn.Server(config)
 
@@ -333,19 +334,30 @@ async def serve_web(
         await stop_event.wait()
         server.should_exit = True
 
+    async def report_ready():
+        while not server.started:
+            await asyncio.sleep(0.01)
+        ready.set()
+
+    ready_task = asyncio.create_task(report_ready()) if ready is not None else None
     stop_task = asyncio.create_task(stop_when_requested()) if stop_event else None
+    server_task = asyncio.create_task(server.serve())
     try:
-        await server.serve()
+        await asyncio.shield(server_task)
     except asyncio.CancelledError:
         server.should_exit = True
+        await server_task
         raise
     finally:
+        if ready_task:
+            ready_task.cancel()
+            await asyncio.gather(ready_task, return_exceptions=True)
         if stop_task:
             stop_task.cancel()
             await asyncio.gather(stop_task, return_exceptions=True)
 
 
-async def main():
+def load_options():
     parser = argparse.ArgumentParser(
         description="Pro Controller (Bumble) for Nintendo Switch"
     )
@@ -419,6 +431,20 @@ async def main():
         overrides["preset"] = args.preset
 
     config = Config.load(overrides or None)
+    if not config.transport_spec:
+        parser.error(
+            "transport_spec is required (provide it as the second positional "
+            "argument or set transport_spec in config.json)"
+        )
+
+    return config, args
+
+
+async def main(
+    config=None, args=None, *, ws_token=None, ready=None, shutdown_event=None
+):
+    if config is None:
+        config, args = load_options()
     if config.nolog or args.nolog:
         logging.disable(logging.CRITICAL)
     else:
@@ -426,12 +452,6 @@ async def main():
     config_store = ConfigStore(config)
     logger.info(f"Config path: {config_path()}")
     logger.info(f"Config: {config_store.snapshot()}")
-
-    if not config.transport_spec:
-        parser.error(
-            "transport_spec is required (provide it as the second positional "
-            "argument or set transport_spec in config.json)"
-        )
 
     # Shared, thread-safe command queue. Input-source threads are producers;
     # the asyncio main loop is the consumer. The InputManager arbitrates
@@ -453,16 +473,19 @@ async def main():
         logger.error(message)
         if not config.web_enabled:
             raise SystemExit(message)
-        stop_event = asyncio.Event()
+        stop_event = shutdown_event or asyncio.Event()
         app = build_app(
             manager,
             config_store,
             project_root / "frontend" / "dist",
             missing_firmware=firmware,
             shutdown_event=stop_event,
+            ws_token=ws_token,
         )
         try:
-            await serve_web(app, config.web_host, config.web_port, stop_event)
+            await serve_web(
+                app, config.web_host, config.web_port, stop_event, ready=ready
+            )
         finally:
             manager.shutdown()
         return
@@ -524,8 +547,12 @@ async def main():
     web_task: asyncio.Task | None = None
     if config.web_enabled:
         frontend_dist = project_root / "frontend" / "dist"
-        app = build_app(manager, config_store, frontend_dist, bluetooth=bluetooth)
-        web_task = asyncio.create_task(serve_web(app, config.web_host, config.web_port))
+        app = build_app(
+            manager, config_store, frontend_dist, bluetooth=bluetooth, ws_token=ws_token
+        )
+        web_task = asyncio.create_task(
+            serve_web(app, config.web_host, config.web_port, ready=ready)
+        )
         logger.info(
             f"Web UI: http://{config.web_host}:{config.web_port} "
             f"(ws://{config.web_host}:{config.web_port}/ws)"
@@ -700,4 +727,7 @@ async def run_until_disconnected(awaitable, state):
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    from lib.desktop import run_application
+
+    config, args = load_options()
+    run_application(config, args, main)
