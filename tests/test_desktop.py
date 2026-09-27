@@ -62,6 +62,18 @@ def test_browser_mode_does_not_require_token(tmp_path):
             assert ws.receive_json()["type"] == "status"
 
 
+def test_usb_driver_failure_is_reported_at_startup(tmp_path):
+    app = app_for(tmp_path)
+    with TestClient(app) as client:
+        app.state.transport_pending = True
+        assert client.get("/api/startup").json()["kind"] == "checking"
+        app.state.usb_driver_error = True
+        assert client.get("/api/startup").json() == {
+            "kind": "usb_driver_error",
+            "ws_auth_required": True,
+        }
+
+
 def test_bridge_only_exposes_token_to_local_application():
     bridge = DesktopBridge("secret", ("http", "127.0.0.1:9127"))
     window = SimpleNamespace(

@@ -13,7 +13,8 @@ import {
 type StartupState =
   | { kind: "loading" }
   | { kind: "ready" }
-  | { kind: "missing_firmware"; filename: string };
+  | { kind: "missing_firmware"; filename: string }
+  | { kind: "usb_driver_error" };
 
 export function StartupGate({ children }: { children: ReactNode }) {
   const [state, setState] = useState<StartupState>({ kind: "loading" });
@@ -36,8 +37,12 @@ export function StartupGate({ children }: { children: ReactNode }) {
           throw new Error("Invalid startup security settings");
         }
         configureWebSocketAuth(body.ws_auth_required);
-        if (body.kind === "ready") {
+        if (body.kind === "checking") {
+          retry = setTimeout(() => void check(), 250);
+        } else if (body.kind === "ready") {
           setState({ kind: "ready" });
+        } else if (body.kind === "usb_driver_error") {
+          setState({ kind: "usb_driver_error" });
         } else if (
           body.kind === "missing_firmware" &&
           "filename" in body &&
@@ -96,12 +101,24 @@ export function StartupGate({ children }: { children: ReactNode }) {
     <Dialog open onOpenChange={() => {}}>
       <DialogContent showCloseButton={false}>
         <DialogHeader>
-          <DialogTitle>Required firmware is missing</DialogTitle>
-          <DialogDescription>
-            Firmware is not distributed with Ounce-bt for licensing and legal reasons. Place your
-            separately obtained {state.filename} file in the application root folder, beside the
-            executable, then restart the application.
-          </DialogDescription>
+          {state.kind === "missing_firmware" ? (
+            <>
+              <DialogTitle>Required firmware is missing</DialogTitle>
+              <DialogDescription>
+                Firmware is not distributed with Ounce-bt for licensing and legal reasons. Place your
+                separately obtained {state.filename} file in the application root folder, beside the
+                executable, then restart the application.
+              </DialogDescription>
+            </>
+          ) : (
+            <>
+              <DialogTitle>Bluetooth adapter could not start</DialogTitle>
+              <DialogDescription>
+                Bumble could not open the USB Bluetooth adapter at usb:0. Configure the adapter to use
+                the WinUSB driver, then restart Ounce-bt. Error: LIBUSB_ERROR_NOT_SUPPORTED.
+              </DialogDescription>
+            </>
+          )}
         </DialogHeader>
         {error && <p role="alert">{error}</p>}
         {closed && <p role="status">The backend has stopped. You can close this window.</p>}

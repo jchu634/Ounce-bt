@@ -570,11 +570,14 @@ async def _frontend_not_built(request: Request) -> Response:
 
 async def startup_status(request: Request) -> JSONResponse:
     firmware = request.app.state.missing_firmware
-    status = (
-        {"kind": "missing_firmware", "filename": firmware}
-        if firmware
-        else {"kind": "ready"}
-    )
+    if firmware:
+        status = {"kind": "missing_firmware", "filename": firmware}
+    elif request.app.state.usb_driver_error:
+        status = {"kind": "usb_driver_error"}
+    elif request.app.state.transport_pending:
+        status = {"kind": "checking"}
+    else:
+        status = {"kind": "ready"}
     return JSONResponse(
         {**status, "ws_auth_required": request.app.state.ws_token is not None}
     )
@@ -601,6 +604,7 @@ def build_app(
     macro_store: JsonDocStore | None = None,
     bluetooth: BluetoothService | None = None,
     missing_firmware: str | None = None,
+    usb_driver_error: bool = False,
     shutdown_event: asyncio.Event | None = None,
     ws_token: str | None = None,
 ) -> Starlette:
@@ -663,6 +667,8 @@ def build_app(
     app.state.config_store = config_store
     app.state.macro_store = macro_store
     app.state.missing_firmware = missing_firmware
+    app.state.usb_driver_error = usb_driver_error
+    app.state.transport_pending = False
     app.state.shutdown_event = shutdown_event
     app.state.ws_token = (
         (ws_token or secrets.token_urlsafe(32))

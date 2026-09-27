@@ -545,13 +545,17 @@ async def main(
     # WS endpoint can submit states directly to ``command_queue``.
     bluetooth = BluetoothService()
     web_task: asyncio.Task | None = None
+    stop_event = shutdown_event or asyncio.Event()
+    app = None
     if config.web_enabled:
         frontend_dist = project_root / "frontend" / "dist"
         app = build_app(
-            manager, config_store, frontend_dist, bluetooth=bluetooth, ws_token=ws_token
+            manager, config_store, frontend_dist, bluetooth=bluetooth,
+            shutdown_event=stop_event, ws_token=ws_token
         )
+        app.state.transport_pending = True
         web_task = asyncio.create_task(
-            serve_web(app, config.web_host, config.web_port, ready=ready)
+            serve_web(app, config.web_host, config.web_port, stop_event, ready=ready)
         )
         logger.info(
             f"Web UI: http://{config.web_host}:{config.web_port} "
@@ -560,7 +564,30 @@ async def main(
     else:
         logger.info("Web server disabled (host or port is unset)")
 
-    async with await open_transport(config.transport_spec) as hci_transport:
+    try:
+        transport = await open_transport(config.transport_spec)
+        if app is not None:
+            app.state.transport_pending = False
+    except Exception as error:
+        causes = [error]
+        while causes[-1].__cause__ is not None:
+            causes.append(causes[-1].__cause__)
+        if app is None or not any(
+            "LIBUSB_ERROR_NOT_SUPPORTED" in str(cause) for cause in causes
+        ):
+            raise
+        logger.exception("Bluetooth USB transport is not supported")
+        app.state.usb_driver_error = True
+        try:
+            await stop_event.wait()
+        finally:
+            manager.shutdown()
+            if web_task is not None:
+                web_task.cancel()
+                await asyncio.gather(web_task, return_exceptions=True)
+        return
+
+    async with transport as hci_transport:
         device = Device.from_config_file_with_hci(
             str(resolve_config_file(config.device_config)),
             hci_transport.source,

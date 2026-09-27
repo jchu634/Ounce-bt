@@ -17,3 +17,6 @@ wheels/
 
 # Binaries
 *.bin
+
+# Builds
+dist/
