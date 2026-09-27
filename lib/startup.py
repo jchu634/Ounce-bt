@@ -2,6 +2,8 @@
 
 import os
 import secrets
+import shutil
+import tempfile
 from pathlib import Path
 
 from lib.config import Config
@@ -9,10 +11,21 @@ from lib.config import Config
 FIRMWARE_NAME = "rtl8761bu_fw.bin"
 CONFIG_NAME = "rtl8761bu_config.bin"
 CONFIG_HEADER = bytes([0x55, 0xAB, 0x23, 0x87, 0x09, 0x00, 0x30, 0x00, 0x06])
+_firmware_only_dir: tempfile.TemporaryDirectory | None = None
 
 
 def prepare_bluetooth(config: Config, root: Path) -> None:
     """Keep the saved identity and Realtek address override in sync."""
+    global _firmware_only_dir
+    if config.debug_use_firmware_bt_address:
+        # Bumble looks for firmware and its optional address config in the same
+        # directory. Isolate the firmware so an old config cannot override it.
+        if _firmware_only_dir is not None:
+            _firmware_only_dir.cleanup()
+        _firmware_only_dir = tempfile.TemporaryDirectory(prefix="ounce-bt-firmware-")
+        shutil.copyfile(root / FIRMWARE_NAME, Path(_firmware_only_dir.name) / FIRMWARE_NAME)
+        os.environ["BUMBLE_RTK_FIRMWARE_DIR"] = _firmware_only_dir.name
+        return
     generated = not config.bt_address or not config.bt_address.strip()
     address = (
         "98:B6:E9:" + ":".join(f"{b:02X}" for b in secrets.token_bytes(3))

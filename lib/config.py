@@ -72,6 +72,7 @@ class Config:
     webview_enabled: bool = True
     ws_auth_required: bool = True
     bt_address: str = ""
+    debug_use_firmware_bt_address: bool = False
     transport_spec: str = "usb:0"
     device_config: str = "pro_controller.json"
     input_specs: list[str] = field(default_factory=lambda: ["controller"])
