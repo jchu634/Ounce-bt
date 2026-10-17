@@ -12,15 +12,23 @@ import {
 
 import { Button } from "@/src/components/videojs/ui/button";
 import { resolveClassName } from "@/src/lib/resolve-class-name";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
-export type CaptionsButtonProps = Omit<CaptionsButtonPrimitive.Props, "children">;
+export type CaptionsButtonProps = Omit<
+  CaptionsButtonPrimitive.Props,
+  "children"
+>;
 
-export function CaptionsButton({ className, ...props }: CaptionsButtonProps = {}) {
+export function CaptionsButton({
+  className,
+  ...props
+}: CaptionsButtonProps = {}) {
   return (
     <CaptionsButtonPrimitive
       render={<Button />}
-      className={(state) => cn("group/captions", resolveClassName(className, state))}
+      className={(state) =>
+        cn("group/captions", resolveClassName(className, state))
+      }
       {...props}
     >
       <CaptionsOffIconPrimitive

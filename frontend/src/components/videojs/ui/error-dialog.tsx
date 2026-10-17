@@ -7,7 +7,7 @@ import "../styles/video/theme.css";
 import { ErrorDialog as ErrorDialogPrimitive } from "@videojs/react";
 
 import { Button } from "@/src/components/videojs/ui/button";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
 export function ErrorDialog() {
   return (
@@ -30,9 +30,18 @@ export function ErrorDialog() {
           "data-ending-style:duration-media-slower",
         )}
       >
-        <div className={cn("flex min-h-0 flex-col gap-2 overflow-y-auto", "px-2 pt-2 pb-1.5")}>
-          <ErrorDialogPrimitive.Title className={"m-0 text-media-lg leading-tight font-semibold"} />
-          <ErrorDialogPrimitive.Description className={"m-0 wrap-anywhere opacity-70"} />
+        <div
+          className={cn(
+            "flex min-h-0 flex-col gap-2 overflow-y-auto",
+            "px-2 pt-2 pb-1.5",
+          )}
+        >
+          <ErrorDialogPrimitive.Title
+            className={"m-0 text-media-lg leading-tight font-semibold"}
+          />
+          <ErrorDialogPrimitive.Description
+            className={"m-0 wrap-anywhere opacity-70"}
+          />
         </div>
         <div className={"flex shrink-0 gap-2"}>
           <ErrorDialogPrimitive.Close

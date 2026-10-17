@@ -13,7 +13,7 @@ import {
 
 import { Button } from "@/src/components/videojs/ui/button";
 import { resolveClassName } from "@/src/lib/resolve-class-name";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
 export type MuteButtonProps = Omit<MuteButtonPrimitive.Props, "children">;
 
@@ -21,7 +21,9 @@ export function MuteButton({ className, ...props }: MuteButtonProps = {}) {
   return (
     <MuteButtonPrimitive
       render={<Button />}
-      className={(state) => cn("group/mute", resolveClassName(className, state))}
+      className={(state) =>
+        cn("group/mute", resolveClassName(className, state))
+      }
       {...props}
     >
       <VolumeOffIconPrimitive

@@ -12,7 +12,7 @@ import { CaptionsRadioGroup } from "@videojs/react/ui/captions-radio-group";
 
 import { MenuChevron } from "@/src/components/videojs/ui/menu-chevron";
 import { RadioItem } from "@/src/components/videojs/ui/radio-item";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
 export type CaptionsSubmenuProps = Omit<Menu.RootProps, "children">;
 
@@ -44,8 +44,14 @@ export function CaptionsSubmenu({ ...props }: CaptionsSubmenuProps = {}) {
               "group-media-highlighted/menu-trigger-item:text-inherit",
             )}
           />
-          <TextPrimitive token={captionsText.key}>{captionsText.text}</TextPrimitive>
-          <span className={"ms-auto inline-flex min-w-0 items-center gap-1 ps-2 text-current/65"}>
+          <TextPrimitive token={captionsText.key}>
+            {captionsText.text}
+          </TextPrimitive>
+          <span
+            className={
+              "ms-auto inline-flex min-w-0 items-center gap-1 ps-2 text-current/65"
+            }
+          >
             <CaptionsRadioGroup.Value className={"max-w-24 truncate"} />
             <MenuChevron />
           </span>
@@ -83,7 +89,9 @@ export function CaptionsSubmenu({ ...props }: CaptionsSubmenuProps = {}) {
             )}
           >
             <MenuChevron back />
-            <TextPrimitive token={captionsText.key}>{captionsText.text}</TextPrimitive>
+            <TextPrimitive token={captionsText.key}>
+              {captionsText.text}
+            </TextPrimitive>
           </Menu.Item>
           <Menu.Separator
             className={cn(

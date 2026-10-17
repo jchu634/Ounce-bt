@@ -1,14 +1,21 @@
 import { Tooltip } from "@videojs/react";
 import type { ReactElement, ReactNode } from "react";
 
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
-export interface ButtonTooltipProps extends Omit<Tooltip.RootProps, "children"> {
+export interface ButtonTooltipProps extends Omit<
+  Tooltip.RootProps,
+  "children"
+> {
   children: ReactElement;
   label?: ReactNode;
 }
 
-export function ButtonTooltip({ children, label, ...props }: ButtonTooltipProps) {
+export function ButtonTooltip({
+  children,
+  label,
+  ...props
+}: ButtonTooltipProps) {
   return (
     <Tooltip.Root {...props}>
       <Tooltip.Trigger render={children} />

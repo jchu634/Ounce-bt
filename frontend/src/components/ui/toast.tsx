@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Toast as ToastPrimitive } from "@base-ui/react/toast";
-import { cn } from "cnfast";
+import { cn } from "cn";
 
 import { Button } from "@/src/components/ui/button";
 import {
@@ -85,7 +85,10 @@ function ToastTitle({ className, ...props }: ToastPrimitive.Title.Props) {
   );
 }
 
-function ToastDescription({ className, ...props }: ToastPrimitive.Description.Props) {
+function ToastDescription({
+  className,
+  ...props
+}: ToastPrimitive.Description.Props) {
   return (
     <ToastPrimitive.Description
       data-slot="toast-description"
@@ -185,7 +188,11 @@ function ToastList() {
       <ToastContent>
         <ToastIcon type={toastItem.type} />
         <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <ToastTitle className={toastItem.type === "error" ? "text-destructive" : undefined} />
+          <ToastTitle
+            className={
+              toastItem.type === "error" ? "text-destructive" : undefined
+            }
+          />
           <ToastDescription />
         </div>
         <ToastAction />
@@ -195,7 +202,11 @@ function ToastList() {
   ));
 }
 
-function Toaster({ children, toastManager = toast, ...props }: ToastPrimitive.Provider.Props) {
+function Toaster({
+  children,
+  toastManager = toast,
+  ...props
+}: ToastPrimitive.Provider.Props) {
   return (
     <ToastProvider toastManager={toastManager} {...props}>
       {children}

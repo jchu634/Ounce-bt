@@ -12,7 +12,7 @@ import { AudioTrackRadioGroup } from "@videojs/react/ui/audio-track-radio-group"
 
 import { MenuChevron } from "@/src/components/videojs/ui/menu-chevron";
 import { RadioItem } from "@/src/components/videojs/ui/radio-item";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
 export type AudioTrackMenuProps = Omit<Menu.RootProps, "children">;
 
@@ -45,7 +45,11 @@ export function AudioTrackMenu({ ...props }: AudioTrackMenuProps = {}) {
             )}
           />
           <TextPrimitive token={audioText.key}>{audioText.text}</TextPrimitive>
-          <span className={"ms-auto inline-flex min-w-0 items-center gap-1 ps-2 text-current/65"}>
+          <span
+            className={
+              "ms-auto inline-flex min-w-0 items-center gap-1 ps-2 text-current/65"
+            }
+          >
             <AudioTrackRadioGroup.Value className={"max-w-24 truncate"} />
             <MenuChevron />
           </span>
@@ -83,7 +87,9 @@ export function AudioTrackMenu({ ...props }: AudioTrackMenuProps = {}) {
             )}
           >
             <MenuChevron back />
-            <TextPrimitive token={audioText.key}>{audioText.text}</TextPrimitive>
+            <TextPrimitive token={audioText.key}>
+              {audioText.text}
+            </TextPrimitive>
           </Menu.Item>
           <Menu.Separator
             className={cn(

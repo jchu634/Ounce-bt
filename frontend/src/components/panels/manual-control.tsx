@@ -35,7 +35,7 @@ import { useSocket } from "@/src/hooks/use-socket";
 import type { ButtonName } from "@/src/lib/types";
 import { Button } from "@/src/components/ui/button";
 import { Switch } from "@/src/components/ui/switch";
-import { cn } from "cnfast";
+import { cn } from "cn";
 
 type ControlButtonProps = {
   icon: ReactNode;

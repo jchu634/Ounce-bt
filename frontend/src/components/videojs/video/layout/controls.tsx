@@ -10,15 +10,19 @@ import { PiPButton } from "@/src/components/videojs/ui/pip-button";
 import { PlayButton } from "@/src/components/videojs/ui/play-button";
 import { TimeSlider } from "@/src/components/videojs/ui/time-slider";
 import { VolumePopover } from "@/src/components/videojs/ui/volume-popover";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
 import { VideoSettingsMenu } from "../menus/settings-menu";
 
 export interface DefaultVideoControlsProps {
-  renderThumbnail?: NonNullable<ComponentProps<typeof TimeSlider>>["renderThumbnail"];
+  renderThumbnail?: NonNullable<
+    ComponentProps<typeof TimeSlider>
+  >["renderThumbnail"];
 }
 
-export function DefaultVideoControls({ renderThumbnail }: DefaultVideoControlsProps = {}) {
+export function DefaultVideoControls({
+  renderThumbnail,
+}: DefaultVideoControlsProps = {}) {
   return (
     <Controls.Root>
       <Controls.Backdrop

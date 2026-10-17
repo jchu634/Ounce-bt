@@ -14,7 +14,7 @@ import { useMacroRunner } from "@/src/hooks/use-macro-runner";
 import { useSocket } from "@/src/hooks/use-socket";
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
-import { cn } from "cnfast";
+import { cn } from "cn";
 
 export function MacroRunPanel({
   names,

@@ -7,11 +7,17 @@ import {
   StatusIndicator,
 } from "@/src/components/videojs/ui/status-indicator";
 import { VolumeIndicator } from "@/src/components/videojs/ui/volume-indicator";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
-export type VideoStatusIndicatorsProps = Omit<ComponentProps<"div">, "children">;
+export type VideoStatusIndicatorsProps = Omit<
+  ComponentProps<"div">,
+  "children"
+>;
 
-export function VideoStatusIndicators({ className, ...props }: VideoStatusIndicatorsProps = {}) {
+export function VideoStatusIndicators({
+  className,
+  ...props
+}: VideoStatusIndicatorsProps = {}) {
   return (
     <>
       <StatusAnnouncer />

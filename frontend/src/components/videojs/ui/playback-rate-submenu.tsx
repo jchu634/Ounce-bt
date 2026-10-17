@@ -12,11 +12,13 @@ import { PlaybackRateRadioGroup } from "@videojs/react/ui/playback-rate-radio-gr
 
 import { MenuChevron } from "@/src/components/videojs/ui/menu-chevron";
 import { RadioItem } from "@/src/components/videojs/ui/radio-item";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
 export type PlaybackRateSubmenuProps = Omit<Menu.RootProps, "children">;
 
-export function PlaybackRateSubmenu({ ...props }: PlaybackRateSubmenuProps = {}) {
+export function PlaybackRateSubmenu({
+  ...props
+}: PlaybackRateSubmenuProps = {}) {
   return (
     <Menu.Root {...props}>
       <PlaybackRateRadioGroup.Root>
@@ -45,7 +47,11 @@ export function PlaybackRateSubmenu({ ...props }: PlaybackRateSubmenuProps = {})
             )}
           />
           <TextPrimitive token={speedText.key}>{speedText.text}</TextPrimitive>
-          <span className={"ms-auto inline-flex min-w-0 items-center gap-1 ps-2 text-current/65"}>
+          <span
+            className={
+              "ms-auto inline-flex min-w-0 items-center gap-1 ps-2 text-current/65"
+            }
+          >
             <PlaybackRateRadioGroup.Value className={"max-w-24 truncate"} />
             <MenuChevron />
           </span>
@@ -83,7 +89,9 @@ export function PlaybackRateSubmenu({ ...props }: PlaybackRateSubmenuProps = {})
             )}
           >
             <MenuChevron back />
-            <TextPrimitive token={speedText.key}>{speedText.text}</TextPrimitive>
+            <TextPrimitive token={speedText.key}>
+              {speedText.text}
+            </TextPrimitive>
           </Menu.Item>
           <Menu.Separator
             className={cn(

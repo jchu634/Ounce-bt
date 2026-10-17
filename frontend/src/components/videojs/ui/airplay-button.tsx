@@ -12,11 +12,14 @@ import {
 
 import { Button } from "@/src/components/videojs/ui/button";
 import { resolveClassName } from "@/src/lib/resolve-class-name";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
 export type AirPlayButtonProps = Omit<AirPlayButtonPrimitive.Props, "children">;
 
-export function AirPlayButton({ className, ...props }: AirPlayButtonProps = {}) {
+export function AirPlayButton({
+  className,
+  ...props
+}: AirPlayButtonProps = {}) {
   return (
     <AirPlayButtonPrimitive
       render={<Button />}

@@ -122,7 +122,11 @@ import {
 } from "@/src/components/editors/json-editor";
 import { activatePreset, getPreset, putPreset } from "@/src/lib/api";
 import { ApiError } from "@/src/lib/api";
-import { BUTTON_NAMES, type ButtonName, type ValidationBody } from "@/src/lib/types";
+import {
+  BUTTON_NAMES,
+  type ButtonName,
+  type ValidationBody,
+} from "@/src/lib/types";
 import { locatePathLine, positionToLineCol } from "@/src/lib/json-locate";
 import {
   CONTROLLER_LAYOUTS,
@@ -130,7 +134,7 @@ import {
   type ControllerLayout,
   type ControllerLayoutDefinition,
 } from "@/src/lib/controller-mappings";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
 export type PresetEditorProps = {
   name: string | null;
@@ -145,7 +149,12 @@ export type PresetEditorHandle = {
 
 type SaveResult = "saved" | "save-as-required" | "failed";
 
-export function PresetEditor({ name, builtin, onSaved, ref }: PresetEditorProps) {
+export function PresetEditor({
+  name,
+  builtin,
+  onSaved,
+  ref,
+}: PresetEditorProps) {
   const [initialName] = useState(name);
   const [value, setValue] = useState("");
   const [savedText, setSavedText] = useState<string | null>(null);
@@ -224,7 +233,8 @@ export function PresetEditor({ name, builtin, onSaved, ref }: PresetEditorProps)
     } catch (e) {
       const msg = e instanceof SyntaxError ? e.message : String(e);
       const pos = /position (\d+)/i.exec(msg)?.[1];
-      const lc = pos !== undefined ? positionToLineCol(text, Number(pos)) : null;
+      const lc =
+        pos !== undefined ? positionToLineCol(text, Number(pos)) : null;
       return [
         {
           line: lc?.line ?? 1,
@@ -236,31 +246,34 @@ export function PresetEditor({ name, builtin, onSaved, ref }: PresetEditorProps)
     }
   }, []);
 
-  const buildMarkers = useCallback((body: ValidationBody, text: string): JsonMarker[] => {
-    if (body.line !== undefined) {
-      return [
-        {
-          line: body.line,
-          col: body.col,
-          severity: "error",
-          message: body.detail ?? body.error,
-        },
-      ];
-    }
-    if (body.path !== undefined) {
-      const line = locatePathLine(text, body.path);
-      if (line !== null) {
+  const buildMarkers = useCallback(
+    (body: ValidationBody, text: string): JsonMarker[] => {
+      if (body.line !== undefined) {
         return [
           {
-            line,
+            line: body.line,
+            col: body.col,
             severity: "error",
             message: body.detail ?? body.error,
           },
         ];
       }
-    }
-    return [];
-  }, []);
+      if (body.path !== undefined) {
+        const line = locatePathLine(text, body.path);
+        if (line !== null) {
+          return [
+            {
+              line,
+              severity: "error",
+              message: body.detail ?? body.error,
+            },
+          ];
+        }
+      }
+      return [];
+    },
+    [],
+  );
 
   const save = useCallback(async (): Promise<SaveResult> => {
     if (name === null) return "failed";
@@ -288,15 +301,17 @@ export function PresetEditor({ name, builtin, onSaved, ref }: PresetEditorProps)
       return "save-as-required";
     }
     setSaving(true);
-    const result = await Effect.runPromise(putPreset(name, value)).catch((e): null => {
-      if (e instanceof ApiError && e.body !== null) {
-        setMarkers(buildMarkers(e.body, value));
-        setError(`${e.message}${e.body.detail ? ` — ${e.body.detail}` : ""}`);
-      } else {
-        setError(String(e));
-      }
-      return null;
-    });
+    const result = await Effect.runPromise(putPreset(name, value)).catch(
+      (e): null => {
+        if (e instanceof ApiError && e.body !== null) {
+          setMarkers(buildMarkers(e.body, value));
+          setError(`${e.message}${e.body.detail ? ` — ${e.body.detail}` : ""}`);
+        } else {
+          setError(String(e));
+        }
+        return null;
+      },
+    );
     setSaving(false);
     if (result !== null) {
       setSavedText(value);
@@ -310,10 +325,15 @@ export function PresetEditor({ name, builtin, onSaved, ref }: PresetEditorProps)
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.key.toLowerCase() !== "s")
+      if (
+        !(event.ctrlKey || event.metaKey) ||
+        event.altKey ||
+        event.key.toLowerCase() !== "s"
+      )
         return;
       event.preventDefault();
-      if (!event.repeat && dirty && !saving && !loading && !saveAsOpen) void save();
+      if (!event.repeat && dirty && !saving && !loading && !saveAsOpen)
+        void save();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -342,7 +362,8 @@ export function PresetEditor({ name, builtin, onSaved, ref }: PresetEditorProps)
     } catch (e) {
       const msg = e instanceof SyntaxError ? e.message : String(e);
       const pos = /position (\d+)/i.exec(msg)?.[1];
-      const lc = pos !== undefined ? positionToLineCol(value, Number(pos)) : null;
+      const lc =
+        pos !== undefined ? positionToLineCol(value, Number(pos)) : null;
       setMarkers([
         {
           line: lc?.line ?? 1,
@@ -363,7 +384,11 @@ export function PresetEditor({ name, builtin, onSaved, ref }: PresetEditorProps)
     const succeeded = await Promise.resolve()
       .then(() => {
         const document: unknown = JSON.parse(value);
-        if (typeof document !== "object" || document === null || Array.isArray(document)) {
+        if (
+          typeof document !== "object" ||
+          document === null ||
+          Array.isArray(document)
+        ) {
           throw new Error("Preset JSON must be an object.");
         }
         const contents = `${JSON.stringify({ ...document, name: targetName }, null, 2)}\n`;
@@ -408,7 +433,9 @@ export function PresetEditor({ name, builtin, onSaved, ref }: PresetEditorProps)
   return (
     <section className="flex w-full flex-col gap-3 text-left">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="font-mono text-lg font-semibold text-foreground">{name}.json</h2>
+        <h2 className="font-mono text-lg font-semibold text-foreground">
+          {name}.json
+        </h2>
         {builtin && (
           <span className="rounded-4xl bg-muted px-2 py-0.5 text-[10px] tracking-wide text-muted-foreground uppercase">
             built-in
@@ -430,7 +457,11 @@ export function PresetEditor({ name, builtin, onSaved, ref }: PresetEditorProps)
             variant={advanced ? "secondary" : "outline"}
             onClick={() => setAdvanced((current) => !current)}
           >
-            {advanced ? <SlidersHorizontalIcon size={14} /> : <CodeIcon size={14} />}
+            {advanced ? (
+              <SlidersHorizontalIcon size={14} />
+            ) : (
+              <CodeIcon size={14} />
+            )}
             {advanced ? "Visual Editor" : "JSON Editor"}
           </Button>
           {advanced && (
@@ -457,7 +488,12 @@ export function PresetEditor({ name, builtin, onSaved, ref }: PresetEditorProps)
             Undo
             <ArrowCounterClockwiseIcon size={14} />
           </Button>
-          <Button size="sm" variant="outline" onClick={() => void activate()} disabled={activating}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void activate()}
+            disabled={activating}
+          >
             {activating ? (
               <SpinnerGapIcon size={14} className="animate-spin" />
             ) : (
@@ -465,7 +501,11 @@ export function PresetEditor({ name, builtin, onSaved, ref }: PresetEditorProps)
             )}
             Activate
           </Button>
-          <Button size="sm" onClick={() => void save()} disabled={saving || !dirty}>
+          <Button
+            size="sm"
+            onClick={() => void save()}
+            disabled={saving || !dirty}
+          >
             {saving ? (
               <SpinnerGapIcon size={14} className="animate-spin" />
             ) : (
@@ -510,7 +550,11 @@ export function PresetEditor({ name, builtin, onSaved, ref }: PresetEditorProps)
           className="max-h-[60vh] min-h-64"
         />
       ) : (
-        <PresetMappingEditor value={value} onChange={setValue} disabled={false} />
+        <PresetMappingEditor
+          value={value}
+          onChange={setValue}
+          disabled={false}
+        />
       )}
       <Dialog
         open={saveAsOpen}
@@ -526,8 +570,8 @@ export function PresetEditor({ name, builtin, onSaved, ref }: PresetEditorProps)
           <DialogHeader>
             <DialogTitle>Save as new preset</DialogTitle>
             <DialogDescription>
-              Built-in presets cannot be overwritten. Name your edited copy to save it as a new
-              preset.
+              Built-in presets cannot be overwritten. Name your edited copy to
+              save it as a new preset.
             </DialogDescription>
           </DialogHeader>
           <Input
@@ -560,7 +604,9 @@ export function PresetEditor({ name, builtin, onSaved, ref }: PresetEditorProps)
               onClick={() => void saveAsNewPreset()}
               disabled={savingAs || saveAsName.trim().length === 0}
             >
-              {savingAs && <SpinnerGapIcon size={14} className="animate-spin" />}
+              {savingAs && (
+                <SpinnerGapIcon size={14} className="animate-spin" />
+              )}
               Save new preset
             </Button>
           </DialogFooter>
@@ -576,7 +622,8 @@ export function PresetEditor({ name, builtin, onSaved, ref }: PresetEditorProps)
           <DialogHeader>
             <DialogTitle>Leave without saving?</DialogTitle>
             <DialogDescription>
-              You have unsaved changes to this preset. Save them before opening another preset?
+              You have unsaved changes to this preset. Save them before opening
+              another preset?
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -612,9 +659,13 @@ type ParsedPreset =
     }
   | { kind: "invalid"; message: string };
 
-type PhysicalSource = { kind: "button"; index: string } | { kind: "trigger"; index: string };
+type PhysicalSource =
+  { kind: "button"; index: string } | { kind: "trigger"; index: string };
 
-type SupportedButtonName = Exclude<ButtonName, "SL_L" | "SR_L" | "SL_R" | "SR_R">;
+type SupportedButtonName = Exclude<
+  ButtonName,
+  "SL_L" | "SR_L" | "SL_R" | "SR_R"
+>;
 
 const MAPPING_GROUPS = [
   { title: "Shoulder controls", controls: ["ZL", "ZR", "L", "R"] },
@@ -651,7 +702,10 @@ const BUTTON_LABELS: Record<SupportedButtonName, string> = {
   STICK_R: "Right stick click",
 };
 
-const BUTTON_ICONS: Record<SupportedButtonName, ComponentType<SVGProps<SVGSVGElement>>> = {
+const BUTTON_ICONS: Record<
+  SupportedButtonName,
+  ComponentType<SVGProps<SVGSVGElement>>
+> = {
   A: SwitchButtonA,
   B: SwitchButtonB,
   X: SwitchButtonX,
@@ -674,7 +728,9 @@ const BUTTON_ICONS: Record<SupportedButtonName, ComponentType<SVGProps<SVGSVGEle
 
 type InputIcon = ComponentType<SVGProps<SVGSVGElement>>;
 
-const CONTROLLER_BUTTON_ICONS: Partial<Record<ControllerLayout, readonly InputIcon[]>> = {
+const CONTROLLER_BUTTON_ICONS: Partial<
+  Record<ControllerLayout, readonly InputIcon[]>
+> = {
   switch: [
     SwitchButtonA,
     SwitchButtonB,
@@ -726,7 +782,9 @@ const CONTROLLER_BUTTON_ICONS: Partial<Record<ControllerLayout, readonly InputIc
   ],
 };
 
-const CONTROLLER_AXIS_ICONS: Partial<Record<ControllerLayout, readonly InputIcon[]>> = {
+const CONTROLLER_AXIS_ICONS: Partial<
+  Record<ControllerLayout, readonly InputIcon[]>
+> = {
   switch: [
     SwitchStickLHorizontal,
     SwitchStickLVertical,
@@ -753,9 +811,14 @@ const CONTROLLER_AXIS_ICONS: Partial<Record<ControllerLayout, readonly InputIcon
   ],
 };
 
-function physicalInputIcon(source: PhysicalSource, layout: ControllerLayout): InputIcon {
+function physicalInputIcon(
+  source: PhysicalSource,
+  layout: ControllerLayout,
+): InputIcon {
   const icons =
-    source.kind === "button" ? CONTROLLER_BUTTON_ICONS[layout] : CONTROLLER_AXIS_ICONS[layout];
+    source.kind === "button"
+      ? CONTROLLER_BUTTON_ICONS[layout]
+      : CONTROLLER_AXIS_ICONS[layout];
   return icons?.[Number(source.index)] ?? GameControllerIcon;
 }
 
@@ -763,9 +826,15 @@ const isButtonName = (value: unknown): value is ButtonName =>
   typeof value === "string" && BUTTON_NAMES.some((name) => name === value);
 
 const isControllerLayout = (value: unknown): value is ControllerLayout =>
-  value === "generic" || value === "switch" || value === "xbox" || value === "playstation";
+  value === "generic" ||
+  value === "switch" ||
+  value === "xbox" ||
+  value === "playstation";
 
-const MAPPING_FIELDS: ReadonlyArray<"buttons" | "triggers"> = ["buttons", "triggers"];
+const MAPPING_FIELDS: ReadonlyArray<"buttons" | "triggers"> = [
+  "buttons",
+  "triggers",
+];
 
 function parsePreset(value: string): ParsedPreset {
   let parsed: unknown;
@@ -789,7 +858,11 @@ function parsePreset(value: string): ParsedPreset {
   for (const field of MAPPING_FIELDS) {
     const rawMappings = document[field];
     if (rawMappings === undefined) continue;
-    if (typeof rawMappings !== "object" || rawMappings === null || Array.isArray(rawMappings)) {
+    if (
+      typeof rawMappings !== "object" ||
+      rawMappings === null ||
+      Array.isArray(rawMappings)
+    ) {
       return {
         kind: "invalid",
         message: `The preset "${field}" field must be an object.`,
@@ -813,10 +886,16 @@ function sourceFor(
   triggers: Record<string, ButtonName>,
   target: ButtonName,
 ): PhysicalSource | null {
-  const buttonIndex = Object.entries(buttons).find(([, button]) => button === target)?.[0];
+  const buttonIndex = Object.entries(buttons).find(
+    ([, button]) => button === target,
+  )?.[0];
   if (buttonIndex !== undefined) return { kind: "button", index: buttonIndex };
-  const triggerIndex = Object.entries(triggers).find(([, button]) => button === target)?.[0];
-  return triggerIndex === undefined ? null : { kind: "trigger", index: triggerIndex };
+  const triggerIndex = Object.entries(triggers).find(
+    ([, button]) => button === target,
+  )?.[0];
+  return triggerIndex === undefined
+    ? null
+    : { kind: "trigger", index: triggerIndex };
 }
 
 function sourceValue(source: PhysicalSource | null): string {
@@ -830,9 +909,13 @@ function parseSourceValue(value: string): PhysicalSource | null {
   return null;
 }
 
-function inferControllerLayout(document: Record<string, unknown>): ControllerLayout {
-  if (isControllerLayout(document.controller_layout)) return document.controller_layout;
-  const identity = `${document.name ?? ""} ${document.description ?? ""}`.toLowerCase();
+function inferControllerLayout(
+  document: Record<string, unknown>,
+): ControllerLayout {
+  if (isControllerLayout(document.controller_layout))
+    return document.controller_layout;
+  const identity =
+    `${document.name ?? ""} ${document.description ?? ""}`.toLowerCase();
   if (
     identity.includes("playstation") ||
     identity.includes("dualshock") ||
@@ -856,21 +939,29 @@ function physicalInputLabel(
   controller: ControllerLayoutDefinition,
 ): string {
   const prefix = kind === "button" ? "Button" : "Axis";
-  const names = kind === "button" ? controller.buttonNames : controller.axisNames;
+  const names =
+    kind === "button" ? controller.buttonNames : controller.axisNames;
   const name = names[index];
   return name === undefined ? `${prefix} ${index}` : `${name}`;
 }
 
-function controllerLayoutDefinition(layout: ControllerLayout): ControllerLayoutDefinition {
+function controllerLayoutDefinition(
+  layout: ControllerLayout,
+): ControllerLayoutDefinition {
   return (
     CONTROLLER_LAYOUTS.find((controller) => controller.value === layout) ??
     GENERIC_CONTROLLER_LAYOUT
   );
 }
 
-function PresetMappingEditor({ value, onChange, disabled }: PresetMappingEditorProps) {
+function PresetMappingEditor({
+  value,
+  onChange,
+  disabled,
+}: PresetMappingEditorProps) {
   const parsed = useMemo(() => parsePreset(value), [value]);
-  const [listeningTarget, setListeningTarget] = useState<SupportedButtonName | null>(null);
+  const [listeningTarget, setListeningTarget] =
+    useState<SupportedButtonName | null>(null);
   const [gamepadButtonCount, setGamepadButtonCount] = useState(16);
   const [gamepadAxisCount, setGamepadAxisCount] = useState(6);
   const pressedAtStart = useRef<Set<number>>(new Set());
@@ -881,13 +972,15 @@ function PresetMappingEditor({ value, onChange, disabled }: PresetMappingEditorP
       const nextButtons = Object.fromEntries(
         Object.entries(parsed.buttons).filter(
           ([index, button]) =>
-            !(source?.kind === "button" && index === source.index) && button !== target,
+            !(source?.kind === "button" && index === source.index) &&
+            button !== target,
         ),
       );
       const nextTriggers = Object.fromEntries(
         Object.entries(parsed.triggers).filter(
           ([index, button]) =>
-            !(source?.kind === "trigger" && index === source.index) && button !== target,
+            !(source?.kind === "trigger" && index === source.index) &&
+            button !== target,
         ),
       );
       if (source?.kind === "button") nextButtons[source.index] = target;
@@ -906,7 +999,9 @@ function PresetMappingEditor({ value, onChange, disabled }: PresetMappingEditorP
     if (listeningTarget === null) return;
     let animationFrame = 0;
     const poll = () => {
-      const gamepad = Array.from(navigator.getGamepads()).find((item) => item !== null);
+      const gamepad = Array.from(navigator.getGamepads()).find(
+        (item) => item !== null,
+      );
       if (gamepad !== undefined) {
         setGamepadButtonCount(Math.max(16, gamepad.buttons.length));
         setGamepadAxisCount(Math.max(6, gamepad.axes.length));
@@ -914,7 +1009,9 @@ function PresetMappingEditor({ value, onChange, disabled }: PresetMappingEditorP
         gamepad.buttons.forEach((button, index) => {
           if (button.pressed) pressed.add(index);
         });
-        const newlyPressed = [...pressed].find((index) => !pressedAtStart.current.has(index));
+        const newlyPressed = [...pressed].find(
+          (index) => !pressedAtStart.current.has(index),
+        );
         if (newlyPressed !== undefined) {
           assign(listeningTarget, {
             kind: "button",
@@ -932,9 +1029,13 @@ function PresetMappingEditor({ value, onChange, disabled }: PresetMappingEditorP
   }, [assign, listeningTarget]);
 
   const startListening = (target: SupportedButtonName) => {
-    const gamepad = Array.from(navigator.getGamepads()).find((item) => item !== null);
+    const gamepad = Array.from(navigator.getGamepads()).find(
+      (item) => item !== null,
+    );
     pressedAtStart.current = new Set(
-      gamepad?.buttons.flatMap((button, index) => (button.pressed ? [index] : [])) ?? [],
+      gamepad?.buttons.flatMap((button, index) =>
+        button.pressed ? [index] : [],
+      ) ?? [],
     );
     if (gamepad !== undefined) {
       setGamepadButtonCount(Math.max(16, gamepad.buttons.length));
@@ -951,22 +1052,31 @@ function PresetMappingEditor({ value, onChange, disabled }: PresetMappingEditorP
     );
   }
 
-  const buttonOptions = Array.from({ length: gamepadButtonCount }, (_, index) => index);
-  const axisOptions = Array.from({ length: gamepadAxisCount }, (_, index) => index);
+  const buttonOptions = Array.from(
+    { length: gamepadButtonCount },
+    (_, index) => index,
+  );
+  const axisOptions = Array.from(
+    { length: gamepadAxisCount },
+    (_, index) => index,
+  );
   const controllerLayout = inferControllerLayout(parsed.document);
   const controller = controllerLayoutDefinition(controllerLayout);
   const ControllerImage = controller.image;
 
   const setControllerLayout = (layout: ControllerLayout) => {
     if (disabled) return;
-    onChange(`${JSON.stringify({ ...parsed.document, controller_layout: layout }, null, 2)}\n`);
+    onChange(
+      `${JSON.stringify({ ...parsed.document, controller_layout: layout }, null, 2)}\n`,
+    );
   };
 
   const mappingRow = (target: SupportedButtonName) => {
     const source = sourceFor(parsed.buttons, parsed.triggers, target);
     const listening = listeningTarget === target;
     const Icon = BUTTON_ICONS[target];
-    const SelectedInputIcon = source === null ? null : physicalInputIcon(source, controllerLayout);
+    const SelectedInputIcon =
+      source === null ? null : physicalInputIcon(source, controllerLayout);
     return (
       <div
         key={target}
@@ -1052,20 +1162,30 @@ function PresetMappingEditor({ value, onChange, disabled }: PresetMappingEditorP
         <Button
           size="icon-sm"
           variant={listening ? "default" : "outline"}
-          onClick={() => (listening ? setListeningTarget(null) : startListening(target))}
+          onClick={() =>
+            listening ? setListeningTarget(null) : startListening(target)
+          }
           disabled={listeningTarget !== null && !listening}
           title={
             listening
               ? "Cancel controller input"
               : `Press a controller button for ${BUTTON_LABELS[target]}`
           }
-          aria-label={listening ? "Cancel controller input" : `Listen for ${BUTTON_LABELS[target]}`}
+          aria-label={
+            listening
+              ? "Cancel controller input"
+              : `Listen for ${BUTTON_LABELS[target]}`
+          }
           className={cn(
             "rounded-md dark:bg-white",
             !listening && "text-muted-foreground hover:text-foreground",
           )}
         >
-          {listening ? <SpinnerGapIcon className="animate-spin" /> : <GameControllerIcon />}
+          {listening ? (
+            <SpinnerGapIcon className="animate-spin" />
+          ) : (
+            <GameControllerIcon />
+          )}
         </Button>
       </div>
     );
@@ -1105,17 +1225,25 @@ function PresetMappingEditor({ value, onChange, disabled }: PresetMappingEditorP
       <div className="flex justify-between p-4">
         <div className="min-w-0 space-y-3">
           {MAPPING_GROUPS.map((group) => (
-            <section key={group.title} className="min-w-0 rounded-xl border bg-primary p-2">
+            <section
+              key={group.title}
+              className="min-w-0 rounded-xl border bg-primary p-2"
+            >
               <h4 className="px-2 py-1 text-xs font-semibold text-primary-foreground">
                 {group.title}
               </h4>
-              <div className="lg:grid lg:grid-cols-2">{group.controls.map(mappingRow)}</div>
+              <div className="lg:grid lg:grid-cols-2">
+                {group.controls.map(mappingRow)}
+              </div>
             </section>
           ))}
         </div>
         <div className="h-100% center flex flex-col items-center justify-center p-5 2.5xl:w-3/5">
           {ControllerImage === null ? (
-            <GameControllerIcon weight="light" className="size-32 text-muted-foreground" />
+            <GameControllerIcon
+              weight="light"
+              className="size-32 text-muted-foreground"
+            />
           ) : (
             <ControllerImage
               role="img"

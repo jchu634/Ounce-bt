@@ -17,7 +17,7 @@ import {
 } from "@videojs/react/icons";
 
 import { resolveClassName } from "@/src/lib/resolve-class-name";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
 const TOP_STATUS_ACTIONS = [
   "toggleSubtitles",
@@ -27,9 +27,15 @@ const TOP_STATUS_ACTIONS = [
 
 const PLAYBACK_STATUS_ACTIONS = ["togglePaused"] as const;
 
-export type StatusIndicatorProps = Omit<StatusIndicatorPrimitive.RootProps, "children">;
+export type StatusIndicatorProps = Omit<
+  StatusIndicatorPrimitive.RootProps,
+  "children"
+>;
 
-export function StatusIndicator({ className, ...props }: StatusIndicatorProps = {}) {
+export function StatusIndicator({
+  className,
+  ...props
+}: StatusIndicatorProps = {}) {
   return (
     <StatusIndicatorPrimitive.Root
       actions={TOP_STATUS_ACTIONS}
@@ -51,7 +57,13 @@ export function StatusIndicator({ className, ...props }: StatusIndicatorProps = 
       }
       {...props}
     >
-      <div className={cn("items-center justify-between gap-2 px-2.5 py-1", "flex", "w-full")}>
+      <div
+        className={cn(
+          "items-center justify-between gap-2 px-2.5 py-1",
+          "flex",
+          "w-full",
+        )}
+      >
         <CaptionsOnIconPrimitive
           className={cn(
             "hidden shrink-0",
@@ -94,13 +106,18 @@ export function StatusIndicator({ className, ...props }: StatusIndicatorProps = 
             "mix-blend-difference",
           )}
         />
-        <StatusIndicatorPrimitive.Value className={cn("ms-auto", "mix-blend-difference")} />
+        <StatusIndicatorPrimitive.Value
+          className={cn("ms-auto", "mix-blend-difference")}
+        />
       </div>
     </StatusIndicatorPrimitive.Root>
   );
 }
 
-export type PlaybackStatusIndicatorProps = Omit<StatusIndicatorPrimitive.RootProps, "children">;
+export type PlaybackStatusIndicatorProps = Omit<
+  StatusIndicatorPrimitive.RootProps,
+  "children"
+>;
 
 export function PlaybackStatusIndicator({
   className,

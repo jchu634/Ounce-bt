@@ -8,11 +8,17 @@ import { SeekIndicator as SeekIndicatorPrimitive } from "@videojs/react";
 import { ChevronIcon as ChevronIconPrimitive } from "@videojs/react/icons";
 
 import { resolveClassName } from "@/src/lib/resolve-class-name";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
-export type SeekIndicatorProps = Omit<SeekIndicatorPrimitive.RootProps, "children">;
+export type SeekIndicatorProps = Omit<
+  SeekIndicatorPrimitive.RootProps,
+  "children"
+>;
 
-export function SeekIndicator({ className, ...props }: SeekIndicatorProps = {}) {
+export function SeekIndicator({
+  className,
+  ...props
+}: SeekIndicatorProps = {}) {
   return (
     <SeekIndicatorPrimitive.Root
       className={(state) =>

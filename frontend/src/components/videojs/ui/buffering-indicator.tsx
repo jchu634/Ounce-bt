@@ -8,11 +8,17 @@ import { BufferingIndicator as BufferingIndicatorPrimitive } from "@videojs/reac
 import { SpinnerIcon as SpinnerIconPrimitive } from "@videojs/react/icons";
 
 import { resolveClassName } from "@/src/lib/resolve-class-name";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
-export type BufferingIndicatorProps = Omit<BufferingIndicatorPrimitive.Props, "children">;
+export type BufferingIndicatorProps = Omit<
+  BufferingIndicatorPrimitive.Props,
+  "children"
+>;
 
-export function BufferingIndicator({ className, ...props }: BufferingIndicatorProps = {}) {
+export function BufferingIndicator({
+  className,
+  ...props
+}: BufferingIndicatorProps = {}) {
   return (
     <BufferingIndicatorPrimitive
       className={(state) =>
@@ -25,7 +31,9 @@ export function BufferingIndicator({ className, ...props }: BufferingIndicatorPr
       }
       {...props}
     >
-      <SpinnerIconPrimitive className={"relative z-30 size-media-icon drop-shadow-media-icon"} />
+      <SpinnerIconPrimitive
+        className={"relative z-30 size-media-icon drop-shadow-media-icon"}
+      />
     </BufferingIndicatorPrimitive>
   );
 }
