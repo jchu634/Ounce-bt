@@ -43,9 +43,9 @@ try
     $env:UV_PROJECT_ENVIRONMENT = Join-Path $buildRoot '.venv'
     try
     {
-        Invoke-Checked uv @('sync', '--locked', '--no-dev', '--python', $PythonVersion)
+        Invoke-Checked uv @('sync', '--locked', '--no-dev', '--group', 'build', '--python', $PythonVersion)
         $arguments = @(
-            'run', '--no-sync', '--python', $PythonVersion, '--with', 'Nuitka==4.2.2',
+            'run', '--no-sync', '--python', $PythonVersion,
             'python', '-m', 'nuitka',
             '--mode=standalone', '--msvc=latest', '--assume-yes-for-downloads',
             '--low-memory',
