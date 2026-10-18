@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.1.1"
+  #define AppVersion "0.1.2"
 #endif
 #ifndef BuildDir
   #define BuildDir SourcePath + "..\build\windows\main.dist"
@@ -72,7 +72,7 @@ begin
 
   FirmwarePage := CreateInputFilePage(FoldersPage.ID, 'Bluetooth files',
     'Optionally supply the required Realtek RTL8761BU firmware and config binaries.',
-    'Skip, if you want to add them later.',
+    'Skip, if you want to add them later.');
   FirmwarePage.Add('rtl8761bu_fw.bin:', 'Binary files (*.bin)|*.bin|All files (*.*)|*.*', '.bin');
   FirmwarePage.Add('rtl8761bu_config.bin:', 'Binary files (*.bin)|*.bin|All files (*.*)|*.*', '.bin');
 end;

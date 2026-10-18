@@ -8,7 +8,7 @@ import { Menu } from "@videojs/react";
 import { CheckIcon as CheckIconPrimitive } from "@videojs/react/icons";
 
 import { resolveClassName } from "@/src/lib/resolve-class-name";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
 export interface RadioItemProps extends Omit<Menu.RadioItemProps, "children"> {
   children?: Menu.RadioItemProps["children"];

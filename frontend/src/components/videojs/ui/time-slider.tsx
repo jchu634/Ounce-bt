@@ -5,7 +5,10 @@ import "../styles/audio/theme.css";
 import "../styles/video/captions.css";
 import "../styles/video/theme.css";
 import type { SliderPreviewOverflow } from "@videojs/core";
-import { Slider as SliderPrimitive, TimeSlider as TimeSliderPrimitive } from "@videojs/react";
+import {
+  Slider as SliderPrimitive,
+  TimeSlider as TimeSliderPrimitive,
+} from "@videojs/react";
 import { SpinnerIcon as SpinnerIconPrimitive } from "@videojs/react/icons";
 
 import {
@@ -15,9 +18,12 @@ import {
   SliderTrack,
 } from "@/src/components/videojs/ui/slider";
 import { resolveClassName } from "@/src/lib/resolve-class-name";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
-export interface TimeSliderProps extends Omit<TimeSliderPrimitive.RootProps, "children"> {
+export interface TimeSliderProps extends Omit<
+  TimeSliderPrimitive.RootProps,
+  "children"
+> {
   previewOverflow?: SliderPreviewOverflow | undefined;
   /** Draws the thumbnail preview image in place of the one the skin renders. */
   renderThumbnail?: SliderPrimitive.Thumbnail.ImageProps["render"];
@@ -47,7 +53,9 @@ export function TimeSlider({
       {...props}
     >
       <TimeSliderPrimitive.Chapters
-        className={"relative flex size-full min-h-0 min-w-0 flex-1 items-center rounded-[inherit]"}
+        className={
+          "relative flex size-full min-h-0 min-w-0 flex-1 items-center rounded-[inherit]"
+        }
         renderChapter={(props) => (
           <div
             className={cn(
@@ -158,7 +166,10 @@ export function TimeSlider({
               "px-6",
             )}
           />
-          <TimeSliderPrimitive.Value className={"tabular-nums"} type="pointer" />
+          <TimeSliderPrimitive.Value
+            className={"tabular-nums"}
+            type="pointer"
+          />
         </div>
       </TimeSliderPrimitive.Preview>
     </TimeSliderPrimitive.Root>

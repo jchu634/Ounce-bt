@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, type PointerEvent } from "react";
-import { cn } from "cnfast";
+import { cn } from "cn";
 import { GenericButtonCircleFill } from "@/src/assets/input-prompts/generic";
 import { clampStick, type StickPosition } from "@/src/lib/analog-stick";
 
@@ -57,7 +57,10 @@ export function AnalogStick({
     if (disabled || pointer.current !== event.pointerId) return;
     const origin = start.current;
     if (origin === null) return;
-    if (!origin.dragged && Math.hypot(event.clientX - origin.x, event.clientY - origin.y) < 6)
+    if (
+      !origin.dragged &&
+      Math.hypot(event.clientX - origin.x, event.clientY - origin.y) < 6
+    )
       return;
     origin.dragged = true;
     const bounds = event.currentTarget.getBoundingClientRect();
@@ -105,7 +108,8 @@ export function AnalogStick({
         if (pointer.current === event.pointerId) release();
       }}
       onKeyDown={(event) => {
-        if (!disabled && (event.key === " " || event.key === "Enter")) event.preventDefault();
+        if (!disabled && (event.key === " " || event.key === "Enter"))
+          event.preventDefault();
       }}
       onKeyUp={(event) => {
         if (disabled || (event.key !== " " && event.key !== "Enter")) return;

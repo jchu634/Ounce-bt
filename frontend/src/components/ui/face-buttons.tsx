@@ -1,5 +1,5 @@
 import { useState, type MouseEventHandler, type PointerEvent } from "react";
-import { cn } from "cnfast";
+import { cn } from "cn";
 import { Button } from "@/src/components/ui/button";
 import {
   SwitchButtons,
@@ -52,7 +52,10 @@ export function FaceButtons({
     : undefined;
   const Icon = selected?.icon ?? SwitchButtons;
 
-  const releasePointer = (event: PointerEvent<HTMLButtonElement>, name: FaceButtonName) => {
+  const releasePointer = (
+    event: PointerEvent<HTMLButtonElement>,
+    name: FaceButtonName,
+  ) => {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
@@ -69,7 +72,10 @@ export function FaceButtons({
         className,
       )}
     >
-      <Icon className="pointer-events-none absolute inset-0 size-full" aria-hidden="true" />
+      <Icon
+        className="pointer-events-none absolute inset-0 size-full"
+        aria-hidden="true"
+      />
       {buttons.map(({ name, handler, x, y }) => (
         <Button
           key={name}
@@ -98,12 +104,17 @@ export function FaceButtons({
           }}
           onLostPointerCapture={() => onButtonRelease?.(name)}
           onKeyDown={(event) => {
-            if (!onButtonPress || (event.key !== " " && event.key !== "Enter")) return;
+            if (!onButtonPress || (event.key !== " " && event.key !== "Enter"))
+              return;
             event.preventDefault();
             if (!event.repeat) onButtonPress(name);
           }}
           onKeyUp={(event) => {
-            if (!onButtonRelease || (event.key !== " " && event.key !== "Enter")) return;
+            if (
+              !onButtonRelease ||
+              (event.key !== " " && event.key !== "Enter")
+            )
+              return;
             event.preventDefault();
             onButtonRelease(name);
           }}

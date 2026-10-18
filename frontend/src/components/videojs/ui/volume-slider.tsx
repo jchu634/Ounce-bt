@@ -6,11 +6,18 @@ import "../styles/video/captions.css";
 import "../styles/video/theme.css";
 import { VolumeSlider as VolumeSliderPrimitive } from "@videojs/react";
 
-import { SliderFill, SliderThumb, SliderTrack } from "@/src/components/videojs/ui/slider";
+import {
+  SliderFill,
+  SliderThumb,
+  SliderTrack,
+} from "@/src/components/videojs/ui/slider";
 import { resolveClassName } from "@/src/lib/resolve-class-name";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
-export type VolumeSliderProps = Omit<VolumeSliderPrimitive.RootProps, "children">;
+export type VolumeSliderProps = Omit<
+  VolumeSliderPrimitive.RootProps,
+  "children"
+>;
 
 export function VolumeSlider({ className, ...props }: VolumeSliderProps = {}) {
   return (
@@ -34,7 +41,10 @@ export function VolumeSlider({ className, ...props }: VolumeSliderProps = {}) {
       <VolumeSliderPrimitive.Track render={<SliderTrack />}>
         <VolumeSliderPrimitive.Fill render={<SliderFill />} />
       </VolumeSliderPrimitive.Track>
-      <VolumeSliderPrimitive.Thumb render={<SliderThumb />} className={"scale-100 opacity-100"} />
+      <VolumeSliderPrimitive.Thumb
+        render={<SliderThumb />}
+        className={"scale-100 opacity-100"}
+      />
     </VolumeSliderPrimitive.Root>
   );
 }

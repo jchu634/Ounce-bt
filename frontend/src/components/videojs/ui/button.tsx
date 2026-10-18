@@ -6,7 +6,7 @@ import "../styles/video/captions.css";
 import "../styles/video/theme.css";
 import type { ComponentProps } from "react";
 
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
 /** Shared button carrying the base interactive styles used by media controls. */
 export type ButtonProps = ComponentProps<"button">;

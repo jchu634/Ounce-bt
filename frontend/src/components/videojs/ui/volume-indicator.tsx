@@ -12,11 +12,17 @@ import {
 } from "@videojs/react/icons";
 
 import { resolveClassName } from "@/src/lib/resolve-class-name";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
-export type VolumeIndicatorProps = Omit<VolumeIndicatorPrimitive.RootProps, "children">;
+export type VolumeIndicatorProps = Omit<
+  VolumeIndicatorPrimitive.RootProps,
+  "children"
+>;
 
-export function VolumeIndicator({ className, ...props }: VolumeIndicatorProps = {}) {
+export function VolumeIndicator({
+  className,
+  ...props
+}: VolumeIndicatorProps = {}) {
   return (
     <VolumeIndicatorPrimitive.Root
       className={(state) =>
@@ -66,7 +72,9 @@ export function VolumeIndicator({ className, ...props }: VolumeIndicatorProps = 
             "mix-blend-difference",
           )}
         />
-        <VolumeIndicatorPrimitive.Value className={"ml-auto mix-blend-difference"} />
+        <VolumeIndicatorPrimitive.Value
+          className={"ml-auto mix-blend-difference"}
+        />
       </VolumeIndicatorPrimitive.Fill>
     </VolumeIndicatorPrimitive.Root>
   );

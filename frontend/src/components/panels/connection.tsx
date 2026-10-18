@@ -29,7 +29,7 @@ import {
 } from "@/src/components/ui/tooltip";
 import { type BluetoothStatus } from "@/src/lib/bluetooth";
 import { useSwitchConnection } from "@/src/lib/switch-connection";
-import { cn } from "cnfast";
+import { cn } from "cn";
 
 type ConnectionToggleButtonProps = {
   status: BluetoothStatus | null;

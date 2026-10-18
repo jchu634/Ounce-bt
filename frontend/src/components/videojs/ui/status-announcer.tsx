@@ -7,11 +7,17 @@ import "../styles/video/theme.css";
 import { StatusAnnouncer as StatusAnnouncerPrimitive } from "@videojs/react";
 
 import { resolveClassName } from "@/src/lib/resolve-class-name";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
-export type StatusAnnouncerProps = Omit<StatusAnnouncerPrimitive.Props, "children">;
+export type StatusAnnouncerProps = Omit<
+  StatusAnnouncerPrimitive.Props,
+  "children"
+>;
 
-export function StatusAnnouncer({ className, ...props }: StatusAnnouncerProps = {}) {
+export function StatusAnnouncer({
+  className,
+  ...props
+}: StatusAnnouncerProps = {}) {
   return (
     <StatusAnnouncerPrimitive
       className={(state) => cn("sr-only", resolveClassName(className, state))}

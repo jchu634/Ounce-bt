@@ -4,7 +4,9 @@ import asyncio
 import secrets
 import threading
 from urllib.parse import urlsplit
+
 import webview
+
 
 class DesktopBridge:
     def __init__(self, token, origin):
@@ -39,7 +41,6 @@ def run_application(config, args, backend):
         return
     if config.web_host not in ("127.0.0.1", "localhost", "::1"):
         raise ValueError("The desktop web server must bind to localhost")
-
 
     token = secrets.token_urlsafe(32) if config.ws_auth_required else None
     host = f"[{config.web_host}]" if ":" in config.web_host else config.web_host
@@ -106,7 +107,7 @@ def run_application(config, args, backend):
         if finished.is_set():
             return
         window = webview.create_window(
-            "Ounce-bt", url, js_api=bridge, width=1280, height=800
+            "Ounce-bt", url, js_api=bridge, width=1280, height=800, min_size=(1200, 500)
         )
         bridge._window = window
         window.events.closed += request_stop

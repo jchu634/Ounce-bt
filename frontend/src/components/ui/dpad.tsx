@@ -1,5 +1,5 @@
 import { useState, type MouseEventHandler, type PointerEvent } from "react";
-import { cn } from "cnfast";
+import { cn } from "cn";
 import { Button } from "@/src/components/ui/button";
 import {
   XboxDpadNone,
@@ -48,7 +48,10 @@ export function Dpad({
   ...handlers
 }: DpadProps) {
   const [hovered, setHovered] = useState<DpadDirection | null>(null);
-  const releasePointer = (event: PointerEvent<HTMLButtonElement>, direction: DpadDirection) => {
+  const releasePointer = (
+    event: PointerEvent<HTMLButtonElement>,
+    direction: DpadDirection,
+  ) => {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
@@ -68,7 +71,10 @@ export function Dpad({
         className,
       )}
     >
-      <Icon className="pointer-events-none absolute inset-0 size-full" aria-hidden="true" />
+      <Icon
+        className="pointer-events-none absolute inset-0 size-full"
+        aria-hidden="true"
+      />
       {directions.map(({ name, handler, x, y, width, height }) => (
         <Button
           key={name}
@@ -101,14 +107,21 @@ export function Dpad({
           }}
           onLostPointerCapture={() => onDirectionRelease?.(name)}
           onKeyDown={(event) => {
-            if (!onDirectionPress || (event.key !== " " && event.key !== "Enter")) {
+            if (
+              !onDirectionPress ||
+              (event.key !== " " && event.key !== "Enter")
+            ) {
               return;
             }
             event.preventDefault();
             if (!event.repeat) onDirectionPress(name);
           }}
           onKeyUp={(event) => {
-            if (!onDirectionRelease || (event.key !== " " && event.key !== "Enter")) return;
+            if (
+              !onDirectionRelease ||
+              (event.key !== " " && event.key !== "Enter")
+            )
+              return;
             event.preventDefault();
             onDirectionRelease(name);
           }}

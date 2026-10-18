@@ -12,15 +12,23 @@ import {
 
 import { Button } from "@/src/components/videojs/ui/button";
 import { resolveClassName } from "@/src/lib/resolve-class-name";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
-export type FullscreenButtonProps = Omit<FullscreenButtonPrimitive.Props, "children">;
+export type FullscreenButtonProps = Omit<
+  FullscreenButtonPrimitive.Props,
+  "children"
+>;
 
-export function FullscreenButton({ className, ...props }: FullscreenButtonProps = {}) {
+export function FullscreenButton({
+  className,
+  ...props
+}: FullscreenButtonProps = {}) {
   return (
     <FullscreenButtonPrimitive
       render={<Button />}
-      className={(state) => cn("group/fullscreen", resolveClassName(className, state))}
+      className={(state) =>
+        cn("group/fullscreen", resolveClassName(className, state))
+      }
       {...props}
     >
       <FullscreenEnterIconPrimitive

@@ -8,12 +8,12 @@ import { settingsText } from "@videojs/core/i18n/text/menu";
 import { Menu } from "@videojs/react";
 import { Text as TextPrimitive } from "@videojs/react";
 import { GearIcon as GearIconPrimitive } from "@videojs/react/icons";
-import type { ClassValue } from "cnfast";
+import type { ClassValue } from "cn";
 
 import { Button } from "@/src/components/videojs/ui/button";
 import { ButtonTooltip } from "@/src/components/videojs/ui/button-tooltip";
 import { resolveClassName } from "@/src/lib/resolve-class-name";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
 export interface SettingsMenuProps extends Omit<Menu.RootProps, "children"> {
   className?: ClassValue;
@@ -21,16 +21,26 @@ export interface SettingsMenuProps extends Omit<Menu.RootProps, "children"> {
   children?: Menu.ContentProps["children"];
 }
 
-export function SettingsMenu({ children, className, ...props }: SettingsMenuProps) {
+export function SettingsMenu({
+  children,
+  className,
+  ...props
+}: SettingsMenuProps) {
   return (
     <Menu.Root side="top" align="center" {...props}>
       <ButtonTooltip
-        label={<TextPrimitive token={settingsText.key}>{settingsText.text}</TextPrimitive>}
+        label={
+          <TextPrimitive token={settingsText.key}>
+            {settingsText.text}
+          </TextPrimitive>
+        }
         side="top"
       >
         <Menu.Trigger
           render={<Button />}
-          className={(state) => cn("group/settings", resolveClassName(className, state))}
+          className={(state) =>
+            cn("group/settings", resolveClassName(className, state))
+          }
         >
           <GearIconPrimitive
             className={cn(

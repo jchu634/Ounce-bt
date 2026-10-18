@@ -6,7 +6,7 @@ import "../styles/video/captions.css";
 import "../styles/video/theme.css";
 import type { ComponentProps } from "react";
 
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
 /** Shared slider track. */
 export type SliderTrackProps = ComponentProps<"div">;

@@ -6,14 +6,17 @@ import "../styles/video/captions.css";
 import "../styles/video/theme.css";
 import type { VolumeSliderProps as CoreVolumeSliderProps } from "@videojs/core";
 import { VolumePopover as VolumePopoverPrimitive } from "@videojs/react";
-import type { ClassValue } from "cnfast";
+import type { ClassValue } from "cn";
 
 import { ButtonTooltip } from "@/src/components/videojs/ui/button-tooltip";
 import { MuteButton } from "@/src/components/videojs/ui/mute-button";
 import { VolumeSlider } from "@/src/components/videojs/ui/volume-slider";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
-export interface VolumePopoverProps extends Omit<VolumePopoverPrimitive.RootProps, "children"> {
+export interface VolumePopoverProps extends Omit<
+  VolumePopoverPrimitive.RootProps,
+  "children"
+> {
   className?: ClassValue;
   orientation?: CoreVolumeSliderProps["orientation"];
   showTooltip?: boolean;
@@ -27,9 +30,17 @@ export function VolumePopover({
   ...props
 }: VolumePopoverProps = {}) {
   return (
-    <VolumePopoverPrimitive.Root openOnHover delay={200} closeDelay={100} side={side} {...props}>
+    <VolumePopoverPrimitive.Root
+      openOnHover
+      delay={200}
+      closeDelay={100}
+      side={side}
+      {...props}
+    >
       <ButtonTooltip delay={0} disabled={!showTooltip} sticky side="top">
-        <VolumePopoverPrimitive.Trigger render={<MuteButton className={cn(className)} />} />
+        <VolumePopoverPrimitive.Trigger
+          render={<MuteButton className={cn(className)} />}
+        />
       </ButtonTooltip>
       <VolumePopoverPrimitive.Popup
         className={cn(

@@ -6,9 +6,12 @@ import "../styles/video/captions.css";
 import "../styles/video/theme.css";
 import { Container as ContainerPrimitive } from "@videojs/react";
 
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
-export interface ContainerProps extends Omit<ContainerPrimitive.Props, "children"> {
+export interface ContainerProps extends Omit<
+  ContainerPrimitive.Props,
+  "children"
+> {
   children?: ContainerPrimitive.Props["children"];
 }
 

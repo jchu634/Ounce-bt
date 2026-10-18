@@ -1,14 +1,17 @@
 import { ChevronIcon as ChevronIconPrimitive } from "@videojs/react/icons";
-import type { ClassValue } from "cnfast";
+import type { ClassValue } from "cn";
 
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
 export interface MenuChevronProps {
   back?: boolean;
   className?: ClassValue;
 }
 
-export function MenuChevron({ back = false, className }: MenuChevronProps = {}) {
+export function MenuChevron({
+  back = false,
+  className,
+}: MenuChevronProps = {}) {
   return (
     <ChevronIconPrimitive
       className={cn(

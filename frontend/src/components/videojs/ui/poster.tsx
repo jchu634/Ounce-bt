@@ -7,16 +7,24 @@ import "../styles/video/theme.css";
 import { Poster as PosterPrimitive } from "@videojs/react";
 
 import { resolveClassName } from "@/src/lib/resolve-class-name";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
-export interface PosterProps extends Omit<PosterPrimitive.ImageProps, "children" | "render"> {
+export interface PosterProps extends Omit<
+  PosterPrimitive.ImageProps,
+  "children" | "render"
+> {
   /** Draws the poster image in place of the one the skin renders. */
   renderImage?: PosterPrimitive.ImageProps["render"];
 
   children?: PosterPrimitive.RootProps["children"];
 }
 
-export function Poster({ children, className, renderImage, ...props }: PosterProps = {}) {
+export function Poster({
+  children,
+  className,
+  renderImage,
+  ...props
+}: PosterProps = {}) {
   return (
     <PosterPrimitive.Root
       className={(state) =>
@@ -29,7 +37,10 @@ export function Poster({ children, className, renderImage, ...props }: PosterPro
     >
       <PosterPrimitive.Image
         render={renderImage}
-        className={cn("layer-media object-media", "[&:not([src]):not([srcset])]:invisible")}
+        className={cn(
+          "layer-media object-media",
+          "[&:not([src]):not([srcset])]:invisible",
+        )}
         {...props}
       />
 

@@ -15,7 +15,7 @@ import { useMacroRunner } from "@/src/hooks/use-macro-runner";
 import { activatePreset, deletePreset } from "@/src/lib/api";
 import { errorMessage } from "@/src/lib/errors";
 import type { PresetInfo } from "@/src/lib/types";
-import { cn } from "cnfast";
+import { cn } from "cn";
 
 export function PresetPicker({
   presets,

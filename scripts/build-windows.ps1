@@ -3,11 +3,12 @@ param(
     [string]$PythonVersion = '3.14',
     [switch]$SkipFrontend
 )
-
+$env:PreferredToolArchitecture = "x64"
 $ErrorActionPreference = 'Stop'
+
 Set-StrictMode -Version Latest
 if ($env:OS -ne 'Windows_NT')
-{ throw 'This build supports Windows only.' 
+{ throw 'This build supports Windows only.'
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -18,7 +19,7 @@ function Invoke-Checked
     param([string]$Command, [string[]]$Arguments)
     & $Command @Arguments
     if ($LASTEXITCODE -ne 0)
-    { throw "$Command failed with exit code $LASTEXITCODE" 
+    { throw "$Command failed with exit code $LASTEXITCODE"
     }
 }
 
@@ -42,11 +43,12 @@ try
     $env:UV_PROJECT_ENVIRONMENT = Join-Path $buildRoot '.venv'
     try
     {
-        Invoke-Checked uv @('sync', '--locked', '--no-dev', '--python', $PythonVersion)
+        Invoke-Checked uv @('sync', '--locked', '--no-dev', '--group', 'build', '--python', $PythonVersion)
         $arguments = @(
-            'run', '--no-sync', '--python', $PythonVersion, '--with', 'Nuitka==4.2.2',
+            'run', '--no-sync', '--python', $PythonVersion,
             'python', '-m', 'nuitka',
             '--mode=standalone', '--msvc=latest', '--assume-yes-for-downloads',
+            '--low-memory',
             '--output-dir=build/windows', '--output-filename=Ounce-bt.exe',
             '--windows-console-mode=attach',
             '--include-package=uvicorn', '--include-package=bumble',

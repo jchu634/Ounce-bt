@@ -12,7 +12,7 @@ import { QualityRadioGroup } from "@videojs/react/ui/quality-radio-group";
 
 import { MenuChevron } from "@/src/components/videojs/ui/menu-chevron";
 import { RadioItem } from "@/src/components/videojs/ui/radio-item";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
 export type QualityMenuProps = Omit<Menu.RootProps, "children">;
 
@@ -44,8 +44,14 @@ export function QualityMenu({ ...props }: QualityMenuProps = {}) {
               "group-media-highlighted/menu-trigger-item:text-inherit",
             )}
           />
-          <TextPrimitive token={qualityText.key}>{qualityText.text}</TextPrimitive>
-          <span className={"ms-auto inline-flex min-w-0 items-center gap-1 ps-2 text-current/65"}>
+          <TextPrimitive token={qualityText.key}>
+            {qualityText.text}
+          </TextPrimitive>
+          <span
+            className={
+              "ms-auto inline-flex min-w-0 items-center gap-1 ps-2 text-current/65"
+            }
+          >
             <QualityRadioGroup.Value className={"max-w-24 truncate"} />
             <MenuChevron />
           </span>
@@ -83,7 +89,9 @@ export function QualityMenu({ ...props }: QualityMenuProps = {}) {
             )}
           >
             <MenuChevron back />
-            <TextPrimitive token={qualityText.key}>{qualityText.text}</TextPrimitive>
+            <TextPrimitive token={qualityText.key}>
+              {qualityText.text}
+            </TextPrimitive>
           </Menu.Item>
           <Menu.Separator
             className={cn(

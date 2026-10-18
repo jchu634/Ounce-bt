@@ -12,7 +12,7 @@ import type { FileContents } from "@pierre/diffs/react";
 import type { Editor as DiffsEditor, EditorOptions } from "@pierre/diffs/edit";
 
 type AnyEditor = DiffsEditor<undefined>;
-import { cn } from "cnfast";
+import { cn } from "cn";
 
 // Lazy load edit entry point once per session
 type EditModule = typeof import("@pierre/diffs/edit");
@@ -195,7 +195,12 @@ export function JsonEditor({
   );
 
   return (
-    <div className={cn("overflow-auto rounded-xl border border-border bg-background", className)}>
+    <div
+      className={cn(
+        "overflow-auto rounded-xl border border-border bg-background",
+        className,
+      )}
+    >
       {editModule !== null ? (
         <EditProvider
           createEditor={(options: EditorOptions<undefined>) =>

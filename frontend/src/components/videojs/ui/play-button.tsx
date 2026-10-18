@@ -13,7 +13,7 @@ import {
 
 import { Button } from "@/src/components/videojs/ui/button";
 import { resolveClassName } from "@/src/lib/resolve-class-name";
-import { cn } from "@/src/lib/utils";
+import { cn } from "cn";
 
 export type PlayButtonProps = Omit<PlayButtonPrimitive.Props, "children">;
 
@@ -21,7 +21,9 @@ export function PlayButton({ className, ...props }: PlayButtonProps = {}) {
   return (
     <PlayButtonPrimitive
       render={<Button />}
-      className={(state) => cn("group/play", resolveClassName(className, state))}
+      className={(state) =>
+        cn("group/play", resolveClassName(className, state))
+      }
       {...props}
     >
       <RestartIconPrimitive
