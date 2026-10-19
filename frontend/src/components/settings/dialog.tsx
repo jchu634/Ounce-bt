@@ -142,7 +142,7 @@ export function SettingsDialog() {
               <TabsTrigger value="credits">Credits</TabsTrigger>
             </TabsList>
             <TabsContent
-              className="min-h-0 min-w-0 space-y-4 overflow-x-hidden overflow-y-auto p-2"
+              className="app-scrollbar min-h-0 min-w-0 space-y-4 overflow-x-hidden overflow-y-auto p-2"
               value="general"
             >
               <div className="flex flex-col gap-4">
@@ -255,7 +255,7 @@ export function SettingsDialog() {
               />
             </TabsContent>
             <TabsContent
-              className="min-h-0 min-w-0 overflow-y-auto p-2"
+              className="app-scrollbar min-h-0 min-w-0 overflow-y-auto p-2"
               value="credits"
             >
               <Credits />

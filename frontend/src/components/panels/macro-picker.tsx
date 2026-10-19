@@ -18,7 +18,7 @@ export function MacroPicker({ names, selected, onSelect, onCreate }: MacroPicker
         </Button>
       </div>
 
-      <div className="max-h-[calc(100svh-11rem)] scrollbar-gutter-stable overflow-y-auto overscroll-contain rounded-2xl border border-border bg-muted/30 p-2">
+      <div className="app-scrollbar max-h-[calc(100svh-11rem)] overflow-y-auto overscroll-contain rounded-2xl border border-border bg-muted/30 p-2">
         {names.length === 0 ? (
           <div className="flex min-h-28 items-center justify-center rounded-xl border border-dashed border-border px-4 text-sm text-muted-foreground">
             No macros yet. Create one to get started.

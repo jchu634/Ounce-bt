@@ -132,7 +132,7 @@ export function MacroRunPanel({
             No macros match "{search.trim()}".
           </div>
         ) : (
-          <ul className="scrollbar-gutter-stabl flex max-h-42 flex-col gap-2 overflow-y-auto overscroll-contain">
+          <ul className="app-scrollbar flex max-h-42 flex-col gap-2 overflow-y-auto overscroll-contain">
             {filteredNames.map((name) => {
               const isActive = macroActive && macro?.name === name;
               return (
