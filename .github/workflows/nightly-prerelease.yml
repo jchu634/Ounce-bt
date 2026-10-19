@@ -48,8 +48,6 @@ jobs:
           $app = Start-Process -FilePath (Resolve-Path build/windows/main.dist/Ounce-bt.exe) -ArgumentList '--help' -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput build/windows/smoke-stdout.log -RedirectStandardError build/windows/smoke-stderr.log
           Get-Content build/windows/smoke-stdout.log, build/windows/smoke-stderr.log
           if ($app.ExitCode -ne 0) { throw 'Compiled application failed to start.' }
-      - name: Install Inno Setup
-        run: choco install innosetup --yes --no-progress
       - name: Build installer
         run: |
           $version = uv run --no-project --python 3.14 python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])"

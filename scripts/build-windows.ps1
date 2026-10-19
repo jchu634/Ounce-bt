@@ -40,6 +40,7 @@ try
 
     # Keep build dependencies and Python separate from the developer environment.
     $previousEnvironment = $env:UV_PROJECT_ENVIRONMENT
+    $previousCompilerFlags = $env:CCFLAGS
     $env:UV_PROJECT_ENVIRONMENT = Join-Path $buildRoot '.venv'
     try
     {
@@ -59,10 +60,15 @@ try
             '--report=build/windows/nuitka-report.xml',
             'main.py'
         )
+        # MSVC /Ox inlining pushes generated bumble.hci above 18 GiB and fails with C1002 on CI.
+        # /Ob0 reduced the isolated compile to about 1.5 GiB, retaining other /Ox optimizations.
+        # Nuitka appends CCFLAGS after its own compiler flags, so /Ob0 overrides /Ox's inlining.
+        $env:CCFLAGS = "$previousCompilerFlags /Ob0".Trim()
         Invoke-Checked uv $arguments
     } finally
     {
         $env:UV_PROJECT_ENVIRONMENT = $previousEnvironment
+        $env:CCFLAGS = $previousCompilerFlags
     }
 
     $distribution = Join-Path $buildRoot 'main.dist'
