@@ -42,10 +42,12 @@ function PreviewPage() {
         <SettingsDialog />
       </div>
 
-      <div className="flex w-full gap-4">
-        <CapturePreview />
+      <div className="flex w-full flex-col items-start gap-4 lg:flex-row">
+        <div className="flex w-full min-w-0 items-center justify-center lg:sticky lg:top-4 lg:h-[calc(100dvh-6rem)] lg:flex-1">
+          <CapturePreview />
+        </div>
 
-        <div className="flex max-w-1/3 flex-col space-y-4 pt-8">
+        <div className="flex w-full min-w-0 flex-col space-y-4 lg:w-1/3 lg:shrink-0 lg:pt-8">
           <div className="flex items-center gap-4">
             <h2 className="text-lg font-semibold">Connection</h2>
             <ConnectionStatus
