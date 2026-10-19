@@ -40,6 +40,7 @@ try
 
     # Keep build dependencies and Python separate from the developer environment.
     $previousEnvironment = $env:UV_PROJECT_ENVIRONMENT
+    $previousCompilerFlags = $env:CCFLAGS
     $env:UV_PROJECT_ENVIRONMENT = Join-Path $buildRoot '.venv'
     try
     {
@@ -67,6 +68,7 @@ try
     } finally
     {
         $env:UV_PROJECT_ENVIRONMENT = $previousEnvironment
+        $env:CCFLAGS = $previousCompilerFlags
     }
 
     $distribution = Join-Path $buildRoot 'main.dist'
