@@ -43,8 +43,10 @@ def run_application(config, args, backend):
         raise ValueError("The desktop web server must bind to localhost")
 
     token = secrets.token_urlsafe(32) if config.ws_auth_required else None
+    # Cache busting nonce to prevent fetching a stale build
+    launch_nonce = secrets.token_hex(16)
     host = f"[{config.web_host}]" if ":" in config.web_host else config.web_host
-    url = f"http://{host}:{config.web_port}"
+    url = f"http://{host}:{config.web_port}/?launch={launch_nonce}"
     bridge = DesktopBridge(token, ("http", f"{host}:{config.web_port}"))
     ready = threading.Event()
     finished = threading.Event()

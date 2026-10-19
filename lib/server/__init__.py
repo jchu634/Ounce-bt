@@ -551,11 +551,18 @@ class SPAStaticFiles(StaticFiles):
 
     async def get_response(self, path: str, scope) -> Response:
         try:
-            return await super().get_response(path, scope)
+            response = await super().get_response(path, scope)
         except HTTPException as e:
             if e.status_code == 404:
-                return await super().get_response("index.html", scope)
-            raise
+                response = await super().get_response("index.html", scope)
+            else:
+                raise
+        if (
+            response.headers.get("content-type", "").startswith("text/html")
+            or response.status_code == 304
+        ):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 async def _frontend_not_built(request: Request) -> Response:
