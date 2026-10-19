@@ -13,6 +13,25 @@ from lib.input.manager import InputManager
 from lib.server import build_app
 
 
+@pytest.mark.parametrize("path", ["/", "/index.html", "/macros"])
+def test_frontend_html_requires_revalidation(tmp_path, path):
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    index = dist / "index.html"
+    index.write_text('<script src="/assets/old.js"></script>')
+    with TestClient(app_for(tmp_path)) as client:
+        response = client.get(path)
+        assert response.headers["cache-control"] == "no-cache"
+        etag = response.headers["etag"]
+        unchanged = client.get(path, headers={"If-None-Match": etag})
+        assert unchanged.status_code == 304
+        assert unchanged.headers["cache-control"] == "no-cache"
+        index.write_text('<script src="/assets/new-build.js"></script>')
+        rebuilt = client.get(path, headers={"If-None-Match": etag})
+        assert rebuilt.status_code == 200
+        assert "/assets/new-build.js" in rebuilt.text
+
+
 def app_for(tmp_path, **kwargs):
     config = Config(**kwargs)
     return build_app(
@@ -104,6 +123,9 @@ def test_browser_launcher_rejects_unreachable_authentication():
 def test_window_close_cancels_backend(monkeypatch):
     import webview
 
+    nonce = Mock(side_effect=["a" * 32, "b" * 32])
+    monkeypatch.setattr("lib.desktop.secrets.token_hex", nonce)
+
     class Event:
         def __iadd__(self, callback):
             self.callback = callback
@@ -125,6 +147,12 @@ def test_window_close_cancels_backend(monkeypatch):
 
     run_application(Config(), None, backend)
     assert cleaned == [True]
+    first_url = webview.create_window.call_args.args[1]
+    run_application(Config(), None, backend)
+    second_url = webview.create_window.call_args.args[1]
+    assert first_url == f"http://127.0.0.1:9127/?launch={'a' * 32}"
+    assert second_url == f"http://127.0.0.1:9127/?launch={'b' * 32}"
+    assert nonce.call_args_list == [((16,),), ((16,),)]
 
 
 def test_backend_failure_prevents_window_open(monkeypatch):

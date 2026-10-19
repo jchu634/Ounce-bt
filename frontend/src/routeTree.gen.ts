@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ControlsRouteImport } from './routes/controls'
 import { Route as MacrosRouteImport } from './routes/macros'
+import { Route as LicensesSlugRouteImport } from './routes/licenses.$slug'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -28,35 +29,44 @@ const MacrosRoute = MacrosRouteImport.update({
   path: '/macros',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LicensesSlugRoute = LicensesSlugRouteImport.update({
+  id: '/licenses/$slug',
+  path: '/licenses/$slug',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/controls': typeof ControlsRoute
   '/macros': typeof MacrosRoute
+  '/licenses/$slug': typeof LicensesSlugRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/controls': typeof ControlsRoute
   '/macros': typeof MacrosRoute
+  '/licenses/$slug': typeof LicensesSlugRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/controls': typeof ControlsRoute
   '/macros': typeof MacrosRoute
+  '/licenses/$slug': typeof LicensesSlugRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/controls' | '/macros'
+  fullPaths: '/' | '/controls' | '/macros' | '/licenses/$slug'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/controls' | '/macros'
-  id: '__root__' | '/' | '/controls' | '/macros'
+  to: '/' | '/controls' | '/macros' | '/licenses/$slug'
+  id: '__root__' | '/' | '/controls' | '/macros' | '/licenses/$slug'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ControlsRoute: typeof ControlsRoute
   MacrosRoute: typeof MacrosRoute
+  LicensesSlugRoute: typeof LicensesSlugRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -82,6 +92,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MacrosRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/licenses/$slug': {
+      id: '/licenses/$slug'
+      path: '/licenses/$slug'
+      fullPath: '/licenses/$slug'
+      preLoaderRoute: typeof LicensesSlugRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -89,6 +106,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ControlsRoute: ControlsRoute,
   MacrosRoute: MacrosRoute,
+  LicensesSlugRoute: LicensesSlugRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

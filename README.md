@@ -18,6 +18,14 @@ pnpm run dev
 
 The Vite dev server proxies `/ws` and `/api` to the Python backend, so the frontend can use relative URLs (`/ws`, `/api/...`) in both dev and prod.
 
+#### Frontend build
+
+Regenerate the frontend build for the backend+webview app using
+
+```bash
+pnpm run build
+```
+
 #### Backend
 
 ```bash
@@ -66,4 +74,4 @@ If either file is missing, the frontend will notify you.
 
 This project includes code adapted from Brikwerk's [NXBT](https://github.com/Brikwerk/nxbt) project.
 
-This project utilised typenoob's bumble implementation [(NXBT)](https://github.com/typenoob/nxbt) for understanding the pairing protocol.
+This project utilised typenoob's bumble implementation [(NXBT)](https://github.com/typenoob/nxbt) for help in understanding the pairing protocol.

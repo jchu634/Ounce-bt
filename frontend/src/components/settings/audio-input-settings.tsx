@@ -11,9 +11,11 @@ import {
 } from "@/src/components/ui/select";
 
 export function AudioInputSettings({
+  disabled,
   selectedId,
   onSelectedIdChange,
 }: {
+  disabled: boolean;
   selectedId: string;
   onSelectedIdChange: (deviceId: string) => void;
 }) {
@@ -22,8 +24,10 @@ export function AudioInputSettings({
   const [testing, setTesting] = useState(false);
   const [level, setLevel] = useState(0);
   const cleanupRef = useRef<(() => void) | null>(null);
+  const activeRef = useRef(false);
 
   useEffect(() => {
+    activeRef.current = true;
     const mediaDevices = navigator.mediaDevices;
     if (!mediaDevices?.enumerateDevices) return;
     let active = true;
@@ -39,6 +43,7 @@ export function AudioInputSettings({
     void refresh();
     mediaDevices.addEventListener?.("devicechange", refresh);
     return () => {
+      activeRef.current = false;
       active = false;
       mediaDevices.removeEventListener?.("devicechange", refresh);
       cleanupRef.current?.();
@@ -64,6 +69,10 @@ export function AudioInputSettings({
         video: false,
         audio: selectedId ? { deviceId: { exact: selectedId } } : true,
       });
+      if (!activeRef.current || disabled) {
+        acquiredStream.getTracks().forEach((track) => track.stop());
+        return;
+      }
       stream = acquiredStream;
       const context = new AudioContext();
       const source = context.createMediaStreamSource(acquiredStream);
@@ -107,6 +116,7 @@ export function AudioInputSettings({
     <div className="flex flex-col items-start gap-3">
       <div className="flex w-full flex-wrap items-center gap-2">
         <Select
+          disabled={disabled}
           value={selectedId}
           onValueChange={(id) => {
             if (id === null) return;
@@ -114,8 +124,10 @@ export function AudioInputSettings({
             onSelectedIdChange(id);
           }}
         >
-          <SelectTrigger className="w-1/2 min-w-64" aria-label="Audio input">
-            <SelectValue placeholder="Audio input">{selected?.label}</SelectValue>
+          <SelectTrigger className="w-1/2 min-w-[min(100%,16rem)]" aria-label="Audio input">
+            <SelectValue className="min-w-0 truncate" placeholder="Audio input">
+              {selected?.label}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectGroup>
@@ -131,6 +143,7 @@ export function AudioInputSettings({
         <Button
           type="button"
           variant="outline"
+          disabled={disabled}
           onClick={() => {
             if (testing) stopTest();
             else void startTest();

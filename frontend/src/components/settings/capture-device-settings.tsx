@@ -154,8 +154,8 @@ function CaptureDeviceSettingsContent({
             }
           }}
         >
-          <SelectTrigger className="w-1/2 min-w-64">
-            <SelectValue placeholder="Capture Device">
+          <SelectTrigger className="w-1/2 min-w-[min(100%,16rem)]">
+            <SelectValue className="min-w-0 truncate" placeholder="Capture Device">
               {selectedInputLabel}
             </SelectValue>
           </SelectTrigger>

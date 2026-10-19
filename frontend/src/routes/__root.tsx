@@ -1,4 +1,4 @@
-import { Outlet, createRootRoute } from "@tanstack/react-router";
+import { Outlet, createRootRoute, useMatch } from "@tanstack/react-router";
 import { SocketProvider } from "@/src/hooks/use-socket";
 import { CaptureProvider } from "@/src/hooks/use-capture";
 import { Toaster } from "@/src/components/ui/toast";
@@ -10,6 +10,13 @@ export const Route = createRootRoute({
 });
 
 function RootComponent() {
+  const licenseMatch = useMatch({
+    from: "/licenses/$slug",
+    shouldThrow: false,
+  });
+
+  if (licenseMatch) return <Outlet />;
+
   return (
     <StartupGate>
       <SocketProvider>

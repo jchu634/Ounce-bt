@@ -43,8 +43,10 @@ def run_application(config, args, backend):
         raise ValueError("The desktop web server must bind to localhost")
 
     token = secrets.token_urlsafe(32) if config.ws_auth_required else None
+    # Cache busting nonce to prevent fetching a stale build
+    launch_nonce = secrets.token_hex(16)
     host = f"[{config.web_host}]" if ":" in config.web_host else config.web_host
-    url = f"http://{host}:{config.web_port}"
+    url = f"http://{host}:{config.web_port}/?launch={launch_nonce}"
     bridge = DesktopBridge(token, ("http", f"{host}:{config.web_port}"))
     ready = threading.Event()
     finished = threading.Event()
@@ -107,7 +109,7 @@ def run_application(config, args, backend):
         if finished.is_set():
             return
         window = webview.create_window(
-            "Ounce-bt", url, js_api=bridge, width=1280, height=800, min_size=(1200, 500)
+            "Ounce-bt", url, js_api=bridge, width=1280, height=800, min_size=(800, 500)
         )
         bridge._window = window
         window.events.closed += request_stop
