@@ -1192,8 +1192,8 @@ function PresetMappingEditor({
   };
 
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card">
-      <div className="order-b flex flex-wrap items-center border-border bg-muted/30 px-4 py-3">
+    <div className="@container/mapping overflow-hidden rounded-xl border border-border bg-card">
+      <div className="flex flex-wrap items-center gap-3 border-b border-border bg-muted/30 px-4 py-3">
         <div className="flex items-center gap-2">
           <GameControllerIcon size={18} />
           <div>
@@ -1222,42 +1222,50 @@ function PresetMappingEditor({
         </Label>
       </div>
 
-      <div className="flex justify-between p-4">
-        <div className="min-w-0 space-y-3">
+      <div className="flex flex-col gap-4 p-3 @sm/mapping:p-4 mapping-preview:flex-row mapping-preview:gap-6">
+        <div className="flex min-w-0 flex-wrap items-start gap-3 mapping-preview:shrink-0 mapping-preview:flex-col">
           {MAPPING_GROUPS.map((group) => (
             <section
               key={group.title}
-              className="min-w-0 rounded-xl border bg-primary p-2"
+              className="w-fit max-w-full rounded-xl border bg-primary p-2"
             >
               <h4 className="px-2 py-1 text-xs font-semibold text-primary-foreground">
                 {group.title}
               </h4>
-              <div className="lg:grid lg:grid-cols-2">
+              <div className="grid grid-cols-[max-content] @md/mapping:grid-cols-[repeat(2,max-content)]">
                 {group.controls.map(mappingRow)}
               </div>
             </section>
           ))}
         </div>
-        <div className="h-100% center flex flex-col items-center justify-center p-5 2.5xl:w-3/5">
+        <div className="order-first flex min-w-0 flex-wrap items-center gap-3 rounded-lg bg-muted/30 px-3 py-2.5 mapping-preview:sticky mapping-preview:top-4 mapping-preview:order-last mapping-preview:flex-1 mapping-preview:flex-col mapping-preview:flex-nowrap mapping-preview:self-start mapping-preview:gap-0 mapping-preview:bg-transparent mapping-preview:p-4 mapping-preview:text-center">
           {ControllerImage === null ? (
             <GameControllerIcon
               weight="light"
-              className="size-32 text-muted-foreground"
+              className="size-10 shrink-0 text-muted-foreground mapping-preview:mb-3 mapping-preview:h-56 mapping-preview:w-full mapping-preview:max-w-112"
             />
           ) : (
             <ControllerImage
               role="img"
               aria-label={`${controller.label} controller layout`}
-              className="w-full max-w-56 opacity-80 brightness-0 dark:invert"
+              viewBox="0 12 64 40"
+              width={64}
+              height={40}
+              className="h-auto w-10 shrink-0 opacity-80 brightness-0 mapping-preview:w-full mapping-preview:max-w-112 dark:invert"
             />
           )}
-          <p className="mt-3 text-sm font-semibold">{controller.label}</p>
-          <p className="mt-1 max-w-52 text-center text-xs text-muted-foreground">
-            Use the dropdowns or the controller buttons beside each mapping.
-          </p>
+          <div className="min-w-0 flex-1 mapping-preview:flex-none">
+            <p className="text-sm font-semibold">{controller.label}</p>
+            <p className="mt-1 text-xs text-muted-foreground mapping-preview:max-w-64">
+              Use the dropdowns or the controller buttons beside each mapping.
+            </p>
+          </div>
           {listeningTarget !== null && (
-            <div className="mt-4 flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary">
-              <SpinnerGapIcon className="animate-spin" />
+            <div
+              role="status"
+              className="flex items-center gap-2 rounded-lg bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary mapping-preview:mt-4"
+            >
+              <SpinnerGapIcon className="shrink-0 animate-spin" />
               Press a button for {BUTTON_LABELS[listeningTarget]}
             </div>
           )}

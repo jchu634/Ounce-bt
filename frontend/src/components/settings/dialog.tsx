@@ -24,16 +24,20 @@ import { GearSixIcon } from "@phosphor-icons/react";
 import { useCallback, useRef, useState } from "react";
 import { Effect } from "effect";
 import { useCaptureControls, useCaptureInput } from "@/src/hooks/use-capture";
+
 import { Checkbox } from "@/src/components/ui/checkbox";
 import { ToggleGroup, ToggleGroupItem } from "@/src/components/ui/toggle-group";
 import { Separator } from "@/src/components/ui/separator";
 import { Label } from "@/src/components/ui/label";
+
 import { AudioInputSettings } from "@/src/components/settings/audio-input-settings";
 import { ControllerSettings } from "@/src/components/settings/controller-settings";
+import { CaptureDeviceSettings } from "@/src/components/settings/capture-device-settings";
+import Credits from "@/src/components/settings/credits";
+
 import { listPresets } from "@/src/lib/api";
 import { errorMessage } from "@/src/lib/errors";
 import type { PresetInfo } from "@/src/lib/types";
-import { CaptureDeviceSettings } from "@/src/components/settings/capture-device-settings";
 
 const SETTINGS_DESCRIPTIONS: Record<string, string> = {
   general: "General settings.",
@@ -251,6 +255,7 @@ export function SettingsDialog() {
               className="min-h-0 min-w-0 overflow-y-auto p-2"
               value="credits"
             >
+              <Credits />
             </TabsContent>
           </Tabs>
         </DialogContent>
