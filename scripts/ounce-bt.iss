@@ -19,6 +19,7 @@ OutputBaseFilename=Ounce-bt-{#AppVersion}-windows-x64-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\frontend\public\app.ico
 DisableProgramGroupPage=yes
 UninstallDisplayIcon={app}\Ounce-bt.exe
 CloseApplications=yes

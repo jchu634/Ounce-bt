@@ -51,6 +51,7 @@ try
             '--mode=standalone', '--msvc=latest', '--assume-yes-for-downloads',
             '--output-dir=build/windows', '--output-filename=Ounce-bt.exe',
             '--windows-console-mode=attach',
+            '--windows-icon-from-ico=frontend/public/app.ico',
             '--include-package=uvicorn', '--include-package=bumble',
             '--include-data-dir=frontend/dist=frontend/dist',
             '--include-data-files=presets/xbox.json=presets/xbox.json',
