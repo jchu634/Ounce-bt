@@ -7,7 +7,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/src/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/src/components/ui/tabs";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/src/components/ui/tabs";
 import { Button } from "@/src/components/ui/button";
 import { useSelector } from "@tanstack/react-store";
 import {
@@ -59,7 +64,8 @@ export function SettingsDialog({ className }: { className?: string }) {
         if (requestId === presetRequestId.current) setPresets(presets);
       })
       .catch((error: unknown) => {
-        if (requestId === presetRequestId.current) setPresetsError(errorMessage(error));
+        if (requestId === presetRequestId.current)
+          setPresetsError(errorMessage(error));
       })
       .finally(() => {
         if (requestId === presetRequestId.current) setPresetsLoading(false);
@@ -74,13 +80,19 @@ export function SettingsDialog({ className }: { className?: string }) {
     (settings) => settings.hideManualControl,
   );
   const theme = useSelector(generalSettingsStore, (settings) => settings.theme);
-  const [draftControlsOnlyHomepage, setDraftControlsOnlyHomepage] = useState(controlsOnlyHomepage);
-  const { selectedAudioInputId, selectedCameraInputId, selectInputs } = useCaptureInput();
-  const [draftAudioInputId, setDraftAudioInputId] = useState(selectedAudioInputId);
-  const [draftCaptureInputId, setDraftCaptureInputId] = useState(selectedCameraInputId);
+  const [draftControlsOnlyHomepage, setDraftControlsOnlyHomepage] =
+    useState(controlsOnlyHomepage);
+  const { selectedAudioInputId, selectedCameraInputId, selectInputs } =
+    useCaptureInput();
+  const [draftAudioInputId, setDraftAudioInputId] =
+    useState(selectedAudioInputId);
+  const [draftCaptureInputId, setDraftCaptureInputId] = useState(
+    selectedCameraInputId,
+  );
   const { stop, starting } = useCaptureControls();
   const hasUnsavedInputChanges =
-    draftAudioInputId !== selectedAudioInputId || draftCaptureInputId !== selectedCameraInputId;
+    draftAudioInputId !== selectedAudioInputId ||
+    draftCaptureInputId !== selectedCameraInputId;
 
   return (
     <>
@@ -124,7 +136,9 @@ export function SettingsDialog({ className }: { className?: string }) {
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
 
-            <DialogDescription>{SETTINGS_DESCRIPTIONS[currentTab]}</DialogDescription>
+            <DialogDescription>
+              {SETTINGS_DESCRIPTIONS[currentTab]}
+            </DialogDescription>
           </DialogHeader>
           <Tabs
             value={currentTab}
@@ -145,7 +159,9 @@ export function SettingsDialog({ className }: { className?: string }) {
               value="general"
             >
               <div className="flex flex-col gap-4">
-                <h2 className="text-lg font-semibold text-foreground">Input Settings</h2>
+                <h2 className="text-lg font-semibold text-foreground">
+                  Input Settings
+                </h2>
                 <AudioInputSettings
                   key={String(draftControlsOnlyHomepage)}
                   disabled={draftControlsOnlyHomepage}
@@ -177,9 +193,15 @@ export function SettingsDialog({ className }: { className?: string }) {
               <Separator />
               <div className="flex w-full max-w-180 items-center justify-between gap-4">
                 <div className="flex flex-col gap-1">
-                  <Label htmlFor="controls-only-homepage">Controls-only homepage (WIP)</Label>
-                  <p id="controls-only-description" className="text-sm text-muted-foreground">
-                    Focus on macros and manual control without the capture card preview.
+                  <Label htmlFor="controls-only-homepage">
+                    Controls-only homepage (WIP)
+                  </Label>
+                  <p
+                    id="controls-only-description"
+                    className="text-sm text-muted-foreground"
+                  >
+                    Focus on macros and manual control without the capture card
+                    preview.
                   </p>
                 </div>
                 <Checkbox
@@ -192,8 +214,13 @@ export function SettingsDialog({ className }: { className?: string }) {
               </div>
               <div className="flex w-full max-w-180 items-center justify-between gap-4">
                 <div className="flex flex-col gap-1">
-                  <Label htmlFor="hide-manual-control">Hide manual control</Label>
-                  <p id="hide-manual-control-description" className="text-sm text-muted-foreground">
+                  <Label htmlFor="hide-manual-control">
+                    Hide manual control
+                  </Label>
+                  <p
+                    id="hide-manual-control-description"
+                    className="text-sm text-muted-foreground"
+                  >
                     Show only macros on the controls-only homepage.
                   </p>
                 </div>
@@ -209,7 +236,10 @@ export function SettingsDialog({ className }: { className?: string }) {
               <div className="flex w-full max-w-180 flex-wrap items-center justify-between gap-4">
                 <div className="flex basis-64 flex-col gap-1">
                   <Label id="theme-label">Appearance</Label>
-                  <p id="theme-description" className="text-sm text-muted-foreground">
+                  <p
+                    id="theme-description"
+                    className="text-sm text-muted-foreground"
+                  >
                     Choose light, dark, or follow your system setting.
                   </p>
                 </div>
@@ -219,23 +249,37 @@ export function SettingsDialog({ className }: { className?: string }) {
                   value={[theme]}
                   onValueChange={(value) => {
                     const selected = value.find(
-                      (item) => item === "dark" || item === "light" || item === "system",
+                      (item) =>
+                        item === "dark" ||
+                        item === "light" ||
+                        item === "system",
                     );
-                    if (selected === "dark" || selected === "light" || selected === "system") {
+                    if (
+                      selected === "dark" ||
+                      selected === "light" ||
+                      selected === "system"
+                    ) {
                       setTheme(selected);
                     }
                   }}
                   className="inline-flex shrink-0 rounded-md border border-input bg-background p-1"
                 >
                   {(["light", "dark", "system"] as const).map((option) => (
-                    <ToggleGroupItem key={option} value={option} className="capitalize">
+                    <ToggleGroupItem
+                      key={option}
+                      value={option}
+                      className="capitalize"
+                    >
                       {option}
                     </ToggleGroupItem>
                   ))}
                 </ToggleGroup>
               </div>
             </TabsContent>
-            <TabsContent className="min-h-0 min-w-0 overflow-y-auto p-2" value="controller">
+            <TabsContent
+              className="min-h-0 min-w-0 overflow-y-auto p-2 app-scrollbar"
+              value="controller"
+            >
               <ControllerSettings
                 presets={presets}
                 loading={presetsLoading}
@@ -250,6 +294,9 @@ export function SettingsDialog({ className }: { className?: string }) {
               <Credits />
             </TabsContent>
           </Tabs>
+          <p className="shrink-0 font-semibold text-right text-xs text-muted-foreground">
+            v{import.meta.env.VITE_APP_VERSION}
+          </p>
         </DialogContent>
       </Dialog>
       <Dialog open={discardPromptOpen} onOpenChange={setDiscardPromptOpen}>
@@ -261,7 +308,10 @@ export function SettingsDialog({ className }: { className?: string }) {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDiscardPromptOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => setDiscardPromptOpen(false)}
+            >
               Keep editing
             </Button>
             <Button
