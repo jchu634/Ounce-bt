@@ -91,7 +91,9 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: Ounce-bt-windows-x64-standalone
-          path: release-assets/Ounce-bt-windows-x64-standalone
+          path: standalone-app
+      - name: Package standalone app for release
+        run: python -c "import shutil; shutil.make_archive('release-assets/Ounce-bt-windows-x64-standalone', 'zip', 'standalone-app')"
       - name: Prepare nightly release metadata
         id: release
         env:
