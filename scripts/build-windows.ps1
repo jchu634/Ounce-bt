@@ -49,7 +49,6 @@ try
             'run', '--no-sync', '--python', $PythonVersion,
             'python', '-m', 'nuitka',
             '--mode=standalone', '--msvc=latest', '--assume-yes-for-downloads',
-            '--low-memory',
             '--output-dir=build/windows', '--output-filename=Ounce-bt.exe',
             '--windows-console-mode=attach',
             '--include-package=uvicorn', '--include-package=bumble',
