@@ -38,7 +38,6 @@ function ControlsPage() {
         <SettingsDialog className="static" />
       </div>
       <main className="mx-auto w-full max-w-7xl pb-6">
-        <h1 className="mb-6 text-2xl font-semibold">Controller</h1>
         <div className="mb-6 space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-4">
@@ -63,9 +62,19 @@ function ControlsPage() {
             <SwitchConnection connection={switchConnection} />
           </div>
         </div>
-        <div className={hideManualControl ? "grid" : "grid items-start gap-6 xl:grid-cols-2"}>
-          <div className="min-w-0 rounded-md border border-border bg-card p-4">
+        <div
+          className={
+            hideManualControl ? "grid min-h-104" : "grid items-stretch gap-6 xl:grid-cols-2"
+          }
+        >
+          {!hideManualControl && (
+            <div className="min-w-0 overflow-x-auto">
+              <ManualControl />
+            </div>
+          )}
+          <div className={hideManualControl ? "min-w-0" : "h-72 min-w-0 xl:h-auto"}>
             <MacroRunPanel
+              fillHeight
               names={macroList.kind === "loaded" ? macroList.names : []}
               listError={macroList.kind === "error" ? macroList.message : null}
               onRetry={() => void router.invalidate()}
@@ -73,11 +82,6 @@ function ControlsPage() {
               onSelect={setSelectedMacro}
             />
           </div>
-          {!hideManualControl && (
-            <div className="min-w-0 overflow-x-auto">
-              <ManualControl />
-            </div>
-          )}
         </div>
       </main>
     </div>
