@@ -375,26 +375,30 @@ export function ManualControl() {
   };
 
   return (
-    <section className="w-full">
+    <section className="w-full min-w-0">
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-lg font-semibold">Manual control</h2>
       </div>
 
-      <div className="mx-auto flex max-w-xl flex-col gap-2 rounded-md border border-border bg-card p-3 text-card-foreground shadow-sm">
-        <div className="grid grid-cols-4 gap-1" aria-label="Triggers">
+      {/* The widest row needs 21.5rem: two 7rem pads, two 3rem buttons, and two 0.75rem gaps. */}
+      <div className="@container mx-auto flex max-w-xl flex-col gap-2 rounded-md border border-border bg-card p-3 text-card-foreground shadow-sm [--control-unit:min(1rem,calc(100cqw/21.5))]">
+        <div
+          className="grid grid-cols-4 gap-[calc(var(--control-unit)/4)]"
+          aria-label="Triggers"
+        >
           {BUTTON_GROUPS.shoulders.map(({ button, ...visual }) => (
             <ControlButton
               key={button}
               {...controlProps(button)}
               {...visual}
-              className="h-12 w-full"
+              className="h-[calc(var(--control-unit)*3)] w-full"
             />
           ))}
         </div>
 
-        <div className="flex w-full items-center justify-between gap-3">
+        <div className="flex w-full items-center justify-between gap-[calc(var(--control-unit)*0.75)]">
           <Dpad
-            className="size-28"
+            className="size-[calc(var(--control-unit)*7)]"
             disabled={disabled}
             onDirectionPress={(direction) => press(DPAD_BUTTONS[direction])}
             onDirectionRelease={(direction) => release(DPAD_BUTTONS[direction])}
@@ -406,13 +410,13 @@ export function ManualControl() {
                 key={button}
                 {...controlProps(button)}
                 {...visual}
-                className="size-12"
+                className="size-[calc(var(--control-unit)*3)]"
               />
             ))}
           </div>
 
           <FaceButtons
-            className="size-28"
+            className="size-[calc(var(--control-unit)*7)]"
             disabled={disabled}
             pressedButtons={pressedButtons}
             onButtonPress={(button: FaceButtonName) => press(button)}
@@ -421,13 +425,14 @@ export function ManualControl() {
         </div>
 
         <div
-          className="grid grid-cols-2 justify-items-center gap-4 border-t border-border pt-4"
+          className="grid grid-cols-2 justify-items-center gap-(--control-unit) border-t border-border pt-(--control-unit)"
           aria-label="Analog sticks"
         >
           {(["left", "right"] satisfies StickSide[]).map((side) => (
             <div key={side} className="flex flex-col items-center gap-3">
               {stickMode === "drag" ? (
                 <AnalogStick
+                  className="size-[calc(var(--control-unit)*9)]"
                   aria-label={`${side} stick, drag to move or click for ${side === "left" ? "L3" : "R3"}`}
                   value={analogPositions[side] ?? [0, 0]}
                   onChange={
@@ -440,7 +445,7 @@ export function ManualControl() {
                   disabled={disabled}
                 />
               ) : (
-                <div className="grid size-36 grid-cols-3 grid-rows-3 place-items-center">
+                <div className="grid size-[calc(var(--control-unit)*9)] grid-cols-3 grid-rows-3 place-items-center">
                   <ControlButton
                     {...stickControlProps(side, "up")}
                     accessibleLabel={`${side} stick up`}
@@ -451,7 +456,7 @@ export function ManualControl() {
                         <SwitchStickRUp className="size-full" />
                       )
                     }
-                    className="col-start-2 row-start-1 size-12"
+                    className="col-start-2 row-start-1 size-[calc(var(--control-unit)*3)]"
                   />
                   <ControlButton
                     {...stickControlProps(side, "left")}
@@ -463,7 +468,7 @@ export function ManualControl() {
                         <SwitchStickRLeft className="size-full" />
                       )
                     }
-                    className="col-start-1 row-start-2 size-12"
+                    className="col-start-1 row-start-2 size-[calc(var(--control-unit)*3)]"
                   />
                   <ControlButton
                     {...controlProps(STICK_BUTTONS[side])}
@@ -475,7 +480,7 @@ export function ManualControl() {
                         <SwitchStickRPress className="size-full" />
                       )
                     }
-                    className="col-start-2 row-start-2 size-12"
+                    className="col-start-2 row-start-2 size-[calc(var(--control-unit)*3)]"
                   />
                   <ControlButton
                     {...stickControlProps(side, "right")}
@@ -487,7 +492,7 @@ export function ManualControl() {
                         <SwitchStickRRight className="size-full" />
                       )
                     }
-                    className="col-start-3 row-start-2 size-12"
+                    className="col-start-3 row-start-2 size-[calc(var(--control-unit)*3)]"
                   />
                   <ControlButton
                     {...stickControlProps(side, "down")}
@@ -499,7 +504,7 @@ export function ManualControl() {
                         <SwitchStickRDown className="size-full" />
                       )
                     }
-                    className="col-start-2 row-start-3 size-12"
+                    className="col-start-2 row-start-3 size-[calc(var(--control-unit)*3)]"
                   />
                 </div>
               )}
