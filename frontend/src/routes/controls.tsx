@@ -33,7 +33,7 @@ function ControlsPage() {
   );
 
   return (
-    <div className="flex h-full w-full flex-col gap-6 px-4">
+    <div className="flex h-full w-full flex-col gap-6 p-4">
       <div className="flex flex-wrap items-center justify-end gap-2">
         <SettingsDialog className="static" />
       </div>
