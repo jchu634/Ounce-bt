@@ -168,8 +168,8 @@ export default function Credits() {
           NXBT project
         </a>
         <br />
-        Ounce-bt's bluetooth core was implemented using NXBT documentation, and uses/adapts some
-        code from that project.{" "}
+        Ounce-bt's bluetooth core was implemented using NXBT documentation, and
+        uses/adapts some code from that project.{" "}
         <a className="text-blue-500" href="/licenses/nxbt">
           License
         </a>
@@ -178,8 +178,9 @@ export default function Credits() {
         <a className="text-blue-500" href="https://github.com/typenoob/nxbt">
           NXBT fork
         </a>{" "}
-        as their bumble implementation was used to help understand the pairing protocol and fix the
-        last bugs that prevented Ounce-bt's bumble implementation from working.{" "}
+        as their bumble implementation was used to help understand the pairing
+        protocol and fix the last bugs that prevented Ounce-bt's bumble
+        implementation from working.{" "}
         <a className="text-blue-500" href="/licenses/nxbt-typenoob">
           License
         </a>
@@ -195,10 +196,17 @@ export default function Credits() {
                     <a className="text-blue-500" href={dependency.url}>
                       {dependency.name}
                     </a>
-                    <span className="text-muted-foreground"> · {dependency.description}</span>
+                    <span className="text-muted-foreground">
+                      {" "}
+                      · {dependency.description}
+                    </span>
                     <div className="text-xs text-muted-foreground">
                       License:{" "}
-                      <a href={`/licenses/${encodeURIComponent(dependency.licenseSlug)}`}>
+                      <a
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        href={`/licenses/${encodeURIComponent(dependency.licenseSlug)}`}
+                      >
                         {dependency.license}
                       </a>
                     </div>
