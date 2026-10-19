@@ -27,6 +27,10 @@ function ControlsPage() {
   const router = useRouter();
   const [selectedMacro, setSelectedMacro] = useState<string | null>(null);
   const switchConnection = useSwitchConnection();
+  const hideManualControl = useSelector(
+    generalSettingsStore,
+    (settings) => settings.hideManualControl,
+  );
 
   return (
     <div className="flex h-full w-full flex-col gap-6 px-4">
@@ -59,7 +63,7 @@ function ControlsPage() {
             <SwitchConnection connection={switchConnection} />
           </div>
         </div>
-        <div className="grid items-start gap-6 xl:grid-cols-2">
+        <div className={hideManualControl ? "grid" : "grid items-start gap-6 xl:grid-cols-2"}>
           <div className="min-w-0 rounded-md border border-border bg-card p-4">
             <MacroRunPanel
               names={macroList.kind === "loaded" ? macroList.names : []}
@@ -69,9 +73,11 @@ function ControlsPage() {
               onSelect={setSelectedMacro}
             />
           </div>
-          <div className="min-w-0 overflow-x-auto">
-            <ManualControl />
-          </div>
+          {!hideManualControl && (
+            <div className="min-w-0 overflow-x-auto">
+              <ManualControl />
+            </div>
+          )}
         </div>
       </main>
     </div>

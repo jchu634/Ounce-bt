@@ -13,6 +13,7 @@ import { useSelector } from "@tanstack/react-store";
 import {
   generalSettingsStore,
   setControlsOnlyHomepage,
+  setHideManualControl,
   setTheme,
 } from "@/src/stores/general-settings";
 import { cn } from "cn";
@@ -67,6 +68,10 @@ export function SettingsDialog({ className }: { className?: string }) {
   const controlsOnlyHomepage = useSelector(
     generalSettingsStore,
     (settings) => settings.controlsOnlyHomepage,
+  );
+  const hideManualControl = useSelector(
+    generalSettingsStore,
+    (settings) => settings.hideManualControl,
   );
   const theme = useSelector(generalSettingsStore, (settings) => settings.theme);
   const [draftControlsOnlyHomepage, setDraftControlsOnlyHomepage] = useState(controlsOnlyHomepage);
@@ -183,6 +188,21 @@ export function SettingsDialog({ className }: { className?: string }) {
                   checked={draftControlsOnlyHomepage}
                   disabled={starting}
                   onCheckedChange={setDraftControlsOnlyHomepage}
+                />
+              </div>
+              <div className="flex w-full max-w-180 items-center justify-between gap-4">
+                <div className="flex flex-col gap-1">
+                  <Label htmlFor="hide-manual-control">Hide manual control</Label>
+                  <p id="hide-manual-control-description" className="text-sm text-muted-foreground">
+                    Show only macros on the controls-only homepage.
+                  </p>
+                </div>
+                <Checkbox
+                  id="hide-manual-control"
+                  aria-describedby="hide-manual-control-description"
+                  checked={hideManualControl}
+                  disabled={!draftControlsOnlyHomepage}
+                  onCheckedChange={setHideManualControl}
                 />
               </div>
               <Separator />
