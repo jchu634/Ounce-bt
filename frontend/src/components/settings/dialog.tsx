@@ -150,6 +150,8 @@ export function SettingsDialog() {
                   Input Settings
                 </h2>
                 <AudioInputSettings
+                  key={String(draftControlsOnlyHomepage)}
+                  disabled={draftControlsOnlyHomepage}
                   selectedId={draftAudioInputId}
                   onSelectedIdChange={setDraftAudioInputId}
                 />
@@ -160,8 +162,9 @@ export function SettingsDialog() {
                 />
                 <Button
                   disabled={
-                    draftAudioInputId === selectedAudioInputId &&
-                    draftCaptureInputId === selectedCameraInputId
+                    draftControlsOnlyHomepage ||
+                    (draftAudioInputId === selectedAudioInputId &&
+                      draftCaptureInputId === selectedCameraInputId)
                   }
                   onClick={() => {
                     selectInputs({
@@ -178,7 +181,7 @@ export function SettingsDialog() {
               <div className="flex w-full max-w-180 items-center justify-between gap-4">
                 <div className="flex flex-col gap-1">
                   <Label htmlFor="controls-only-homepage">
-                    Controls-only homepage
+                    Controls-only homepage (WIP)
                   </Label>
                   <p
                     id="controls-only-description"
