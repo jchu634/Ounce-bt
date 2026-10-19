@@ -107,7 +107,7 @@ def run_application(config, args, backend):
         if finished.is_set():
             return
         window = webview.create_window(
-            "Ounce-bt", url, js_api=bridge, width=1280, height=800, min_size=(1200, 500)
+            "Ounce-bt", url, js_api=bridge, width=1280, height=800, min_size=(800, 500)
         )
         bridge._window = window
         window.events.closed += request_stop
