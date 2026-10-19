@@ -112,7 +112,10 @@ function PreviewPage() {
             selected={selectedMacro}
             onSelect={setSelectedMacro}
           />
-          <ManualControl />
+          <div className="min-w-0">
+            <h2 className="mb-2 text-left text-lg font-semibold">Manual control</h2>
+            <ManualControl />
+          </div>
         </div>
       </div>
     </div>

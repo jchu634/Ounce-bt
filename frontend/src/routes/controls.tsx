@@ -69,6 +69,7 @@ function ControlsPage() {
         >
           {!hideManualControl && (
             <div className="min-w-0 overflow-x-auto">
+              <h2 className="mb-2 text-left text-lg font-semibold">Manual control</h2>
               <ManualControl />
             </div>
           )}
