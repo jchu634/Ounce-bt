@@ -114,8 +114,10 @@ export function AudioInputSettings({
             onSelectedIdChange(id);
           }}
         >
-          <SelectTrigger className="w-1/2 min-w-64" aria-label="Audio input">
-            <SelectValue placeholder="Audio input">{selected?.label}</SelectValue>
+          <SelectTrigger className="w-1/2 min-w-[min(100%,16rem)]" aria-label="Audio input">
+            <SelectValue className="min-w-0 truncate" placeholder="Audio input">
+              {selected?.label}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectGroup>

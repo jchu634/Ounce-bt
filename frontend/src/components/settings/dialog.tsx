@@ -134,15 +134,15 @@ export function SettingsDialog() {
               if (newTab === "controller") refreshPresets();
             }}
             orientation="vertical"
-            className="min-h-0 min-w-0 flex-1 overflow-hidden"
+            className="min-h-0 min-w-0 flex-1 flex-col overflow-hidden sm:flex-row"
           >
-            <TabsList>
+            <TabsList className="shrink-0 max-sm:w-full max-sm:flex-row">
               <TabsTrigger value="general">General</TabsTrigger>
               <TabsTrigger value="controller">Controller</TabsTrigger>
               <TabsTrigger value="credits">Credits</TabsTrigger>
             </TabsList>
             <TabsContent
-              className="min-w-0 space-y-4 overflow-y-auto p-2"
+              className="min-h-0 min-w-0 space-y-4 overflow-x-hidden overflow-y-auto p-2"
               value="general"
             >
               <div className="flex flex-col gap-4">
@@ -169,13 +169,13 @@ export function SettingsDialog() {
                       videoDeviceId: draftCaptureInputId,
                     });
                   }}
-                  className="w-50"
+                  className="w-50 max-w-full"
                 >
                   Save input settings
                 </Button>
               </div>
               <Separator />
-              <div className="flex w-180 items-center justify-between gap-4">
+              <div className="flex w-full max-w-180 items-center justify-between gap-4">
                 <div className="flex flex-col gap-1">
                   <Label htmlFor="controls-only-homepage">
                     Controls-only homepage
@@ -197,8 +197,8 @@ export function SettingsDialog() {
                 />
               </div>
               <Separator />
-              <div className="flex w-180 items-center justify-between gap-4">
-                <div className="flex flex-col gap-1">
+              <div className="flex w-full max-w-180 flex-wrap items-center justify-between gap-4">
+                <div className="flex basis-64 flex-col gap-1">
                   <Label id="theme-label">Appearance</Label>
                   <p
                     id="theme-description"
@@ -226,7 +226,7 @@ export function SettingsDialog() {
                       setTheme(selected);
                     }
                   }}
-                  className="inline-flex rounded-md border border-input bg-background p-1"
+                  className="inline-flex shrink-0 rounded-md border border-input bg-background p-1"
                 >
                   {(["light", "dark", "system"] as const).map((option) => (
                     <ToggleGroupItem
