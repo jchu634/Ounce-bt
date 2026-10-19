@@ -66,4 +66,4 @@ If either file is missing, the frontend will notify you.
 
 This project includes code adapted from Brikwerk's [NXBT](https://github.com/Brikwerk/nxbt) project.
 
-This project utilised typenoob's bumble implementation [(NXBT)](https://github.com/typenoob/nxbt) for understanding the pairing protocol.
+This project utilised typenoob's bumble implementation [(NXBT)](https://github.com/typenoob/nxbt) for help in understanding the pairing protocol.
