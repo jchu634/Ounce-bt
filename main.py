@@ -412,8 +412,7 @@ def load_options():
     args = parser.parse_args()
 
     # Load persistent config (under %APPDATA%), override with CLI flags.
-    # CLI flags are session-only and do not write back; use the
-    # ``/api/config`` endpoint to persist changes.
+    # CLI flags are not persistent.
     overrides: dict = {}
     if args.device_config is not None:
         overrides["device_config"] = args.device_config
@@ -550,8 +549,12 @@ async def main(
     if config.web_enabled:
         frontend_dist = project_root / "frontend" / "dist"
         app = build_app(
-            manager, config_store, frontend_dist, bluetooth=bluetooth,
-            shutdown_event=stop_event, ws_token=ws_token
+            manager,
+            config_store,
+            frontend_dist,
+            bluetooth=bluetooth,
+            shutdown_event=stop_event,
+            ws_token=ws_token,
         )
         app.state.transport_pending = True
         web_task = asyncio.create_task(

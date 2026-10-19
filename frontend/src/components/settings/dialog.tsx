@@ -18,8 +18,10 @@ import { useSelector } from "@tanstack/react-store";
 import {
   generalSettingsStore,
   setControlsOnlyHomepage,
+  setHideManualControl,
   setTheme,
 } from "@/src/stores/general-settings";
+import { cn } from "cn";
 import { GearSixIcon } from "@phosphor-icons/react";
 import { useCallback, useRef, useState } from "react";
 import { Effect } from "effect";
@@ -45,7 +47,7 @@ const SETTINGS_DESCRIPTIONS: Record<string, string> = {
   credits: "Acknowledgements and Licenses",
 };
 
-export function SettingsDialog() {
+export function SettingsDialog({ className }: { className?: string }) {
   const [open, setOpen] = useState(false);
   const [discardPromptOpen, setDiscardPromptOpen] = useState(false);
   const [currentTab, setCurrentTab] = useState("general");
@@ -72,6 +74,10 @@ export function SettingsDialog() {
   const controlsOnlyHomepage = useSelector(
     generalSettingsStore,
     (settings) => settings.controlsOnlyHomepage,
+  );
+  const hideManualControl = useSelector(
+    generalSettingsStore,
+    (settings) => settings.hideManualControl,
   );
   const theme = useSelector(generalSettingsStore, (settings) => settings.theme);
   const [draftControlsOnlyHomepage, setDraftControlsOnlyHomepage] =
@@ -113,11 +119,18 @@ export function SettingsDialog() {
           setControlsOnlyHomepage(draftControlsOnlyHomepage);
         }}
       >
-        <DialogTrigger>
-          <Button className="fixed top-5 right-4 bg-muted-foreground dark:text-gray-900">
-            General Settings
-            <GearSixIcon weight="fill" className="size-5" />
-          </Button>
+        <DialogTrigger
+          render={
+            <Button
+              className={cn(
+                "fixed top-5 right-4 bg-muted-foreground dark:text-gray-900",
+                className,
+              )}
+            />
+          }
+        >
+          General Settings
+          <GearSixIcon weight="fill" className="size-5" />
         </DialogTrigger>
         <DialogContent className="flex h-4/5 min-w-4/5 flex-col bg-background">
           <DialogHeader>
@@ -142,7 +155,7 @@ export function SettingsDialog() {
               <TabsTrigger value="credits">Credits</TabsTrigger>
             </TabsList>
             <TabsContent
-              className="min-h-0 min-w-0 space-y-4 overflow-x-hidden overflow-y-auto p-2"
+              className="app-scrollbar min-h-0 min-w-0 space-y-4 overflow-x-hidden overflow-y-auto p-2"
               value="general"
             >
               <div className="flex flex-col gap-4">
@@ -199,6 +212,26 @@ export function SettingsDialog() {
                   onCheckedChange={setDraftControlsOnlyHomepage}
                 />
               </div>
+              <div className="flex w-full max-w-180 items-center justify-between gap-4">
+                <div className="flex flex-col gap-1">
+                  <Label htmlFor="hide-manual-control">
+                    Hide manual control
+                  </Label>
+                  <p
+                    id="hide-manual-control-description"
+                    className="text-sm text-muted-foreground"
+                  >
+                    Show only macros on the controls-only homepage.
+                  </p>
+                </div>
+                <Checkbox
+                  id="hide-manual-control"
+                  aria-describedby="hide-manual-control-description"
+                  checked={hideManualControl}
+                  disabled={!draftControlsOnlyHomepage}
+                  onCheckedChange={setHideManualControl}
+                />
+              </div>
               <Separator />
               <div className="flex w-full max-w-180 flex-wrap items-center justify-between gap-4">
                 <div className="flex basis-64 flex-col gap-1">
@@ -244,7 +277,7 @@ export function SettingsDialog() {
               </div>
             </TabsContent>
             <TabsContent
-              className="min-h-0 min-w-0 overflow-y-auto p-2"
+              className="min-h-0 min-w-0 overflow-y-auto p-2 app-scrollbar"
               value="controller"
             >
               <ControllerSettings
@@ -255,12 +288,15 @@ export function SettingsDialog() {
               />
             </TabsContent>
             <TabsContent
-              className="min-h-0 min-w-0 overflow-y-auto p-2"
+              className="app-scrollbar min-h-0 min-w-0 overflow-y-auto p-2"
               value="credits"
             >
               <Credits />
             </TabsContent>
           </Tabs>
+          <p className="shrink-0 font-semibold text-right text-xs text-muted-foreground">
+            v{import.meta.env.VITE_APP_VERSION}
+          </p>
         </DialogContent>
       </Dialog>
       <Dialog open={discardPromptOpen} onOpenChange={setDiscardPromptOpen}>

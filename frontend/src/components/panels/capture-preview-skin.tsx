@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { Controls } from "@videojs/react";
 import { ArrowsInIcon, ArrowsOutIcon } from "@phosphor-icons/react";
 import { Button } from "@/src/components/videojs/ui/button";
@@ -7,8 +7,17 @@ import { MuteButton } from "@/src/components/videojs/ui/mute-button";
 import { VolumeSlider } from "@/src/components/videojs/ui/volume-slider";
 
 // Minor adaptation of the Video.js minimal skin with playback UI, gestures and hotkeys removed due to the live capture usecase.
-export function CapturePreviewSkin({ children }: { children: ReactNode }) {
+export function CapturePreviewSkin({
+  children,
+  aspectRatio,
+}: {
+  children: ReactNode;
+  aspectRatio: number;
+}) {
   const [expanded, setExpanded] = useState(false);
+  const style: CSSProperties & { "--capture-aspect-ratio": number } = {
+    "--capture-aspect-ratio": aspectRatio,
+  };
 
   useEffect(() => {
     if (!expanded) return;
@@ -23,7 +32,8 @@ export function CapturePreviewSkin({ children }: { children: ReactNode }) {
 
   return (
     <Container
-      className="aspect-video h-auto w-4/5 rounded-xl data-expanded:fixed data-expanded:inset-0 data-expanded:z-50 data-expanded:aspect-auto data-expanded:h-dvh data-expanded:w-dvw data-expanded:rounded-none data-expanded:after:hidden"
+      className="aspect-(--capture-aspect-ratio) h-auto w-full max-w-[calc((100dvh-6rem)*var(--capture-aspect-ratio))] flex-none rounded-xl data-expanded:fixed data-expanded:inset-0 data-expanded:z-50 data-expanded:aspect-auto data-expanded:h-dvh data-expanded:w-dvw data-expanded:max-w-none data-expanded:rounded-none data-expanded:after:hidden"
+      style={style}
       data-theme="minimal"
       data-preset="live-video"
       data-expanded={expanded ? "" : undefined}

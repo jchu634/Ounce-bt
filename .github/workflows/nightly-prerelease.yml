@@ -151,11 +151,11 @@ jobs:
             echo '## Merged pull requests'
             cat /tmp/pr-notes.md
             echo
-            echo '> This is an automated prerelease build.'
+            echo '> This is an prerelease build.'
           } > /tmp/release-notes.md
           gh release create "$NIGHTLY_TAG" release-assets/* \
             --repo "$GITHUB_REPOSITORY" \
             --target "$COMMIT" \
-            --title "Nightly $NIGHTLY_TAG" \
+            --title "$NIGHTLY_TAG" \
             --notes-file /tmp/release-notes.md \
             --prerelease

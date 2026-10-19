@@ -376,12 +376,8 @@ export function ManualControl() {
 
   return (
     <section className="w-full min-w-0">
-      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-lg font-semibold">Manual control</h2>
-      </div>
-
       {/* The widest row needs 21.5rem: two 7rem pads, two 3rem buttons, and two 0.75rem gaps. */}
-      <div className="@container mx-auto flex max-w-xl flex-col gap-2 rounded-md border border-border bg-card p-3 text-card-foreground shadow-sm [--control-unit:min(1rem,calc(100cqw/21.5))]">
+      <div className="@container flex max-w-sm flex-col gap-2 rounded-md border border-border bg-card p-3 text-card-foreground shadow-sm [--control-unit:min(1rem,calc(100cqw/21.5))]">
         <div
           className="grid grid-cols-4 gap-[calc(var(--control-unit)/4)]"
           aria-label="Triggers"

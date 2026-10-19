@@ -1,12 +1,14 @@
 import { createStore } from "@tanstack/react-store";
 
 const CONTROLS_ONLY_STORAGE_KEY = "ounce-bt.controls-only-homepage";
+const HIDE_MANUAL_CONTROL_STORAGE_KEY = "ounce-bt.controls-only-hide-manual-control";
 const THEME_STORAGE_KEY = "ounce-bt.theme";
 
 export type Theme = "dark" | "light" | "system";
 
 type GeneralSettings = {
   controlsOnlyHomepage: boolean;
+  hideManualControl: boolean;
   theme: Theme;
 };
 
@@ -17,12 +19,12 @@ function isTheme(value: string | null): value is Theme {
 function loadSettings(): GeneralSettings {
   try {
     return {
-      controlsOnlyHomepage:
-        localStorage.getItem(CONTROLS_ONLY_STORAGE_KEY) === "true",
+      controlsOnlyHomepage: localStorage.getItem(CONTROLS_ONLY_STORAGE_KEY) === "true",
+      hideManualControl: localStorage.getItem(HIDE_MANUAL_CONTROL_STORAGE_KEY) === "true",
       theme: getStoredTheme(),
     };
   } catch {
-    return { controlsOnlyHomepage: false, theme: "system" };
+    return { controlsOnlyHomepage: false, hideManualControl: false, theme: "system" };
   }
 }
 
@@ -71,5 +73,17 @@ export function setTheme(theme: Theme) {
   } catch {
     // Keep the setting usable for this session if storage is unavailable.
     console.log("Localstorage theme write failed");
+  }
+}
+
+export function setHideManualControl(enabled: boolean) {
+  generalSettingsStore.setState((settings) => ({
+    ...settings,
+    hideManualControl: enabled,
+  }));
+  try {
+    localStorage.setItem(HIDE_MANUAL_CONTROL_STORAGE_KEY, String(enabled));
+  } catch {
+    // Keep the setting usable for this session if storage is unavailable.
   }
 }
