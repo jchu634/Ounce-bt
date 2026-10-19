@@ -1,8 +1,36 @@
-### WebSocket protocol
+### WebSocket Protocol Documentation
 
-Connect to `ws://<host>:<port>/ws`. The server sends a `status` frame on connect and on every mode/macro transition. Text frames are JSON.
+Connect to `ws://<host>:<port>/ws`.\
+Default: `127.0.0.1:9127`\
+The server sends a `status` frame on connect and on every mode/macro transition.
 
-**Client → server**
+## Server → client
+
+### Standard Status packet
+
+```jsonc
+{
+  "type": "status",
+  "mode": "manual"|"macro",
+  "macro":
+    {
+      "name": "...",
+      "state": "running"|"paused"
+    }
+}
+```
+
+### Standard Error packet
+
+```jsonc
+{
+  "type": "error",
+  "message": "...",
+  "detail": "...",
+}
+```
+
+## Client → server
 
 ```jsonc
 // Full controller-state snapshot (lowest-latency manual path)
@@ -25,16 +53,11 @@ Valid button names: `A B X Y L R ZL ZR UP DOWN LEFT RIGHT PLUS MINUS HOME CAPTUR
 
 `event` semantics: each frame replaces the current controller state (latest-wins consumer). For chorded/persistent input, prefer `state` snapshots.
 
-**Server → client**
-
-```jsonc
-{"type": "status", "mode": "manual"|"macro", "macro": {"name": "...", "state": "running"|"paused"}|null}
-{"type": "error", "message": "...", "detail": "..."?}
-```
-
 ### Macros
 
-JSON files under `macros/`. Schema:
+JSON files under `macros/`.
+
+#### Example:
 
 ```jsonc
 {
