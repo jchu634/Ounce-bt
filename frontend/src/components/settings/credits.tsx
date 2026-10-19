@@ -174,19 +174,18 @@ export default function Credits() {
           href="https://github.com/Brikwerk/nxbt"
         >
           NXBT project
-        </a>
-        <br />
-        Ounce-bt's bluetooth core was implemented using NXBT documentation, and
-        uses/adapts some code from that project.{" "}
+        </a>{" "}
         <a
           className="text-blue-500"
           target="_blank"
           rel="noopener noreferrer"
           href="/licenses/nxbt"
         >
-          License
+          (License)
         </a>
         <br />
+        Ounce-bt's bluetooth core was implemented using NXBT's documentation,
+        and uses/adapts some code from that project. <br />
         Additionally, we would like to thank typenoob for their work on their{" "}
         <a className="text-blue-500" href="https://github.com/typenoob/nxbt">
           NXBT fork
