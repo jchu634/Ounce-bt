@@ -17,13 +17,6 @@ const dependencyGroups = [
         description: "Bluetooth stack and controller communication",
       },
       {
-        name: "inputs",
-        licenseSlug: "inputs",
-        license: "BSD-3-Clause",
-        url: "https://github.com/zeth/inputs",
-        description: "Gamepad input",
-      },
-      {
         name: "pygame-ce",
         licenseSlug: "pygame-ce",
         license: "LGPL-2.1-or-later",
@@ -161,16 +154,36 @@ const dependencyGroups = [
 export default function Credits() {
   return (
     <div className="space-y-4">
-      <p>Ounce-bt was developed by JCHU634</p>
+      <p>
+        Ounce-bt was developed by{" "}
+        <a
+          className="text-blue-500"
+          target="_blank"
+          rel="noopener noreferrer"
+          href="https://github.com/jchu634"
+        >
+          JCHU634
+        </a>
+      </p>
       <p>
         We would like to thank Brikwerk for their{" "}
-        <a className="text-blue-500" href="https://github.com/Brikwerk/nxbt">
+        <a
+          className="text-blue-500"
+          target="_blank"
+          rel="noopener noreferrer"
+          href="https://github.com/Brikwerk/nxbt"
+        >
           NXBT project
         </a>
         <br />
         Ounce-bt's bluetooth core was implemented using NXBT documentation, and
         uses/adapts some code from that project.{" "}
-        <a className="text-blue-500" href="/licenses/nxbt">
+        <a
+          className="text-blue-500"
+          target="_blank"
+          rel="noopener noreferrer"
+          href="/licenses/nxbt"
+        >
           License
         </a>
         <br />
@@ -180,10 +193,7 @@ export default function Credits() {
         </a>{" "}
         as their bumble implementation was used to help understand the pairing
         protocol and fix the last bugs that prevented Ounce-bt's bumble
-        implementation from working.{" "}
-        <a className="text-blue-500" href="/licenses/nxbt-typenoob">
-          License
-        </a>
+        implementation from working.
       </p>
       <Accordion multiple>
         {dependencyGroups.map((group) => (
