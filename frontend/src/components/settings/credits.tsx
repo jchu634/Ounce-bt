@@ -195,6 +195,27 @@ export default function Credits() {
         protocol and fix the last bugs that prevented Ounce-bt's bumble
         implementation from working.
       </p>
+      <p>
+        Controller icons are from the Input Prompts pack by{" "}
+        <a
+          className="text-blue-500"
+          target="_blank"
+          rel="noopener noreferrer"
+          href="https://kenney.nl/"
+        >
+          Kenney,
+        </a>{" "}
+        licensed under{" "}
+        <a
+          className="text-blue-500"
+          target="_blank"
+          rel="noopener noreferrer"
+          href="/licenses/kenney"
+        >
+          CC0
+        </a>
+        .
+      </p>
       <Accordion multiple>
         {dependencyGroups.map((group) => (
           <AccordionItem key={group.name} value={group.name}>
