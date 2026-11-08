@@ -7,12 +7,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/src/components/ui/dialog";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/src/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/src/components/ui/tabs";
 import { Button } from "@/src/components/ui/button";
 import { useSelector } from "@tanstack/react-store";
 import {
@@ -35,6 +30,7 @@ import { Label } from "@/src/components/ui/label";
 import { AudioInputSettings } from "@/src/components/settings/audio-input-settings";
 import { ControllerSettings } from "@/src/components/settings/controller-settings";
 import { CaptureDeviceSettings } from "@/src/components/settings/capture-device-settings";
+import { AppearanceSettings } from "@/src/components/settings/appearance-settings";
 import Credits from "@/src/components/settings/credits";
 
 import { listPresets } from "@/src/lib/api";
@@ -44,6 +40,7 @@ import type { PresetInfo } from "@/src/lib/types";
 const SETTINGS_DESCRIPTIONS: Record<string, string> = {
   general: "General settings.",
   controller: "Choose a controller and manage its mapping presets.",
+  appearance: "Choose how your controller appears on the Switch.",
   credits: "Acknowledgements and Licenses",
 };
 
@@ -64,8 +61,7 @@ export function SettingsDialog({ className }: { className?: string }) {
         if (requestId === presetRequestId.current) setPresets(presets);
       })
       .catch((error: unknown) => {
-        if (requestId === presetRequestId.current)
-          setPresetsError(errorMessage(error));
+        if (requestId === presetRequestId.current) setPresetsError(errorMessage(error));
       })
       .finally(() => {
         if (requestId === presetRequestId.current) setPresetsLoading(false);
@@ -80,19 +76,15 @@ export function SettingsDialog({ className }: { className?: string }) {
     (settings) => settings.hideManualControl,
   );
   const theme = useSelector(generalSettingsStore, (settings) => settings.theme);
-  const [draftControlsOnlyHomepage, setDraftControlsOnlyHomepage] =
-    useState(controlsOnlyHomepage);
-  const { selectedAudioInputId, selectedCameraInputId, selectInputs } =
-    useCaptureInput();
-  const [draftAudioInputId, setDraftAudioInputId] =
-    useState(selectedAudioInputId);
-  const [draftCaptureInputId, setDraftCaptureInputId] = useState(
-    selectedCameraInputId,
-  );
+  const [appearanceState, setAppearanceState] = useState({ dirty: false, saving: false });
+  const [appearanceSession, setAppearanceSession] = useState(0);
+  const [draftControlsOnlyHomepage, setDraftControlsOnlyHomepage] = useState(controlsOnlyHomepage);
+  const { selectedAudioInputId, selectedCameraInputId, selectInputs } = useCaptureInput();
+  const [draftAudioInputId, setDraftAudioInputId] = useState(selectedAudioInputId);
+  const [draftCaptureInputId, setDraftCaptureInputId] = useState(selectedCameraInputId);
   const { stop, starting } = useCaptureControls();
   const hasUnsavedInputChanges =
-    draftAudioInputId !== selectedAudioInputId ||
-    draftCaptureInputId !== selectedCameraInputId;
+    draftAudioInputId !== selectedAudioInputId || draftCaptureInputId !== selectedCameraInputId;
 
   return (
     <>
@@ -101,6 +93,8 @@ export function SettingsDialog({ className }: { className?: string }) {
         onOpenChange={(nextOpen) => {
           if (nextOpen) {
             setOpen(true);
+            setAppearanceState({ dirty: false, saving: false });
+            setAppearanceSession((session) => session + 1);
             if (currentTab === "controller") refreshPresets();
             setDraftControlsOnlyHomepage(controlsOnlyHomepage);
             setDraftAudioInputId(selectedAudioInputId);
@@ -108,7 +102,8 @@ export function SettingsDialog({ className }: { className?: string }) {
             return;
           }
 
-          if (hasUnsavedInputChanges) {
+          if (appearanceState.saving) return;
+          if (hasUnsavedInputChanges || appearanceState.dirty) {
             setDiscardPromptOpen(true);
             return;
           }
@@ -136,9 +131,7 @@ export function SettingsDialog({ className }: { className?: string }) {
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
 
-            <DialogDescription>
-              {SETTINGS_DESCRIPTIONS[currentTab]}
-            </DialogDescription>
+            <DialogDescription>{SETTINGS_DESCRIPTIONS[currentTab]}</DialogDescription>
           </DialogHeader>
           <Tabs
             value={currentTab}
@@ -152,6 +145,7 @@ export function SettingsDialog({ className }: { className?: string }) {
             <TabsList className="shrink-0 max-sm:w-full max-sm:flex-row">
               <TabsTrigger value="general">General</TabsTrigger>
               <TabsTrigger value="controller">Controller</TabsTrigger>
+              <TabsTrigger value="appearance">Appearance</TabsTrigger>
               <TabsTrigger value="credits">Credits</TabsTrigger>
             </TabsList>
             <TabsContent
@@ -159,9 +153,7 @@ export function SettingsDialog({ className }: { className?: string }) {
               value="general"
             >
               <div className="flex flex-col gap-4">
-                <h2 className="text-lg font-semibold text-foreground">
-                  Input Settings
-                </h2>
+                <h2 className="text-lg font-semibold text-foreground">Input Settings</h2>
                 <AudioInputSettings
                   key={String(draftControlsOnlyHomepage)}
                   disabled={draftControlsOnlyHomepage}
@@ -193,15 +185,9 @@ export function SettingsDialog({ className }: { className?: string }) {
               <Separator />
               <div className="flex w-full max-w-180 items-center justify-between gap-4">
                 <div className="flex flex-col gap-1">
-                  <Label htmlFor="controls-only-homepage">
-                    Controls-only homepage (WIP)
-                  </Label>
-                  <p
-                    id="controls-only-description"
-                    className="text-sm text-muted-foreground"
-                  >
-                    Focus on macros and manual control without the capture card
-                    preview.
+                  <Label htmlFor="controls-only-homepage">Controls-only homepage (WIP)</Label>
+                  <p id="controls-only-description" className="text-sm text-muted-foreground">
+                    Focus on macros and manual control without the capture card preview.
                   </p>
                 </div>
                 <Checkbox
@@ -214,13 +200,8 @@ export function SettingsDialog({ className }: { className?: string }) {
               </div>
               <div className="flex w-full max-w-180 items-center justify-between gap-4">
                 <div className="flex flex-col gap-1">
-                  <Label htmlFor="hide-manual-control">
-                    Hide manual control
-                  </Label>
-                  <p
-                    id="hide-manual-control-description"
-                    className="text-sm text-muted-foreground"
-                  >
+                  <Label htmlFor="hide-manual-control">Hide manual control</Label>
+                  <p id="hide-manual-control-description" className="text-sm text-muted-foreground">
                     Show only macros on the controls-only homepage.
                   </p>
                 </div>
@@ -233,51 +214,33 @@ export function SettingsDialog({ className }: { className?: string }) {
                 />
               </div>
               <Separator />
-              <div className="flex w-full max-w-180 flex-wrap items-center justify-between gap-4">
-                <div className="flex basis-64 flex-col gap-1">
-                  <Label id="theme-label">Appearance</Label>
-                  <p
-                    id="theme-description"
-                    className="text-sm text-muted-foreground"
-                  >
+              <section className="flex flex-wrap items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <Label id="theme-label">Theme</Label>
+                  <p className="text-sm text-muted-foreground">
                     Choose light, dark, or follow your system setting.
                   </p>
                 </div>
                 <ToggleGroup
                   aria-labelledby="theme-label"
-                  aria-describedby="theme-description"
                   value={[theme]}
-                  onValueChange={(value) => {
-                    const selected = value.find(
-                      (item) =>
-                        item === "dark" ||
-                        item === "light" ||
-                        item === "system",
+                  onValueChange={(values) => {
+                    const selected = values.find(
+                      (value) => value === "light" || value === "dark" || value === "system",
                     );
-                    if (
-                      selected === "dark" ||
-                      selected === "light" ||
-                      selected === "system"
-                    ) {
+                    if (selected === "light" || selected === "dark" || selected === "system")
                       setTheme(selected);
-                    }
                   }}
-                  className="inline-flex shrink-0 rounded-md border border-input bg-background p-1"
+                  className="inline-flex rounded-md border border-input bg-background p-1"
                 >
-                  {(["light", "dark", "system"] as const).map((option) => (
-                    <ToggleGroupItem
-                      key={option}
-                      value={option}
-                      className="capitalize"
-                    >
-                      {option}
-                    </ToggleGroupItem>
-                  ))}
+                  <ToggleGroupItem value="light">Light</ToggleGroupItem>
+                  <ToggleGroupItem value="dark">Dark</ToggleGroupItem>
+                  <ToggleGroupItem value="system">System</ToggleGroupItem>
                 </ToggleGroup>
-              </div>
+              </section>
             </TabsContent>
             <TabsContent
-              className="min-h-0 min-w-0 overflow-y-auto p-2 app-scrollbar"
+              className="app-scrollbar min-h-0 min-w-0 overflow-y-auto p-2"
               value="controller"
             >
               <ControllerSettings
@@ -289,12 +252,19 @@ export function SettingsDialog({ className }: { className?: string }) {
             </TabsContent>
             <TabsContent
               className="app-scrollbar min-h-0 min-w-0 overflow-y-auto p-2"
+              value="appearance"
+              keepMounted
+            >
+              <AppearanceSettings key={appearanceSession} onStateChange={setAppearanceState} />
+            </TabsContent>
+            <TabsContent
+              className="app-scrollbar min-h-0 min-w-0 overflow-y-auto p-2"
               value="credits"
             >
               <Credits />
             </TabsContent>
           </Tabs>
-          <p className="shrink-0 font-semibold text-right text-xs text-muted-foreground">
+          <p className="shrink-0 text-right text-xs font-semibold text-muted-foreground">
             v{import.meta.env.VITE_APP_VERSION}
           </p>
         </DialogContent>
@@ -304,14 +274,11 @@ export function SettingsDialog({ className }: { className?: string }) {
           <DialogHeader>
             <DialogTitle>Leave without saving?</DialogTitle>
             <DialogDescription>
-              Your input settings have unsaved changes. Leave and discard them?
+              Your settings have unsaved changes. Leave and discard them?
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDiscardPromptOpen(false)}
-            >
+            <Button variant="outline" onClick={() => setDiscardPromptOpen(false)}>
               Keep editing
             </Button>
             <Button

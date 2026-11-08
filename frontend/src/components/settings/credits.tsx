@@ -64,6 +64,13 @@ const dependencyGroups = [
         description: "User interface",
       },
       {
+        name: "react-colorful",
+        licenseSlug: "react-colorful",
+        license: "MIT",
+        url: "https://github.com/omgovich/react-colorful",
+        description: "Controller colour pickers",
+      },
+      {
         name: "Vite",
         licenseSlug: "vite",
         license: "MIT",
@@ -184,15 +191,14 @@ export default function Credits() {
           (License)
         </a>
         <br />
-        Ounce-bt's bluetooth core was implemented using NXBT's documentation,
-        and uses/adapts some code from that project. <br />
+        Ounce-bt's bluetooth core was implemented using NXBT's documentation, and uses/adapts some
+        code from that project. <br />
         Additionally, we would like to thank typenoob for their work on their{" "}
         <a className="text-blue-500" href="https://github.com/typenoob/nxbt">
           NXBT fork
         </a>{" "}
-        as their bumble implementation was used to help understand the pairing
-        protocol and fix the last bugs that prevented Ounce-bt's bumble
-        implementation from working.
+        as their bumble implementation was used to help understand the pairing protocol and fix the
+        last bugs that prevented Ounce-bt's bumble implementation from working.
       </p>
       <p>
         Controller icons are from the Input Prompts pack by{" "}
@@ -226,10 +232,7 @@ export default function Credits() {
                     <a className="text-blue-500" href={dependency.url}>
                       {dependency.name}
                     </a>
-                    <span className="text-muted-foreground">
-                      {" "}
-                      · {dependency.description}
-                    </span>
+                    <span className="text-muted-foreground"> · {dependency.description}</span>
                     <div className="text-xs text-muted-foreground">
                       License:{" "}
                       <a

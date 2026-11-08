@@ -1,18 +1,4 @@
-"""Single owner of pygame on one daemon thread.
-
-pygame / SDL is not safe to call from arbitrary threads, so every pygame
-operation (enumeration, device open, event pumping, hotplug handling)
-lives on this service's thread. Other threads (the asyncio loop serving
-REST/WS requests) talk to it through a mailbox of ``(op, payload,
-future)`` tuples; results come back via thread-safe
-:class:`concurrent.futures.Future`.
-
-The service exposes the same lifecycle surface as
-:class:`~lib.input.pygame_source.PygameInputThread` (``start`` /
-``pause`` / ``resume`` / ``stop``) so the :class:`InputManager` can treat
-it uniformly: ``pause()``/``resume()`` propagate to the active capture
-thread (used while a macro is running).
-"""
+"""Own pygame operations on one daemon thread and handle controller discovery, capture, and lifecycle requests through a thread-safe mailbox."""
 
 from __future__ import annotations
 
@@ -25,8 +11,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from app.input.pygame_source import PygameInputThread
 from lib.input.presets import PresetConfig, PresetSelection
-from lib.input.pygame_source import PygameInputThread
 from lib.input.state import NEUTRAL
 
 logger = logging.getLogger("switch_pair")

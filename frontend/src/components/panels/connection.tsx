@@ -1,4 +1,11 @@
-import { PlugsConnectedIcon, PlugsIcon, SpinnerGapIcon, TrashIcon } from "@phosphor-icons/react";
+import {
+  PencilSimpleIcon,
+  PlugsConnectedIcon,
+  PlugsIcon,
+  SpinnerGapIcon,
+  TrashIcon,
+} from "@phosphor-icons/react";
+import { useState } from "react";
 import { Button } from "@/src/components/ui/button";
 import {
   Dialog,
@@ -18,7 +25,10 @@ import {
   SelectValue,
 } from "@/src/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/src/components/ui/tooltip";
-import { type BluetoothStatus } from "@/src/lib/bluetooth";
+import { Input } from "@/src/components/ui/input";
+import { Label } from "@/src/components/ui/label";
+import { connectionDetail, deviceName, type BluetoothStatus } from "@/src/lib/bluetooth";
+import { errorMessage } from "@/src/lib/errors";
 import { useSwitchConnection } from "@/src/lib/switch-connection";
 import { cn } from "cn";
 
@@ -97,7 +107,7 @@ export function ConnectionStatus({
       ? "Loading Bluetooth status"
       : !status.available
         ? "Bluetooth is not ready"
-        : `${status.pairing ? "Pairing, " : ""}${status.state}${status.address ? `: ${status.address}` : ""}`;
+        : connectionDetail(status);
   const statusTone =
     statusError || (status && !status.available)
       ? "error"
@@ -132,27 +142,68 @@ export function ConnectionStatus({
 }
 
 export function SwitchConnection({ connection }: SwitchConnectionProps) {
-  const { status, selected: address, setSelected, disabled, active, update } = connection;
+  const { status, selected: address, setSelected, disabled, active, update, rename } = connection;
+  const [renaming, setRenaming] = useState<{ address: string; name: string } | null>(null);
+  const [savingName, setSavingName] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
+
+  async function saveName() {
+    if (!renaming || savingName || !renaming.name.trim()) return;
+    setSavingName(true);
+    setRenameError(null);
+    try {
+      await rename(renaming.address, renaming.name.trim());
+      setRenaming(null);
+    } catch (cause) {
+      setRenameError(errorMessage(cause));
+    } finally {
+      setSavingName(false);
+    }
+  }
 
   return (
     <section aria-label="Connection">
       <div className="flex items-end gap-2">
-        <Select
-          value={address}
-          disabled={disabled || active || !address}
-          onValueChange={(value) => setSelected(value ?? "")}
-        >
-          <SelectTrigger className="w-full min-w-0" aria-label="Controller config">
-            <SelectValue placeholder="No saved devices" />
-          </SelectTrigger>
-          <SelectContent align="start">
-            {status?.peers.map((peer) => (
-              <SelectItem key={peer} value={peer}>
-                {peer}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          <Tooltip>
+            <TooltipTrigger
+              render={<div className="min-w-0 flex-1" tabIndex={address ? 0 : undefined} />}
+            >
+              <Select
+                value={address}
+                disabled={disabled || active || !address}
+                onValueChange={(value) => setSelected(value ?? "")}
+              >
+                <SelectTrigger className="w-full min-w-0" aria-label="Switch device">
+                  <SelectValue placeholder="No saved devices">
+                    {deviceName(status, address)}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent align="start">
+                  {status?.peers.map((peer) => (
+                    <SelectItem key={peer} value={peer} title={peer}>
+                      {deviceName(status, peer)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </TooltipTrigger>
+            <TooltipContent>{address || "No saved devices"}</TooltipContent>
+          </Tooltip>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Rename Switch device"
+            title="Rename Switch device"
+            disabled={disabled || !address}
+            onClick={() => {
+              setRenaming({ address, name: deviceName(status, address) });
+              setRenameError(null);
+            }}
+          >
+            <PencilSimpleIcon />
+          </Button>
+        </div>
         <Button
           variant="default"
           disabled={disabled || (!status?.pairing && active)}
@@ -193,6 +244,62 @@ export function SwitchConnection({ connection }: SwitchConnectionProps) {
           </DialogContent>
         </Dialog>
       </div>
+
+      <Dialog
+        open={renaming !== null}
+        onOpenChange={(open) => {
+          if (!open && !savingName) setRenaming(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename Switch device</DialogTitle>
+            <DialogDescription>{renaming?.address}</DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void saveName();
+            }}
+            className="space-y-4"
+          >
+            <div className="space-y-2">
+              <Label htmlFor="switch-device-name">Device name</Label>
+              <Input
+                id="switch-device-name"
+                value={renaming?.name ?? ""}
+                autoFocus
+                required
+                maxLength={64}
+                disabled={savingName}
+                aria-describedby={renameError ? "rename-device-error" : undefined}
+                onChange={(event) => {
+                  const name = event.target.value;
+                  setRenaming((current) => current && { ...current, name });
+                }}
+              />
+              {renameError && (
+                <p id="rename-device-error" role="alert" className="text-sm text-destructive">
+                  {renameError}
+                </p>
+              )}
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={savingName}
+                onClick={() => setRenaming(null)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={savingName || !renaming?.name.trim()}>
+                {savingName ? "Saving…" : "Save name"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {status?.pairing && (
         <p className="mt-2 text-sm text-muted-foreground">

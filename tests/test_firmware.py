@@ -4,11 +4,11 @@ import queue
 import pytest
 from starlette.testclient import TestClient
 
-import main as application
+import app.main as application
+from app.input.manager import InputManager
+from app.server import build_app
 from lib.config import Config, ConfigStore
-from lib.input.manager import InputManager
-from lib.server import build_app
-from lib.startup import (
+from lib.firmware import (
     CONFIG_HEADER,
     CONFIG_NAME,
     FIRMWARE_NAME,

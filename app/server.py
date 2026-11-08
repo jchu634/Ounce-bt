@@ -1,28 +1,4 @@
-"""
-Starlette application hosting the built frontend, the macro WebSocket
-and the REST API.
-
-Routes (ordered WS/REST before static so the catch-all SPA mount doesn't
-shadow them)::
-
-    /ws                                WebSocket: runtime channel
-    GET  /api/config                   current config as JSON
-    PATCH /api/config                  merge-update config (persists)
-    GET  /api/control-mode             {"mode": ..., "macro": {...}|null}
-    PUT  /api/control-mode             {"mode": "manual"|"macro"}
-    GET  /api/macros                   {"names": [...]}
-    GET  /api/macros/{name}            {"name": ..., "contents": "<raw json>"}
-    PUT  /api/macros/{name}            {"contents": "<raw json>"} (validated)
-    DELETE /api/macros/{name}          409 while that macro is running
-    GET  /api/controllers              device list + active + preset
-    PUT  /api/controllers/active       {"guid"|"name"|"index": ...}
-    GET  /api/presets                  {"presets": [{name, builtin, ...}]}
-    GET  /api/presets/{name}           {"name": ..., "contents": "<raw json>"}
-    PUT  /api/presets/{name}           custom presets only (validated)
-    DELETE /api/presets/{name}         custom presets only; 409 when active
-    POST /api/presets/{name}/activate  select + persist + apply
-    /                                  StaticFiles(frontend/dist, html=True)
-"""
+"""Serve the frontend and handle HTTP and WebSocket requests for controllers, macros, presets, and settings."""
 
 from __future__ import annotations
 
@@ -40,10 +16,12 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from lib.bluetooth import BluetoothService
+from app.bluetooth import BluetoothService
+from app.input.manager import InputManager, MacroActiveError, state_from_event
+from lib.colours import normalize_controller_colours
 from lib.config import ConfigStore
-from lib.input.macro_source import MacroValidationError, validate_macro
-from lib.input.manager import InputManager, MacroActiveError, state_from_event
+from lib.device_names import normalize_device_names, validate_device_name
+from lib.input.macros import MacroValidationError, validate_macro
 from lib.input.presets import (
     PresetValidationError,
     delete_preset,
@@ -226,6 +204,7 @@ async def _dispatch_ws(text: str, websocket: WebSocket, manager: InputManager) -
 
 async def bluetooth_control(request: Request) -> Response:
     service: BluetoothService = request.app.state.bluetooth
+    store: ConfigStore = request.app.state.config_store
     try:
         if request.method != "GET":
             try:
@@ -245,10 +224,32 @@ async def bluetooth_control(request: Request) -> Response:
                     return _error("address must be a saved device address")
                 if request.method == "DELETE":
                     await service.forget(body["address"])
+                    names = dict(store.config.switch_device_names)
+                    if names.pop(body["address"].upper(), None) is not None:
+                        store.update({"switch_device_names": names})
+                elif request.method == "PATCH":
+                    if body["address"] not in (await service.status())["peers"]:
+                        raise ValueError("Select a previously paired device")
+                    name = validate_device_name(body.get("name"))
+                    store.update(
+                        {
+                            "switch_device_names": {
+                                **store.config.switch_device_names,
+                                body["address"].upper(): name,
+                            }
+                        }
+                    )
                 else:
                     await service.reconnect(body["address"])
-        return JSONResponse(await service.status())
-    except ValueError as e:
+        status = await service.status()
+        status["names"] = {
+            address: store.config.switch_device_names.get(
+                address.upper(), f"Switch Device {index}"
+            )
+            for index, address in enumerate(status["peers"], 1)
+        }
+        return JSONResponse(status)
+    except (TypeError, ValueError) as e:
         return _error(str(e), status=409)
     except Exception as e:
         logger.exception("Bluetooth operation failed")
@@ -504,6 +505,16 @@ async def config_patch(request: Request) -> Response:
         return _error("invalid JSON body")
     if not isinstance(body, dict):
         return _error("expected a JSON object")
+    if "controller_colours" in body:
+        try:
+            normalize_controller_colours(body["controller_colours"])
+        except (TypeError, ValueError) as e:
+            return _error(str(e))
+    if "switch_device_names" in body:
+        try:
+            normalize_device_names(body["switch_device_names"])
+        except (TypeError, ValueError) as e:
+            return _error(str(e))
     requested_preset = body.get("preset")
     if requested_preset is not None and requested_preset != manager.current_preset_name:
         # Apply first: the persisted config must never claim a preset that
@@ -524,7 +535,21 @@ async def config_patch(request: Request) -> Response:
             controller_presets[str(active_guid).casefold()] = requested_preset
             body["controller_presets"] = controller_presets
     changed = store.update(body)
-    return JSONResponse({"changed": changed, "config": store.snapshot()})
+    bluetooth: BluetoothService = request.app.state.bluetooth
+    return JSONResponse(
+        {
+            "changed": changed,
+            "config": store.snapshot(),
+            "colours_reconnect_required": bool(
+                "controller_colours" in changed
+                and (
+                    bluetooth.connection
+                    or bluetooth.connected
+                    or bluetooth.reconnecting
+                )
+            ),
+        }
+    )
 
 
 async def control_mode_get(request: Request) -> Response:
@@ -631,7 +656,7 @@ def build_app(
         Route(
             "/api/bluetooth",
             bluetooth_control,
-            methods=["GET", "PUT", "POST", "DELETE"],
+            methods=["GET", "PUT", "POST", "DELETE", "PATCH"],
         ),
         WebSocketRoute("/ws", macro_ws_endpoint),
         Route("/api/config", config_get, methods=["GET"]),

@@ -5,7 +5,7 @@ import queue
 import pygame
 from pygame import event
 
-from lib.input.controller_service import ControllerInfo, ControllerService
+from app.input.controller_service import ControllerInfo, ControllerService
 from lib.input.presets import (
     PresetConfig,
     PresetSelection,
@@ -65,7 +65,7 @@ def test_select_resolves_and_reports_controller_preset(monkeypatch):
         def stop(self):
             pass
 
-    monkeypatch.setattr("lib.input.controller_service.PygameInputThread", Capture)
+    monkeypatch.setattr("app.input.controller_service.PygameInputThread", Capture)
 
     service._do_select(controller.guid)
 
@@ -127,7 +127,7 @@ def test_service_initializes_event_queue_without_capture():
 
 
 def test_hotplug_connect_disconnect_reconnect(monkeypatch):
-    from lib.input.pygame_source import PygameInputThread
+    from app.input.pygame_source import PygameInputThread
     from lib.input.state import NEUTRAL
 
     notifications = []
@@ -155,7 +155,7 @@ def test_hotplug_connect_disconnect_reconnect(monkeypatch):
         pending.clear()
         return events
 
-    monkeypatch.setattr("lib.input.controller_service.PygameInputThread", Capture)
+    monkeypatch.setattr("app.input.controller_service.PygameInputThread", Capture)
     monkeypatch.setattr(service, "_refresh_controllers", refresh)
     monkeypatch.setattr(event, "pump", lambda: None)
     monkeypatch.setattr(event, "get", get_events)

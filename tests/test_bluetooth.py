@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from bumble.keys import JsonKeyStore, MemoryKeyStore, PairingKeys
 
-import main as application
-from lib.bluetooth import BluetoothService
+import app.main as application
+from app.bluetooth import BluetoothService
+from app.main import SessionState, make_l2cap_handler, run_until_disconnected
 from lib.config import Config
-from main import SessionState, make_l2cap_handler, run_until_disconnected
 
 ADDRESS = "12:34:56:78:90:AB"
 
@@ -160,6 +160,36 @@ def test_failed_reconnect_cleans_up_and_allows_retry():
         connection.authenticate.side_effect = None
         await service.reconnect(ADDRESS)
         assert service.connection is connection
+
+    asyncio.run(scenario())
+
+
+def test_reconnecting_status_retains_target_before_connection_exists():
+    async def scenario():
+        service, device, _ = await setup_service()
+        connecting = asyncio.Event()
+        release = asyncio.Event()
+
+        async def connect(*args, **kwargs):
+            connecting.set()
+            await release.wait()
+            raise TimeoutError("connection failed")
+
+        device.connect_classic.side_effect = connect
+        task = asyncio.create_task(service.reconnect(ADDRESS))
+        try:
+            await asyncio.wait_for(connecting.wait(), 1)
+            status = await service.status()
+            assert status["state"] == "reconnecting"
+            assert status["address"] == ADDRESS
+            assert service.connection is None
+            release.set()
+            with pytest.raises(TimeoutError):
+                await task
+            assert (await service.status())["address"] is None
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(scenario())
 

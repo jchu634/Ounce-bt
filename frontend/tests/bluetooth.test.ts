@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { requestStatus } from "@/src/lib/bluetooth";
+import {
+  connectionDetail,
+  deviceName,
+  requestStatus,
+  type BluetoothStatus,
+} from "@/src/lib/bluetooth";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -11,11 +16,48 @@ describe("Bluetooth status requests", () => {
       state: "disconnected",
       address: null,
       peers: ["12:34:56:78:90:AB/P"],
+      names: { "12:34:56:78:90:AB/P": "Switch Device 1" },
       failure_id: 0,
       failure: null,
     };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(status)));
     await expect(requestStatus()).resolves.toEqual(status);
+  });
+
+  it("shows saved names and reconnect targets without exposing addresses as labels", () => {
+    const address = "12:34:56:78:90:AB/P";
+    const status: BluetoothStatus = {
+      available: true,
+      pairing: false,
+      state: "reconnecting",
+      address,
+      peers: [address, "AB:CD:EF:12:34:56/P"],
+      names: { [address]: "Living room Switch" },
+      failure_id: 0,
+      failure: null,
+    };
+    expect(deviceName(status, address)).toBe("Living room Switch");
+    expect(deviceName(status, status.peers[1])).toBe("Switch Device 2");
+    expect(connectionDetail(status)).toBe(`Reconnecting to ${address}`);
+  });
+
+  it("rejects malformed device names", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        Response.json({
+          available: true,
+          pairing: false,
+          state: "disconnected",
+          address: null,
+          peers: [],
+          names: { address: 123 },
+          failure_id: 0,
+          failure: null,
+        }),
+      ),
+    );
+    await expect(requestStatus()).rejects.toThrow("Invalid Bluetooth status response");
   });
 
   it("identifies a backend that has not loaded the new route", async () => {

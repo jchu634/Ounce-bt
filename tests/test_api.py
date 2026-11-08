@@ -1,5 +1,4 @@
-"""REST API tests against a stubbed InputManager (no pygame, no
-hardware, no asyncio loop needed)."""
+"""Test HTTP and WebSocket behaviour with an input manager that requires no controller hardware."""
 
 from __future__ import annotations
 
@@ -13,9 +12,9 @@ import pytest
 from starlette.testclient import TestClient
 
 import lib.input.presets as presets_module
+from app.input.manager import InputManager, MacroActiveError
+from app.server import build_app
 from lib.config import Config, ConfigStore
-from lib.input.manager import InputManager, MacroActiveError
-from lib.server import build_app
 from lib.server.files import JsonDocStore
 
 
@@ -300,6 +299,71 @@ def test_config_patch_applies_preset(fx):
         assert fx.manager.current_preset.name == "PlayStation"
         assert fx.manager.current_preset_name == "playstation"
         assert fx.config_store.config.controller_presets["g1"] == "playstation"
+
+
+@pytest.mark.parametrize("connected", [False, True])
+def test_save_colours_preserves_connection_and_reports_pending_change(fx, connected):
+    from unittest.mock import Mock
+
+    with fx.client() as c:
+        bluetooth = c.app.state.bluetooth
+        bluetooth.connected = connected
+        connection = Mock() if connected else None
+        bluetooth.connection = connection
+        bluetooth.disconnect = AsyncMock()
+        bluetooth.reconnect = AsyncMock()
+        response = c.patch(
+            "/api/config", json={"controller_colours": {"left_grip": "#ff0000"}}
+        )
+        assert response.status_code == 200
+        assert response.json()["colours_reconnect_required"] is connected
+        assert response.json()["config"]["controller_colours"]["left_grip"] == "#FF0000"
+        bluetooth.disconnect.assert_not_called()
+        bluetooth.reconnect.assert_not_called()
+        assert bluetooth.connection is connection
+        assert bluetooth.connected is connected
+        assert Config.load().controller_colours["left_grip"] == "#FF0000"
+
+
+@pytest.mark.parametrize(
+    "colours", [None, [], {"body": "red"}, {"body": "#GGGGGG"}, {"unknown": "#123456"}]
+)
+def test_invalid_colours_rejected_before_other_settings_change(fx, colours):
+    with fx.client() as c:
+        before = c.get("/api/config").json()
+        response = c.patch(
+            "/api/config", json={"controller_colours": colours, "preset": "playstation"}
+        )
+        assert response.status_code == 400
+        assert c.get("/api/config").json() == before
+        assert fx.manager.current_preset_name != "playstation"
+
+
+def test_switch_device_defaults_and_rename_persist_without_reconnecting(fx):
+    with fx.client() as c:
+        service = c.app.state.bluetooth
+        first, second = "12:34:56:78:90:AB/P", "AB:CD:EF:12:34:56/P"
+        status = {**c.get("/api/bluetooth").json(), "peers": [first, second]}
+        service.status = AsyncMock(side_effect=lambda: dict(status))
+        service.reconnect = AsyncMock()
+        service.disconnect = AsyncMock()
+        assert c.get("/api/bluetooth").json()["names"] == {
+            first: "Switch Device 1", second: "Switch Device 2",
+        }
+        response = c.patch("/api/bluetooth", json={"address": first, "name": "  Living room  "})
+        assert response.status_code == 200
+        assert response.json()["names"][first] == "Living room"
+        assert Config.load().switch_device_names == {first: "Living room"}
+        assert c.get("/api/bluetooth").json()["names"][first] == "Living room"
+        service.reconnect.assert_not_called()
+        service.disconnect.assert_not_called()
+        for name in ("", " ", "x" * 65, "bad\nname", 123):
+            assert c.patch("/api/bluetooth", json={"address": first, "name": name}).status_code == 409
+        assert c.patch("/api/bluetooth", json={"address": "unknown", "name": "Test"}).status_code == 409
+        assert Config.load().switch_device_names == {first: "Living room"}
+        service.forget = AsyncMock()
+        assert c.request("DELETE", "/api/bluetooth", json={"address": first}).status_code == 200
+        assert Config.load().switch_device_names == {}
 
 
 def test_config_patch_does_not_persist_unusable_preset(fx):
