@@ -1,17 +1,4 @@
-"""Input policy broker.
-
-Single authority over the controller's input sources.
-Tracks the current "control mode" (``manual`` vs ``macro``) and the
-currently applied mapping preset; proxies device selection to the
-:class:`~lib.input.controller_service.ControllerService` when one is
-attached. Only one mode is active at a time.
-
-Broadcast frames (sent to every WS subscriber):
-
-* ``{"type": "status", "mode": ..., "macro": {...}|null}``
-* ``{"type": "controllers", "controllers": [...], "active": guid, "preset": name}``
-
-"""
+"""Coordinate manual input, macro playback, controller selection, and preset changes while broadcasting state to clients."""
 
 from __future__ import annotations
 
@@ -22,17 +9,14 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from lib.input.macro_source import (
-    MacroPlayerThread,
-    load_macro,
-    validate_macro,
-)
+from app.input.macro_source import MacroPlayerThread
+from app.input.pygame_source import PygameInputThread
+from lib.input.macros import load_macro, validate_macro
 from lib.input.presets import PresetConfig, PresetSelection, load_preset
-from lib.input.pygame_source import PygameInputThread
 from lib.input.state import NEUTRAL, Button, ControllerState
 
 if TYPE_CHECKING:
-    from lib.input.controller_service import ControllerService
+    from app.input.controller_service import ControllerService
 
 logger = logging.getLogger("switch_pair")
 

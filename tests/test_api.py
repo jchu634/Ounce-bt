@@ -1,5 +1,4 @@
-"""REST API tests against a stubbed InputManager (no pygame, no
-hardware, no asyncio loop needed)."""
+"""Test HTTP and WebSocket behaviour with an input manager that requires no controller hardware."""
 
 from __future__ import annotations
 
@@ -13,9 +12,9 @@ import pytest
 from starlette.testclient import TestClient
 
 import lib.input.presets as presets_module
+from app.input.manager import InputManager, MacroActiveError
+from app.server import build_app
 from lib.config import Config, ConfigStore
-from lib.input.manager import InputManager, MacroActiveError
-from lib.server import build_app
 from lib.server.files import JsonDocStore
 
 
@@ -338,6 +337,7 @@ def test_invalid_colours_rejected_before_other_settings_change(fx, colours):
         assert response.status_code == 400
         assert c.get("/api/config").json() == before
         assert fx.manager.current_preset_name != "playstation"
+
 
 
 

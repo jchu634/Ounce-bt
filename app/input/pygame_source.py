@@ -69,9 +69,8 @@ class PygameInputThread(threading.Thread):
         self._deadzone = deadzone
         self._trigger_threshold = trigger_threshold
         self._pump = pump
-        # A preset, when supplied, is the single source of truth for every
-        # mapping. Falling back to per-field defaults preserves backward
-        # compatibility for callers that pass ``button_map`` directly.
+
+        # Preset is primary source of truth
         if preset is not None:
             self._button_map = preset.button_map
             self._trigger_map = preset.trigger_map
@@ -85,8 +84,9 @@ class PygameInputThread(threading.Thread):
             self._right_stick = DEFAULT_RIGHT_STICK
             self._dpad_hat = DEFAULT_DPAD_HAT
         self._stop_event = threading.Event()
+
         # Set = running, cleared = paused.
-        # While paused we keep pumping pygame events but skip enqueuing snapshots
+        # While paused keep pumping pygame events but skip enqueuing snapshots
         self._pause = threading.Event()
         if not start_paused:
             self._pause.set()
@@ -137,9 +137,8 @@ class PygameInputThread(threading.Thread):
         except Exception:
             logger.exception("Pygame input thread crashed")
         finally:
-            # Close only this instance; ``joystick.quit()`` would tear down
-            # the whole module and any other open devices (e.g. probes from
-            # the ControllerService enumeration).
+            # Close only this instance; ``joystick.quit()`` tears down whole module
+            # and any other open devices (e.g. probes from the ControllerService enumeration).
             if stick is not None:
                 try:
                     stick.quit()

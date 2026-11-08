@@ -7,10 +7,10 @@ import pytest
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from app.desktop import DesktopBridge, run_application
+from app.input.manager import InputManager
+from app.server import build_app
 from lib.config import Config, ConfigStore
-from lib.desktop import DesktopBridge, run_application
-from lib.input.manager import InputManager
-from lib.server import build_app
 
 
 @pytest.mark.parametrize("path", ["/", "/index.html", "/macros"])
@@ -124,7 +124,7 @@ def test_window_close_cancels_backend(monkeypatch):
     import webview
 
     nonce = Mock(side_effect=["a" * 32, "b" * 32])
-    monkeypatch.setattr("lib.desktop.secrets.token_hex", nonce)
+    monkeypatch.setattr("app.desktop.secrets.token_hex", nonce)
 
     class Event:
         def __iadd__(self, callback):
@@ -173,7 +173,7 @@ def test_web_server_closes_active_websockets_before_cancellation(tmp_path, monke
     from websockets.asyncio.client import connect
     from websockets.exceptions import ConnectionClosed
 
-    import main as application
+    import app.main as application
 
     async def scenario():
         servers = []

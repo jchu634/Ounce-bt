@@ -1,16 +1,4 @@
-"""Safe on-disk JSON document store for macros and presets.
-
-Both features edit ``*.json`` files (stems are the user-facing names) in a
-fixed directory. This module centralises the safety rules:
-
-* names must match ``NAME_PATTERN`` (letters, digits, space, ``_``, ``-``;
-  must start alphanumeric, no leading dot) which structurally rules out
-  path traversal (no separators, no ``..``);
-* writes are atomic (tmp file + ``os.replace``), matching ``Config.save``.
-
-All helpers raise :class:`UnsafeNameError` / :class:`DocError` with
-messages suitable for direct display to the user.
-"""
+"""Validate document names and safely read, atomically write, or delete JSON macro and preset files."""
 
 from __future__ import annotations
 

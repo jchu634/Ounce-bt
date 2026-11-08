@@ -1,11 +1,10 @@
-"""Unit tests for pure logic: name safety, JSON parsing helpers, macro
-and preset validators, and the WS protocol parser."""
+"""Test document safety, JSON parsing, macro and preset validation, and WebSocket message parsing."""
 
 import json
 
 import pytest
 
-from lib.input.macro_source import MacroValidationError, validate_macro
+from lib.input.macros import MacroValidationError, validate_macro
 from lib.input.presets import PresetValidationError, validate_preset
 from lib.server.files import (
     JsonDocStore,

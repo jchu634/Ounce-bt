@@ -3,7 +3,7 @@ import queue
 import pytest
 
 from lib.input.presets import load_preset
-from lib.input.pygame_source import PygameInputThread
+from app.input.pygame_source import PygameInputThread
 from lib.input.state import NEUTRAL, Button, ControllerState
 
 
@@ -57,7 +57,7 @@ def test_xbox_inputs_and_release(monkeypatch, axes, hat, expected):
         else:
             capture.stop()
 
-    monkeypatch.setattr("lib.input.pygame_source.time.sleep", next_frame)
+    monkeypatch.setattr("app.input.pygame_source.time.sleep", next_frame)
     capture._loop(stick)
 
     assert states.get_nowait() == expected

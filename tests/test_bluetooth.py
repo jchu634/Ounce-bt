@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from bumble.keys import JsonKeyStore, MemoryKeyStore, PairingKeys
 
-import main as application
-from lib.bluetooth import BluetoothService
+import app.main as application
+from app.bluetooth import BluetoothService
+from app.main import SessionState, make_l2cap_handler, run_until_disconnected
 from lib.config import Config
-from main import SessionState, make_l2cap_handler, run_until_disconnected
 
 ADDRESS = "12:34:56:78:90:AB"
 
@@ -162,6 +162,8 @@ def test_failed_reconnect_cleans_up_and_allows_retry():
         assert service.connection is connection
 
     asyncio.run(scenario())
+
+
 
 
 def test_hid_close_reports_one_failure_but_manual_disconnect_does_not():

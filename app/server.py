@@ -1,28 +1,4 @@
-"""
-Starlette application hosting the built frontend, the macro WebSocket
-and the REST API.
-
-Routes (ordered WS/REST before static so the catch-all SPA mount doesn't
-shadow them)::
-
-    /ws                                WebSocket: runtime channel
-    GET  /api/config                   current config as JSON
-    PATCH /api/config                  merge-update config (persists)
-    GET  /api/control-mode             {"mode": ..., "macro": {...}|null}
-    PUT  /api/control-mode             {"mode": "manual"|"macro"}
-    GET  /api/macros                   {"names": [...]}
-    GET  /api/macros/{name}            {"name": ..., "contents": "<raw json>"}
-    PUT  /api/macros/{name}            {"contents": "<raw json>"} (validated)
-    DELETE /api/macros/{name}          409 while that macro is running
-    GET  /api/controllers              device list + active + preset
-    PUT  /api/controllers/active       {"guid"|"name"|"index": ...}
-    GET  /api/presets                  {"presets": [{name, builtin, ...}]}
-    GET  /api/presets/{name}           {"name": ..., "contents": "<raw json>"}
-    PUT  /api/presets/{name}           custom presets only (validated)
-    DELETE /api/presets/{name}         custom presets only; 409 when active
-    POST /api/presets/{name}/activate  select + persist + apply
-    /                                  StaticFiles(frontend/dist, html=True)
-"""
+"""Serve the frontend and handle HTTP and WebSocket requests for controllers, macros, presets, and settings."""
 
 from __future__ import annotations
 
@@ -40,11 +16,11 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from lib.bluetooth import BluetoothService
-from lib.input.manager import InputManager, MacroActiveError, state_from_event
+from app.bluetooth import BluetoothService
+from app.input.manager import InputManager, MacroActiveError, state_from_event
 from lib.colours import normalize_controller_colours
 from lib.config import ConfigStore
-from lib.input.macro_source import MacroValidationError, validate_macro
+from lib.input.macros import MacroValidationError, validate_macro
 from lib.input.presets import (
     PresetValidationError,
     delete_preset,

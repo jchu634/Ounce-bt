@@ -1,27 +1,4 @@
-"""Controller mapping presets.
-
-A *preset* is a JSON description of how a physical controller's
-pygame/SDL indices map to Switch buttons, sticks, triggers, D-pad, and
-whether rumble is enabled. Presets live in the top-level ``presets/``
-directory and are selected by name through the config store (``preset``
-field) or the ``--preset`` CLI flag.
-
-Schema (see ``presets/xbox.json`` for a full example)::
-
-    {
-      "name": "Xbox",
-      "description": "...",
-      "rumble_enabled": true,
-      "buttons":  {"0": "B", "1": "A", ...},   # pygame btn idx -> Switch Button
-      "triggers": {"4": "ZL", "5": "ZR"},       # pygame axis idx -> Switch Button
-      "left_stick":  {"x_axis": 0, "y_axis": 1},
-      "right_stick": {"x_axis": 2, "y_axis": 3},
-      "dpad": {"hat": 0}                         # set hat to null to disable
-    }
-
-JSON object keys are strings (per the JSON spec) and are coerced to
-``int`` on load. Button values are :class:`Button` enum names.
-"""
+"""Load, validate, save, and select controller mappings from built-in and custom JSON presets."""
 
 from __future__ import annotations
 
@@ -143,7 +120,7 @@ def validate_preset(data: dict) -> PresetConfig:
     """Validate a parsed preset document and build its config.
 
     Raises :class:`PresetValidationError` (with a JSON path) on problems,
-    mirroring :func:`lib.input.macro_source.validate_macro`.
+    mirroring :func:`lib.input.macros.validate_macro`.
     """
     if not isinstance(data, dict):
         raise PresetValidationError([], "must be a JSON object")

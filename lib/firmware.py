@@ -1,4 +1,4 @@
-"""External Realtek firmware and persistent controller identity."""
+"""Validate Realtek firmware files and synchronise the saved Bluetooth identity with the firmware configuration."""
 
 import os
 import secrets

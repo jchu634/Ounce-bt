@@ -1,10 +1,4 @@
-"""Input subsystem for ounce-bt.
-
-Defines a single standardized controller-state packet (``ControllerState``)
-and the input sources (physical controller via pygame, file-based macros)
-that produce them. Sources run as daemon threads pushing onto a shared
-``queue.Queue`` consumed by the main asyncio loop.
-"""
+"""Export controller state, mapping, calibration, and rumble helpers."""
 
 from lib.input.presets import (
     BUILTIN_PRESETS,

@@ -1,25 +1,4 @@
-"""WebSocket message protocol.
-
-Pure parsing/validation helpers, independent of Starlette, so they can be
-unit-tested in isolation. The schema mirrors the plan in the project
-README.
-
-Inbound envelope (client -> server)::
-
-    {"type": "event",  "action": {"do": "press", "button": "A"}}
-    {"type": "state",  "buttons": ["A","B"], "left": [0.0, 1.0], "right": [0.0, 0.0]}
-    {"type": "macro",  "op": "start", "macro": {"name": "...", "actions": [...]}}
-    {"type": "macro",  "op": "start", "name": "press-a-three-times"}
-    {"type": "macro",  "op": "cancel"}
-    {"type": "macro",  "op": "pause"}
-    {"type": "macro",  "op": "resume"}
-
-Outbound envelope (server -> client)::
-
-    {"type": "status", "mode": "manual"|"macro", "macro": {"name": "...", "state": "..."}|null}
-    {"type": "controllers", "controllers": [{...}], "active": "<guid>"|null, "preset": "xbox"|null}
-    {"type": "error",  "message": "..."}
-"""
+"""Parse and validate WebSocket input commands and construct controller, macro, and error response frames."""
 from __future__ import annotations
 
 import json
