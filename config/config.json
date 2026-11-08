@@ -11,9 +11,7 @@
     "g1": "playstation"
   },
   "device_config": ".\\pro_controller.json",
-  "input_specs": [
-    "controller"
-  ],
+  "input_specs": ["controller"],
   "last_camera_device_id": "",
   "macro_rate_hz": 120,
   "macros_dir": "macros",
