@@ -1,25 +1,20 @@
 {
-  "bt_address": "98:B6:E9:7E:E9:57",
-  "controller_colours": {
-    "body": "#000000",
-    "buttons": "#F4F2FF",
-    "left_grip": "#4EEC15",
-    "right_grip": "#EC15EA"
-  },
-  "controller_guid": "",
-  "controller_presets": {
-    "g1": "playstation"
-  },
-  "device_config": ".\\pro_controller.json",
-  "input_specs": ["controller"],
-  "last_camera_device_id": "",
+  "bt_address": null,
+  "controller_colours": null,
+  "controller_guid": null,
+  "controller_presets": null,
+  "device_config": "pro_controller.json",
+  "input_specs": [
+    "controller"
+  ],
+  "last_camera_device_id": null,
   "macro_rate_hz": 120,
   "macros_dir": "macros",
   "nolog": false,
   "pairing_dir": null,
-  "preset": "playstation",
+  "preset": null,
   "presets_dir": "presets",
-  "switch_device_names": {},
+  "switch_device_names": null,
   "tick_rate_hz": 132,
   "transport_spec": "usb:0",
   "vibration_enabled": true,
