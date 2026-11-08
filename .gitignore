@@ -12,6 +12,9 @@ wheels/
 # Logs
 *.log
 
+# Local notes
+/TODO.md
+
 # Macros
 **/macros/*.json
 
