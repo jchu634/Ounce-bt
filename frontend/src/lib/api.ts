@@ -66,7 +66,11 @@ const requestJson = <T>(path: string, init?: RequestInit): Effect.Effect<T, ApiE
 export const getConfig = () => requestJson<ConfigSnapshot>("/api/config");
 
 export const patchConfig = (changes: ConfigSnapshot) =>
-  requestJson<{ changed: ConfigSnapshot; config: ConfigSnapshot }>("/api/config", {
+  requestJson<{
+    changed: ConfigSnapshot;
+    config: ConfigSnapshot;
+    colours_reconnect_required: boolean;
+  }>("/api/config", {
     method: "PATCH",
     body: JSON.stringify(changes),
   });
