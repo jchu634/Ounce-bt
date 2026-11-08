@@ -1,9 +1,9 @@
-import ControllerColourPreview from "@/src/assets/controllers/ControllerColourPreview";
+import ColourPreviewController from "@/src/assets/controllers/ColourPreviewController";
 import type { ControllerColours } from "@/src/lib/controller-colours";
 
 export function ControllerPreview({ colours }: { colours: ControllerColours }) {
   return (
-    <ControllerColourPreview
+    <ColourPreviewController
       colours={colours}
       viewBox="5 12 54 39"
       role="img"

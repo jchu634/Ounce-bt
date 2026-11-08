@@ -490,3 +490,24 @@ def test_macro_rename_overwrites_destination(fx):
         assert c.get("/api/macros/target").json()["contents"] == original
         assert c.get("/api/macros/example").status_code == 404
         assert c.get("/api/macros").json() == {"names": ["target"]}
+
+
+def test_vibration_defaults_on_and_persists_live_change(fx):
+    with fx.client() as client:
+        assert client.get("/api/config").json()["vibration_enabled"] is True
+        result = client.patch("/api/config", json={"vibration_enabled": False})
+        assert result.status_code == 200
+        assert result.json()["config"]["vibration_enabled"] is False
+        assert fx.config_store.config.vibration_enabled is False
+        assert Config.load().vibration_enabled is False
+
+
+@pytest.mark.parametrize("invalid", [None, "false", 0, 1, [], {}])
+def test_invalid_vibration_rejected_atomically(fx, invalid):
+    with fx.client() as client:
+        before = client.get("/api/config").json()
+        result = client.patch(
+            "/api/config", json={"vibration_enabled": invalid, "preset": "playstation"}
+        )
+        assert result.status_code == 400
+        assert client.get("/api/config").json() == before

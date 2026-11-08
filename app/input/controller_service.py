@@ -13,6 +13,7 @@ from typing import Any
 
 from app.input.pygame_source import PygameInputThread
 from lib.input.presets import PresetConfig, PresetSelection
+from lib.input.rumble import RumbleData
 from lib.input.state import NEUTRAL
 
 logger = logging.getLogger("switch_pair")
@@ -122,6 +123,12 @@ class ControllerService(threading.Thread):
         # Mirrors the manager's macro pause state so threads created while
         # a macro runs start paused.
         self._captures_paused = False
+
+    def set_rumble(self, rumble: RumbleData | None) -> None:
+        """Publish the latest effect without blocking the Bluetooth loop."""
+        capture = self._capture
+        if capture is not None:
+            capture.set_rumble(rumble)
 
     def pause(self) -> None:
         """Pause the active capture (macro starting)."""

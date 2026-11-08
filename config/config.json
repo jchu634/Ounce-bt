@@ -2,9 +2,9 @@
   "bt_address": "98:B6:E9:7E:E9:57",
   "controller_colours": {
     "body": "#000000",
-    "buttons": "#0F0F0F",
-    "left_grip": "#828282",
-    "right_grip": "#828282"
+    "buttons": "#F4F2FF",
+    "left_grip": "#4EEC15",
+    "right_grip": "#EC15EA"
   },
   "controller_guid": "",
   "controller_presets": {
@@ -19,11 +19,12 @@
   "pairing_dir": null,
   "preset": "playstation",
   "presets_dir": "presets",
+  "switch_device_names": {},
   "tick_rate_hz": 132,
   "transport_spec": "usb:0",
+  "vibration_enabled": true,
   "web_host": "127.0.0.1",
   "web_port": 9127,
-  "no_log": true,
   "webview_enabled": true,
   "ws_auth_required": true
 }

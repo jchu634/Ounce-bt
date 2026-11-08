@@ -164,6 +164,7 @@ class ControllerProtocol:
             self.right_stick_centre = [0x16, 0xD8, 0x7D]
 
         self.vibration_enabled = False
+        self.vibration_configured = False
         self.vibrator_report = random.choice(self.VIBRATOR_BYTES)
 
         # IMU (Six Axis Sensor) State
@@ -270,7 +271,7 @@ class ControllerProtocol:
 
             case SwitchResponses.ENABLE_VIBRATION:
                 self.set_subcommand_reply()
-                self.enable_vibration()
+                self.enable_vibration(message)
 
             case SwitchResponses.SET_PLAYER:
                 self.set_subcommand_reply()
@@ -660,7 +661,7 @@ class ControllerProtocol:
         # Subcommand reply
         self.report[15] = 0x04
 
-    def enable_vibration(self):
+    def enable_vibration(self, message):
         # ACK Reply
         self.report[14] = 0x82
 
@@ -668,7 +669,9 @@ class ControllerProtocol:
         self.report[15] = 0x48
 
         # Set class property
-        self.vibration_enabled = True
+        if len(message.subcommand) > 1:
+            self.vibration_enabled = message.subcommand[1] == 0x01
+            self.vibration_configured = True
 
     def set_player_lights(self, message):
         # ACK byte
@@ -725,6 +728,11 @@ class SwitchReportParser:
     def __init__(self, data, data_length=50):
         # Non-data check
         if not data:
+            self.response = SwitchResponses.NO_DATA
+            return
+
+        # Rumble-only and MCU reports do not carry normal subcommands.
+        if len(data) >= 2 and data[0] == 0xA2 and data[1] in (0x10, 0x11):
             self.response = SwitchResponses.NO_DATA
             return
 

@@ -191,14 +191,30 @@ export default function Credits() {
           (License)
         </a>
         <br />
-        Ounce-bt's bluetooth core was implemented using NXBT's documentation, and uses/adapts some
-        code from that project. <br />
-        Additionally, we would like to thank typenoob for their work on their{" "}
-        <a className="text-blue-500" href="https://github.com/typenoob/nxbt">
+        Ounce-bt's bluetooth core was implemented using NXBT's documentation,
+        and uses/adapts some code from that project. <br />
+        We would also like to thank typenoob for their work on their{" "}
+        <a
+          className="text-blue-500"
+          target="_blank"
+          rel="noopener noreferrer"
+          href="https://github.com/typenoob/nxbt"
+        >
           NXBT fork
         </a>{" "}
-        as their bumble implementation was used to help understand the pairing protocol and fix the
-        last bugs that prevented Ounce-bt's bumble implementation from working.
+        as their bumble implementation was used to help understand the pairing
+        protocol and fix the last bugs that prevented Ounce-bt's bumble
+        implementation from working. <br />
+        This could also not have been done without{" "}
+        <a
+          className="text-blue-500"
+          target="_blank"
+          rel="noopener noreferrer"
+          href="https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering"
+        >
+          dekuNukem's notes
+        </a>{" "}
+        which was used for implementing Rumble and Colours.
       </p>
       <p>
         Controller icons are from the Input Prompts pack by{" "}
@@ -221,6 +237,10 @@ export default function Credits() {
         </a>
         .
       </p>
+      <p>
+        Finally, we would like to thank the various open source library
+        maintainers whose projects this is built upon.
+      </p>
       <Accordion multiple>
         {dependencyGroups.map((group) => (
           <AccordionItem key={group.name} value={group.name}>
@@ -232,7 +252,10 @@ export default function Credits() {
                     <a className="text-blue-500" href={dependency.url}>
                       {dependency.name}
                     </a>
-                    <span className="text-muted-foreground"> · {dependency.description}</span>
+                    <span className="text-muted-foreground">
+                      {" "}
+                      · {dependency.description}
+                    </span>
                     <div className="text-xs text-muted-foreground">
                       License:{" "}
                       <a

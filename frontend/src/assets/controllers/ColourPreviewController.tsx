@@ -1,7 +1,7 @@
 import { useId, type SVGProps } from "react";
 import type { ControllerColours } from "@/src/lib/controller-colours";
 
-type ControllerColourPreviewProps = SVGProps<SVGSVGElement> & {
+type ColourPreviewControllerProps = SVGProps<SVGSVGElement> & {
   colours?: ControllerColours;
 };
 
@@ -12,11 +12,21 @@ const BODY =
 const BUTTONS =
   "M51 25 Q51 24.15 50.4 23.55 49.85 23 49 23 48.15 23 47.6 23.55 47 24.15 47 25 47 25.8 47.6 26.4 48.15 27 49 27 49.85 27 50.4 26.4 51 25.8 51 25 M43 25 Q43 24.15 42.4 23.55 41.85 23 41 23 40.15 23 39.6 23.55 39 24.15 39 25 39 25.8 39.6 26.4 40.15 27 41 27 41.85 27 42.4 26.4 43 25.8 43 25 M47 22 Q47 21.15 46.4 20.55 45.85 20 45 20 44.15 20 43.6 20.55 43 21.15 43 22 43 22.8 43.6 23.4 44.15 24 45 24 45.85 24 46.4 23.4 47 22.8 47 22 M24 29 L24 31 22 31 22 33 24 33 24 35 26 35 26 33 28 33 28 31 26 31 26 29 24 29 M41 32 Q41 30.75 40.1 29.85 39.25 29 38 29 36.75 29 35.85 29.85 35 30.75 35 32 35 33.2 35.85 34.05 36.75 35 38 35 39.25 35 40.1 34.05 41 33.2 41 32 M22 24 Q22 22.75 21.1 21.85 20.25 21 19 21 17.75 21 16.85 21.85 16 22.75 16 24 16 25.2 16.85 26.05 17.75 27 19 27 20.25 27 21.1 26.05 22 25.2 22 24 M47 28 Q47 27.15 46.4 26.55 45.85 26 45 26 44.15 26 43.6 26.55 43 27.15 43 28 43 28.8 43.6 29.4 44.15 30 45 30 45.85 30 46.4 29.4 47 28.8 47 28";
 
-const ControllerColourPreview = ({ colours, children, ...props }: ControllerColourPreviewProps) => {
+const ColourPreviewController = ({
+  colours,
+  children,
+  ...props
+}: ColourPreviewControllerProps) => {
   const clipId = useId();
 
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={64} height={64} viewBox="0 0 64 64" {...props}>
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={64}
+      height={64}
+      viewBox="0 0 64 64"
+      {...props}
+    >
       {children}
       {colours ? (
         <>
@@ -26,21 +36,42 @@ const ControllerColourPreview = ({ colours, children, ...props }: ControllerColo
             </clipPath>
           </defs>
           <g clipPath={`url(#${clipId})`} stroke="none">
-            <rect data-region="body" width="64" height="64" fill={colours.body} />
-            <path data-region="left_grip" fill={colours.left_grip} d="M0 27H10L22 38.25V52H0Z" />
+            <rect
+              data-region="body"
+              width="64"
+              height="64"
+              fill={colours.body}
+            />
+            <path
+              data-region="left_grip"
+              fill={colours.left_grip}
+              d="M0 27H10L22 38.25V52H0Z"
+            />
             <path
               data-region="right_grip"
               fill={colours.right_grip}
               d="M64 27H54L42 38.25V52H64Z"
             />
           </g>
-          <path data-region="buttons" d={BUTTONS} fill={colours.buttons} stroke="none" />
+          <path
+            data-region="buttons"
+            d={BUTTONS}
+            fill={colours.buttons}
+            stroke="none"
+          />
         </>
       ) : (
         <path fill="#FFFFFF" d={ORIGINAL} />
       )}
+      <path
+        d={BODY}
+        fill="none"
+        stroke="#262626"
+        strokeWidth={1}
+        strokeLinejoin="round"
+      />
     </svg>
   );
 };
 
-export default ControllerColourPreview;
+export default ColourPreviewController;

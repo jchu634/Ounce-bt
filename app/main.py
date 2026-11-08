@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import logging
 import queue
+from collections.abc import Callable
 from time import perf_counter
 
 import bumble.logging
@@ -109,8 +110,7 @@ async def run_pairing_handshake(protocol, interrupt_channel, incoming):
     """Exchange subcommands with the Switch until the handshake completes.
 
     The Switch considers the controller ready once vibration has been
-    enabled and a player number has been assigned. Mirrors the proven
-    flow in nxbt_bumble's ControllerServer._run_pairing_handshake.
+    configured and a player number has been assigned.
     """
     received_first_message = False
     while True:
@@ -132,7 +132,7 @@ async def run_pairing_handshake(protocol, interrupt_channel, incoming):
         if (
             reply
             and len(reply) > 45
-            and protocol.vibration_enabled
+            and protocol.vibration_configured
             and protocol.player_number
         ):
             logger.info(f"Handshake complete (player {protocol.player_number})")
@@ -153,90 +153,88 @@ async def run_mainloop(
     stop_event,
     command_queue,
     rumble_enabled: bool = True,
+    controller_service: ControllerService | None = None,
+    vibration_allowed: Callable[[], bool] | None = None,
 ):
     """Steady-state loop: apply the latest controller input, process one
-    Switch PDU per tick, decode rumble, and emit reports.
+    Switch PDU per tick, forward rumble, and emit reports.
 
     Caches the last report payload so we don't flood the Switch with
     identical packets (important on the "Change Grip/Order" menu), and
     sends a keepalive every 132 ticks (~1 s) regardless.
 
-    When ``rumble_enabled`` is False the rumble block is skipped entirely
-    (no decoding, no logging) — e.g. for presets that disable rumble.
+    Console vibration state, the current preset and the saved setting gate playback.
     """
     tick = 0
     cached = None
     latest_state: ControllerState = NEUTRAL
-    last_rumble = None
     duration_start = perf_counter()
 
-    while not stop_event.is_set():
-        if (
-            not interrupt_channel
-            or interrupt_channel.state != interrupt_channel.State.OPEN
-        ):
-            logger.warning("Interrupt channel no longer open")
-            return
+    try:
+        while not stop_event.is_set():
+            if (
+                not interrupt_channel
+                or interrupt_channel.state != interrupt_channel.State.OPEN
+            ):
+                logger.warning("Interrupt channel no longer open")
+                return
 
-        # Pull the latest input state from the command queue (latest-wins).
-        # Held buttons/sticks persist across ticks when no new state arrives.
-        while True:
+            # Pull the latest input state from the command queue (latest-wins).
+            # Held buttons/sticks persist across ticks when no new state arrives.
+            while True:
+                try:
+                    latest_state = command_queue.get_nowait()
+                except queue.Empty:
+                    break
+
+            # One Switch PDU per tick (non-blocking)
             try:
-                latest_state = command_queue.get_nowait()
-            except queue.Empty:
-                break
+                reply = incoming.get_nowait()
+            except asyncio.QueueEmpty:
+                reply = None
 
-        # One Switch PDU per tick (non-blocking)
-        try:
-            reply = incoming.get_nowait()
-        except asyncio.QueueEmpty:
-            reply = None
+            protocol.process_commands(reply)
 
-        protocol.process_commands(reply)
+            # Apply the latest input state (buttons + sticks) to the report.
+            apply_to_protocol(protocol, latest_state)
 
-        # Apply the latest input state (buttons + sticks) to the report.
-        apply_to_protocol(protocol, latest_state)
+            report = protocol.get_report()
 
-        report = protocol.get_report()
+            # Settings and presets are checked live, including ticks without a PDU.
+            allowed = rumble_enabled and protocol.vibration_enabled
+            if vibration_allowed is not None:
+                allowed = allowed and vibration_allowed()
+            if controller_service is not None:
+                if not allowed:
+                    controller_service.set_rumble(None)
+                elif reply:
+                    rumble = parse_rumble(reply)
+                    if rumble is not None:
+                        controller_service.set_rumble(rumble)
 
-        # Decode rumble from the Switch packet and log changes only.
-        if reply and rumble_enabled:
-            rumble = parse_rumble(reply)
-            if rumble is not None:
-                sig = (
-                    round(rumble.left.frequency_hz),
-                    round(rumble.left.amplitude, 3),
-                    round(rumble.right.frequency_hz),
-                    round(rumble.right.amplitude, 3),
-                )
-                if sig != last_rumble:
-                    last_rumble = sig
-                    logger.info(
-                        f"Rumble: L={rumble.left.frequency_hz:.0f}Hz@"
-                        f"{rumble.left.amplitude:.2f} "
-                        f"R={rumble.right.frequency_hz:.0f}Hz@"
-                        f"{rumble.right.amplitude:.2f}"
-                    )
+            try:
+                if report[3:] != cached:
+                    interrupt_channel.send_pdu(report)
+                    cached = report[3:]
+                elif tick >= TICK_RATE_HZ:
+                    interrupt_channel.send_pdu(report)
+                    tick = 0
+            except Exception as e:
+                logger.warning(f"Failed to send report: {e}")
+                return
 
-        try:
-            if report[3:] != cached:
-                interrupt_channel.send_pdu(report)
-                cached = report[3:]
-            elif tick >= TICK_RATE_HZ:
-                interrupt_channel.send_pdu(report)
-                tick = 0
-        except Exception as e:
-            logger.warning(f"Failed to send report: {e}")
-            return
+            tick += 1
 
-        tick += 1
+            # Maintain the target tick rate, accounting for processing time.
+            duration_end = perf_counter()
+            elapsed = duration_end - duration_start
+            duration_start = duration_end
+            sleep_time = max(0.0, 1 / TICK_RATE_HZ - elapsed)
+            await asyncio.sleep(sleep_time)
 
-        # Maintain the target tick rate, accounting for processing time.
-        duration_end = perf_counter()
-        elapsed = duration_end - duration_start
-        duration_start = duration_end
-        sleep_time = max(0.0, 1 / TICK_RATE_HZ - elapsed)
-        await asyncio.sleep(sleep_time)
+    finally:
+        if controller_service is not None:
+            controller_service.set_rumble(None)
 
 
 class SessionState:
@@ -710,14 +708,17 @@ async def main(
                     bluetooth.connected = True
                     if config.web_enabled:
                         await bluetooth.set_pairing(False)
-                    active_preset = manager.current_preset or preset
                     await run_mainloop(
                         protocol,
                         interrupt_channel,
                         state.incoming,
                         state.session_stop,
                         command_queue,
-                        rumble_enabled=active_preset.rumble_enabled,
+                        controller_service=controller_service,
+                        vibration_allowed=lambda: (
+                            config_store.config.vibration_enabled
+                            and (manager.current_preset or preset).rumble_enabled
+                        ),
                     )
                 except asyncio.CancelledError:
                     raise

@@ -136,3 +136,20 @@ def test_alternative_presets_support_builtins_and_custom_writes(tmp_path, monkey
     contents = presets.read_preset_text("xbox")
     presets.save_preset_text("my-pad", contents)
     assert presets.load_preset("my-pad").name
+
+
+def test_invalid_saved_vibration_falls_back_to_on(tmp_path, monkeypatch):
+    path = tmp_path / "config.json"
+    monkeypatch.setattr("lib.config.config_path", lambda: path)
+    path.write_text('{"vibration_enabled": "false", "transport_spec": "usb:2"}')
+    config = Config.load()
+    assert config.vibration_enabled is True
+    assert config.transport_spec == "usb:2"
+
+
+def test_store_rejects_non_boolean_vibration_before_other_updates():
+    store = ConfigStore(Config())
+    with pytest.raises(TypeError, match="vibration_enabled"):
+        store.update({"preset": "changed", "vibration_enabled": 0})
+    assert store.config.preset == "xbox"
+    assert store.config.vibration_enabled is True
