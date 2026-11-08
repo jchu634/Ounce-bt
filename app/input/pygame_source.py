@@ -9,9 +9,14 @@ from pygame import event, joystick
 from pygame import init as pygame_init
 
 from lib.input.presets import PresetConfig
+from lib.input.rumble import RumbleData
 from lib.input.state import Button, ControllerState
 
 logger = logging.getLogger("switch_pair")
+
+RUMBLE_TIMEOUT_SECONDS = 0.25
+RUMBLE_DURATION_MS = 100
+RUMBLE_REFRESH_SECONDS = 0.05
 
 
 # Default mapping from an Xbox/SDL-style gamepad (pygame button indices)
@@ -83,6 +88,13 @@ class PygameInputThread(threading.Thread):
             self._left_stick = DEFAULT_LEFT_STICK
             self._right_stick = DEFAULT_RIGHT_STICK
             self._dpad_hat = DEFAULT_DPAD_HAT
+        self._rumble_lock = threading.Lock()
+        self._rumble = (0.0, 0.0)
+        self._rumble_deadline = 0.0
+        self._rumble_playing = False
+        self._rumble_supported = True
+        self._rumble_refresh = 0.0
+        self._played_rumble = (0.0, 0.0)
         self._stop_event = threading.Event()
 
         # Set = running, cleared = paused.
@@ -90,6 +102,38 @@ class PygameInputThread(threading.Thread):
         self._pause = threading.Event()
         if not start_paused:
             self._pause.set()
+
+    def set_rumble(self, rumble: RumbleData | None) -> None:
+        with self._rumble_lock:
+            self._rumble = rumble.strengths() if rumble is not None else (0.0, 0.0)
+            self._rumble_deadline = time.monotonic() + RUMBLE_TIMEOUT_SECONDS
+
+    def _update_rumble(self, stick) -> None:
+        if not self._rumble_supported:
+            return
+        now = time.monotonic()
+        with self._rumble_lock:
+            strengths = self._rumble if now < self._rumble_deadline else (0.0, 0.0)
+        try:
+            if strengths == (0.0, 0.0):
+                if self._rumble_playing:
+                    stick.stop_rumble()
+                    self._rumble_playing = False
+            elif (
+                not self._rumble_playing
+                or now >= self._rumble_refresh
+                or strengths != self._played_rumble
+            ):
+                # Refresh a finite effect. SDL also stops it if this thread dies.
+                self._rumble_supported = stick.rumble(*strengths, RUMBLE_DURATION_MS)
+                self._rumble_playing = self._rumble_supported
+                self._played_rumble = strengths
+                self._rumble_refresh = now + RUMBLE_REFRESH_SECONDS
+                if not self._rumble_supported:
+                    logger.info("Selected controller does not support vibration")
+        except Exception:
+            self._rumble_supported = False
+            logger.warning("Controller vibration unavailable", exc_info=True)
 
     def stop(self):
         self._stop_event.set()
@@ -141,7 +185,11 @@ class PygameInputThread(threading.Thread):
             # and any other open devices (e.g. probes from the ControllerService enumeration).
             if stick is not None:
                 try:
-                    stick.quit()
+                    try:
+                        if self._rumble_playing:
+                            stick.stop_rumble()
+                    finally:
+                        stick.quit()
                 except Exception:
                     logger.debug("failed to close pygame joystick", exc_info=True)
 
@@ -157,6 +205,7 @@ class PygameInputThread(threading.Thread):
             # while paused. We just skip the enqueue when paused.
             if self._pump:
                 event.pump()
+            self._update_rumble(stick)
             if not self._pause.is_set():
                 time.sleep(self._period)
                 continue

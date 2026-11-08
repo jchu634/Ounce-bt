@@ -505,6 +505,8 @@ async def config_patch(request: Request) -> Response:
         return _error("invalid JSON body")
     if not isinstance(body, dict):
         return _error("expected a JSON object")
+    if "vibration_enabled" in body and not isinstance(body["vibration_enabled"], bool):
+        return _error("vibration_enabled must be a boolean")
     if "controller_colours" in body:
         try:
             normalize_controller_colours(body["controller_colours"])

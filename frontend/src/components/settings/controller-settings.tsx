@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { VibrationSetting } from "@/src/components/settings/vibration-setting";
 import { ControllerPanel } from "@/src/components/settings/controller-panel";
 import { PresetEditor, type PresetEditorHandle } from "@/src/components/editors/preset-editor";
 import { PresetPicker } from "@/src/components/settings/controller-preset-picker";
@@ -39,6 +40,7 @@ export function ControllerSettings({
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <ControllerPanel />
+      <VibrationSetting />
 
       <div className="space-y-4 2xl:flex 2xl:space-y-0 2xl:gap-x-4">
         <PresetPicker

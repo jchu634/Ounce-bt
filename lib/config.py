@@ -86,12 +86,15 @@ class Config:
     tick_rate_hz: int = 132
     macro_rate_hz: int = 120
     preset: str = "xbox"
+    vibration_enabled: bool = True
     controller_guid: str = ""
     controller_presets: dict[str, str] = field(default_factory=dict)
     controller_colours: dict[str, str] = field(default_factory=dict)
     switch_device_names: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.vibration_enabled, bool):
+            raise TypeError("vibration_enabled must be a boolean")
         self.controller_presets = _normalize_controller_presets(self.controller_presets)
         self.controller_colours = normalize_controller_colours(self.controller_colours)
         self.switch_device_names = normalize_device_names(self.switch_device_names)
@@ -146,6 +149,11 @@ class Config:
             except (TypeError, ValueError) as e:
                 logger.warning(f"Invalid {key}: {e}; using defaults")
                 del filtered[key]
+        if "vibration_enabled" in filtered and not isinstance(
+            filtered["vibration_enabled"], bool
+        ):
+            logger.warning("Invalid vibration_enabled; using default")
+            del filtered["vibration_enabled"]
         config = cls(**filtered)
         config._path = path
         return config
@@ -188,6 +196,10 @@ class ConfigStore:
     def update(self, changes: dict) -> dict:
         """Apply a partial update and persist. Returns the actually-changed
         key/value pairs (keys that were unknown or unchanged are skipped)."""
+        if "vibration_enabled" in changes and not isinstance(
+            changes["vibration_enabled"], bool
+        ):
+            raise TypeError("vibration_enabled must be a boolean")
         valid = Config._valid_keys()
         with self._lock:
             if "switch_device_names" in changes:
