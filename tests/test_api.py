@@ -339,6 +339,31 @@ def test_invalid_colours_rejected_before_other_settings_change(fx, colours):
         assert fx.manager.current_preset_name != "playstation"
 
 
+def test_switch_device_defaults_and_rename_persist_without_reconnecting(fx):
+    with fx.client() as c:
+        service = c.app.state.bluetooth
+        first, second = "12:34:56:78:90:AB/P", "AB:CD:EF:12:34:56/P"
+        status = {**c.get("/api/bluetooth").json(), "peers": [first, second]}
+        service.status = AsyncMock(side_effect=lambda: dict(status))
+        service.reconnect = AsyncMock()
+        service.disconnect = AsyncMock()
+        assert c.get("/api/bluetooth").json()["names"] == {
+            first: "Switch Device 1", second: "Switch Device 2",
+        }
+        response = c.patch("/api/bluetooth", json={"address": first, "name": "  Living room  "})
+        assert response.status_code == 200
+        assert response.json()["names"][first] == "Living room"
+        assert Config.load().switch_device_names == {first: "Living room"}
+        assert c.get("/api/bluetooth").json()["names"][first] == "Living room"
+        service.reconnect.assert_not_called()
+        service.disconnect.assert_not_called()
+        for name in ("", " ", "x" * 65, "bad\nname", 123):
+            assert c.patch("/api/bluetooth", json={"address": first, "name": name}).status_code == 409
+        assert c.patch("/api/bluetooth", json={"address": "unknown", "name": "Test"}).status_code == 409
+        assert Config.load().switch_device_names == {first: "Living room"}
+        service.forget = AsyncMock()
+        assert c.request("DELETE", "/api/bluetooth", json={"address": first}).status_code == 200
+        assert Config.load().switch_device_names == {}
 
 
 def test_config_patch_does_not_persist_unusable_preset(fx):

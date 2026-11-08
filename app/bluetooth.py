@@ -13,6 +13,7 @@ class BluetoothService:
         self.connected = False
         self.pairing = False
         self.reconnecting = False
+        self.reconnect_address = None
         self.failure_id = 0
         self.failure = None
         self._intentional_disconnect = False
@@ -61,7 +62,9 @@ class BluetoothService:
                 if self.connected
                 else ("connecting" if self.connection else "disconnected")
             ),
-            "address": str(self.connection.peer_address) if self.connection else None,
+            "address": str(self.connection.peer_address)
+            if self.connection
+            else self.reconnect_address,
             "peers": peers,
             "failure_id": self.failure_id,
             "failure": self.failure,
@@ -115,6 +118,7 @@ class BluetoothService:
             if address not in (await self.status())["peers"]:
                 raise ValueError("Select a previously paired device")
             self.reconnecting = True
+            self.reconnect_address = address
             try:
                 await self.device.set_discoverable(False)
                 await self.device.set_connectable(False)
@@ -136,3 +140,4 @@ class BluetoothService:
                 raise
             finally:
                 self.reconnecting = False
+                self.reconnect_address = None

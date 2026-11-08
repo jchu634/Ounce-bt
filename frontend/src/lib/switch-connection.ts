@@ -10,11 +10,7 @@ export function useSwitchConnection() {
   const lastFailureId = useRef<number | null>(null);
 
   function acceptStatus(next: BluetoothStatus) {
-    if (
-      lastFailureId.current !== null &&
-      next.failure_id > lastFailureId.current &&
-      next.failure
-    ) {
+    if (lastFailureId.current !== null && next.failure_id > lastFailureId.current && next.failure) {
       toast.add({
         type: "warning",
         priority: "high",
@@ -23,10 +19,7 @@ export function useSwitchConnection() {
         timeout: 5000,
       });
     }
-    lastFailureId.current = Math.max(
-      lastFailureId.current ?? next.failure_id,
-      next.failure_id,
-    );
+    lastFailureId.current = Math.max(lastFailureId.current ?? next.failure_id, next.failure_id);
     setStatus(next);
   }
 
@@ -43,9 +36,7 @@ export function useSwitchConnection() {
       } catch (cause) {
         if (!disposed)
           setStatusError(
-            cause instanceof Error
-              ? cause.message
-              : "Could not load Bluetooth status",
+            cause instanceof Error ? cause.message : "Could not load Bluetooth status",
           );
       } finally {
         if (!disposed) timer = setTimeout(() => void refresh(), 1000);
@@ -93,6 +84,16 @@ export function useSwitchConnection() {
   const disabled = busy || statusError !== null || !status?.available;
   const active = status?.state !== "disconnected";
 
+  async function rename(address: string, name: string): Promise<void> {
+    acceptStatus(
+      await requestStatus({
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address, name }),
+      }),
+    );
+  }
+
   return {
     status,
     selected: address,
@@ -102,5 +103,6 @@ export function useSwitchConnection() {
     disabled,
     active,
     update,
+    rename,
   };
 }

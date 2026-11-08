@@ -20,6 +20,7 @@ from app.bluetooth import BluetoothService
 from app.input.manager import InputManager, MacroActiveError, state_from_event
 from lib.colours import normalize_controller_colours
 from lib.config import ConfigStore
+from lib.device_names import normalize_device_names, validate_device_name
 from lib.input.macros import MacroValidationError, validate_macro
 from lib.input.presets import (
     PresetValidationError,
@@ -203,6 +204,7 @@ async def _dispatch_ws(text: str, websocket: WebSocket, manager: InputManager) -
 
 async def bluetooth_control(request: Request) -> Response:
     service: BluetoothService = request.app.state.bluetooth
+    store: ConfigStore = request.app.state.config_store
     try:
         if request.method != "GET":
             try:
@@ -222,15 +224,36 @@ async def bluetooth_control(request: Request) -> Response:
                     return _error("address must be a saved device address")
                 if request.method == "DELETE":
                     await service.forget(body["address"])
+                    names = dict(store.config.switch_device_names)
+                    if names.pop(body["address"].upper(), None) is not None:
+                        store.update({"switch_device_names": names})
+                elif request.method == "PATCH":
+                    if body["address"] not in (await service.status())["peers"]:
+                        raise ValueError("Select a previously paired device")
+                    name = validate_device_name(body.get("name"))
+                    store.update(
+                        {
+                            "switch_device_names": {
+                                **store.config.switch_device_names,
+                                body["address"].upper(): name,
+                            }
+                        }
+                    )
                 else:
                     await service.reconnect(body["address"])
-        return JSONResponse(await service.status())
-    except ValueError as e:
+        status = await service.status()
+        status["names"] = {
+            address: store.config.switch_device_names.get(
+                address.upper(), f"Switch Device {index}"
+            )
+            for index, address in enumerate(status["peers"], 1)
+        }
+        return JSONResponse(status)
+    except (TypeError, ValueError) as e:
         return _error(str(e), status=409)
     except Exception as e:
         logger.exception("Bluetooth operation failed")
         return _error(f"Bluetooth operation failed: {e}", status=503)
-
 
 
 async def macros_list(request: Request) -> Response:
@@ -487,6 +510,11 @@ async def config_patch(request: Request) -> Response:
             normalize_controller_colours(body["controller_colours"])
         except (TypeError, ValueError) as e:
             return _error(str(e))
+    if "switch_device_names" in body:
+        try:
+            normalize_device_names(body["switch_device_names"])
+        except (TypeError, ValueError) as e:
+            return _error(str(e))
     requested_preset = body.get("preset")
     if requested_preset is not None and requested_preset != manager.current_preset_name:
         # Apply first: the persisted config must never claim a preset that
@@ -628,7 +656,7 @@ def build_app(
         Route(
             "/api/bluetooth",
             bluetooth_control,
-            methods=["GET", "PUT", "POST", "DELETE"],
+            methods=["GET", "PUT", "POST", "DELETE", "PATCH"],
         ),
         WebSocketRoute("/ws", macro_ws_endpoint),
         Route("/api/config", config_get, methods=["GET"]),
