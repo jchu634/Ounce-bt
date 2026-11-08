@@ -41,9 +41,10 @@ from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from lib.bluetooth import BluetoothService
+from lib.input.manager import InputManager, MacroActiveError, state_from_event
+from lib.colours import normalize_controller_colours
 from lib.config import ConfigStore
 from lib.input.macro_source import MacroValidationError, validate_macro
-from lib.input.manager import InputManager, MacroActiveError, state_from_event
 from lib.input.presets import (
     PresetValidationError,
     delete_preset,
@@ -253,6 +254,7 @@ async def bluetooth_control(request: Request) -> Response:
     except Exception as e:
         logger.exception("Bluetooth operation failed")
         return _error(f"Bluetooth operation failed: {e}", status=503)
+
 
 
 async def macros_list(request: Request) -> Response:
@@ -504,6 +506,11 @@ async def config_patch(request: Request) -> Response:
         return _error("invalid JSON body")
     if not isinstance(body, dict):
         return _error("expected a JSON object")
+    if "controller_colours" in body:
+        try:
+            normalize_controller_colours(body["controller_colours"])
+        except (TypeError, ValueError) as e:
+            return _error(str(e))
     requested_preset = body.get("preset")
     if requested_preset is not None and requested_preset != manager.current_preset_name:
         # Apply first: the persisted config must never claim a preset that
@@ -524,7 +531,21 @@ async def config_patch(request: Request) -> Response:
             controller_presets[str(active_guid).casefold()] = requested_preset
             body["controller_presets"] = controller_presets
     changed = store.update(body)
-    return JSONResponse({"changed": changed, "config": store.snapshot()})
+    bluetooth: BluetoothService = request.app.state.bluetooth
+    return JSONResponse(
+        {
+            "changed": changed,
+            "config": store.snapshot(),
+            "colours_reconnect_required": bool(
+                "controller_colours" in changed
+                and (
+                    bluetooth.connection
+                    or bluetooth.connected
+                    or bluetooth.reconnecting
+                )
+            ),
+        }
+    )
 
 
 async def control_mode_get(request: Request) -> Response:

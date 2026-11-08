@@ -302,6 +302,45 @@ def test_config_patch_applies_preset(fx):
         assert fx.config_store.config.controller_presets["g1"] == "playstation"
 
 
+@pytest.mark.parametrize("connected", [False, True])
+def test_save_colours_preserves_connection_and_reports_pending_change(fx, connected):
+    from unittest.mock import Mock
+
+    with fx.client() as c:
+        bluetooth = c.app.state.bluetooth
+        bluetooth.connected = connected
+        connection = Mock() if connected else None
+        bluetooth.connection = connection
+        bluetooth.disconnect = AsyncMock()
+        bluetooth.reconnect = AsyncMock()
+        response = c.patch(
+            "/api/config", json={"controller_colours": {"left_grip": "#ff0000"}}
+        )
+        assert response.status_code == 200
+        assert response.json()["colours_reconnect_required"] is connected
+        assert response.json()["config"]["controller_colours"]["left_grip"] == "#FF0000"
+        bluetooth.disconnect.assert_not_called()
+        bluetooth.reconnect.assert_not_called()
+        assert bluetooth.connection is connection
+        assert bluetooth.connected is connected
+        assert Config.load().controller_colours["left_grip"] == "#FF0000"
+
+
+@pytest.mark.parametrize(
+    "colours", [None, [], {"body": "red"}, {"body": "#GGGGGG"}, {"unknown": "#123456"}]
+)
+def test_invalid_colours_rejected_before_other_settings_change(fx, colours):
+    with fx.client() as c:
+        before = c.get("/api/config").json()
+        response = c.patch(
+            "/api/config", json={"controller_colours": colours, "preset": "playstation"}
+        )
+        assert response.status_code == 400
+        assert c.get("/api/config").json() == before
+        assert fx.manager.current_preset_name != "playstation"
+
+
+
 def test_config_patch_does_not_persist_unusable_preset(fx):
     with fx.client() as c:
         r = c.patch("/api/config", json={"preset": "missing"})

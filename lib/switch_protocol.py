@@ -29,6 +29,7 @@ from typing import ClassVar
 
 from bumble.hci import Address
 
+from lib.colours import normalize_controller_colours
 from lib.controller import ControllerTypes
 
 
@@ -89,6 +90,8 @@ class ControllerProtocol:
         report_size=50,
         colour_body=None,
         colour_buttons=None,
+        colour_left_grip=None,
+        colour_right_grip=None,
     ):
         """Initializes the protocol for the controller.
 
@@ -105,6 +108,8 @@ class ControllerProtocol:
         :param colour_buttons: Sets the colour of the controller buttons,
         defaults to None
         :type colour_buttons: list of bytes, optional
+        :param colour_left_grip: Optional three-byte RGB colour for the left grip.
+        :param colour_right_grip: Optional three-byte RGB colour for the right grip.
         :raises ValueError: On unknown controller type
         """
 
@@ -164,16 +169,56 @@ class ControllerProtocol:
         # IMU (Six Axis Sensor) State
         self.imu_enabled = False
 
-        # Controller colours
-        # Body Colour
-        if not colour_body:
-            self.colour_body = [0x82] * 3
-        else:
-            self.colour_body = colour_body
-        if not colour_buttons:
-            self.colour_buttons = [0x0F] * 3
-        else:
-            self.colour_buttons = colour_buttons
+        # Preserve the constructor's RGB-byte interface; setters use #RRGGBB.
+        colours = {}
+        for name, rgb in (
+            ("body", colour_body),
+            ("buttons", colour_buttons),
+            ("left_grip", colour_left_grip),
+            ("right_grip", colour_right_grip),
+        ):
+            if rgb is not None:
+                if (
+                    not isinstance(rgb, (list, tuple, bytes))
+                    or len(rgb) != 3
+                    or any(type(v) is not int or not 0 <= v <= 255 for v in rgb)
+                ):
+                    raise ValueError(f"{name} must contain three RGB bytes")
+                colours[name] = "#" + bytes(rgb).hex()
+        self._colours = normalize_controller_colours(colours)
+
+    def set_colours(
+        self,
+        *,
+        body: str | None = None,
+        buttons: str | None = None,
+        left_grip: str | None = None,
+        right_grip: str | None = None,
+    ) -> None:
+        """Set any controller colours as #RRGGBB strings, atomically.
+
+        The Switch reads these during initialisation. Reconnect it to refresh
+        colours that it has already read.
+        """
+        changes = {
+            name: colour
+            for name, colour in (
+                ("body", body),
+                ("buttons", buttons),
+                ("left_grip", left_grip),
+                ("right_grip", right_grip),
+            )
+            if colour is not None
+        }
+        self._colours = normalize_controller_colours(changes, self._colours)
+
+    def get_colours(self) -> dict[str, str]:
+        """Return a copy of the current #RRGGBB palette."""
+        return dict(self._colours)
+
+    @property
+    def colour_mode(self) -> int:
+        return 0x02 if self.controller_type == ControllerTypes.PRO_CONTROLLER else 0x01
 
     def get_report(self):
         report = bytes(self.report)
@@ -365,8 +410,8 @@ class ControllerProtocol:
         # Unknown byte, always 1
         self.report[26] = 0x01
 
-        # Controller colours location (read from SPI)
-        self.report[27] = 0x01
+        # SPI colour mode: 1 = body/buttons, 2 = body/buttons and grips.
+        self.report[27] = self.colour_mode
 
     def set_shipment(self):
         # ACK Reply
@@ -432,6 +477,7 @@ class ControllerProtocol:
         replace_subarray(self.report, 14, 49, replace_arr=imu_data)
 
     def spi_read(self, message):
+        address = int.from_bytes(message.subcommand[1:5], "little")
         addr_top = message.subcommand[2]
         addr_bottom = message.subcommand[1]
         read_length = message.subcommand[5]
@@ -443,8 +489,7 @@ class ControllerProtocol:
         self.report[15] = 0x10
 
         # Read address
-        self.report[16] = addr_bottom
-        self.report[17] = addr_top
+        self.report[16:20] = message.subcommand[1:5]
 
         # Read length
         self.report[20] = read_length
@@ -481,15 +526,6 @@ class ControllerProtocol:
         if addr_top == 0x60 and addr_bottom == 0x00:
             # Switch will take this as no serial number
             replace_subarray(self.report, 21, 16, 0xFF)
-
-        # Colours
-        elif addr_top == 0x60 and addr_bottom == 0x50:
-            # Body colour
-            replace_subarray(self.report, 21, 3, replace_arr=self.colour_body)
-            # Buttons colour
-            replace_subarray(self.report, 24, 3, replace_arr=self.colour_buttons)
-            # Left/right grip colours (Pro controller)
-            replace_subarray(self.report, 27, 7, 0xFF)
 
         # Factory sensor/stick device parameters
         elif addr_top == 0x60 and addr_bottom == 0x80:
@@ -549,11 +585,6 @@ class ControllerProtocol:
             # Spacer byte
             self.report[39] = 0xFF
 
-            # Body colour
-            replace_subarray(self.report, 40, 3, replace_arr=self.colour_body)
-            # Buttons colour
-            replace_subarray(self.report, 43, 3, replace_arr=self.colour_buttons)
-
         # Six-Axis motion sensor factor calibration
         elif addr_top == 0x60 and addr_bottom == 0x20:
             # 1: Acceleration origin position
@@ -588,6 +619,25 @@ class ControllerProtocol:
             ]  # 4
 
             replace_subarray(self.report, 21, 24, replace_arr=sa_calibration)
+
+        # Overlay colours by address so partial and calibration-overlap reads
+        # always agree with the dedicated 0x6050 colour read.
+        palette = bytes.fromhex(
+            self._colours["body"][1:] + self._colours["buttons"][1:]
+        )
+        if self.controller_type == ControllerTypes.PRO_CONTROLLER:
+            palette += bytes.fromhex(
+                self._colours["left_grip"][1:] + self._colours["right_grip"][1:]
+            )
+        else:
+            palette += b"\xff" * 6
+        palette += b"\xff"
+        for offset in range(min(read_length, len(self.report) - 21)):
+            spi_address = address + offset
+            if spi_address == 0x601B:
+                self.report[21 + offset] = self.colour_mode
+            elif 0x6050 <= spi_address <= 0x605C:
+                self.report[21 + offset] = palette[spi_address - 0x6050]
 
     def set_mode(self, message):
         # ACK byte

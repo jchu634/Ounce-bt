@@ -1,3 +1,5 @@
+import pytest
+
 from lib.config import Config, ConfigStore
 from scripts.regenerate_config import regenerate_config
 
@@ -6,6 +8,45 @@ def test_controller_preset_guids_are_normalized():
     config = Config(controller_presets={"ABCDEF": "playstation"})
 
     assert config.controller_presets == {"abcdef": "playstation"}
+
+
+def test_controller_colours_persist_partial_updates(tmp_path, monkeypatch):
+    import lib.config as module
+
+    monkeypatch.setattr(module, "config_path", lambda: tmp_path / "config.json")
+    store = ConfigStore(Config.load())
+    assert store.config.controller_colours == {
+        "body": "#000000",
+        "buttons": "#0F0F0F",
+        "left_grip": "#828282",
+        "right_grip": "#828282",
+    }
+    store.update({"controller_colours": {"left_grip": "#abcdef"}})
+    store.update({"controller_colours": {"right_grip": "#123456"}})
+    assert Config.load().controller_colours == {
+        "body": "#000000",
+        "buttons": "#0F0F0F",
+        "left_grip": "#ABCDEF",
+        "right_grip": "#123456",
+    }
+    with pytest.raises(ValueError):
+        store.update({"preset": "changed", "controller_colours": {"body": "invalid"}})
+    assert store.config.preset == "xbox"
+
+
+def test_invalid_saved_colours_fall_back_without_losing_other_settings(
+    tmp_path, monkeypatch
+):
+    import lib.config as module
+
+    path = tmp_path / "config.json"
+    monkeypatch.setattr(module, "config_path", lambda: path)
+    path.write_text(
+        '{"transport_spec":"usb:2", "controller_colours":{"body":"invalid"}}'
+    )
+    config = Config.load()
+    assert config.transport_spec == "usb:2"
+    assert config.controller_colours["body"] == "#000000"
 
 
 def test_regenerate_config_changes_only_bluetooth_address(tmp_path):

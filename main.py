@@ -693,6 +693,7 @@ async def main(
                 protocol = ControllerProtocol(
                     ControllerTypes.PRO_CONTROLLER, str(device.public_address)
                 )
+                protocol.set_colours(**config_store.snapshot()["controller_colours"])
 
                 try:
                     if not await run_until_disconnected(

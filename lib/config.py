@@ -8,6 +8,8 @@ import threading
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
+from lib.colours import normalize_controller_colours
+
 logger = logging.getLogger("switch_pair")
 
 APP_NAME = "ounce-bt"
@@ -85,9 +87,11 @@ class Config:
     preset: str = "xbox"
     controller_guid: str = ""
     controller_presets: dict[str, str] = field(default_factory=dict)
+    controller_colours: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.controller_presets = _normalize_controller_presets(self.controller_presets)
+        self.controller_colours = normalize_controller_colours(self.controller_colours)
 
     @property
     def web_enabled(self) -> bool:
@@ -128,6 +132,16 @@ class Config:
             for k, v in data.items()
             if k in valid and (v is not None or k in nullable)
         }
+        for key, normalize in (
+            ("controller_colours", normalize_controller_colours),
+        ):
+            if key not in filtered:
+                continue
+            try:
+                filtered[key] = normalize(filtered[key])
+            except (TypeError, ValueError) as e:
+                logger.warning(f"Invalid {key}: {e}; using defaults")
+                del filtered[key]
         config = cls(**filtered)
         config._path = path
         return config
@@ -172,6 +186,13 @@ class ConfigStore:
         key/value pairs (keys that were unknown or unchanged are skipped)."""
         valid = Config._valid_keys()
         with self._lock:
+            if "controller_colours" in changes:
+                changes = {
+                    **changes,
+                    "controller_colours": normalize_controller_colours(
+                        changes["controller_colours"], self._config.controller_colours
+                    ),
+                }
             changed: dict = {}
             for k, v in changes.items():
                 if k not in valid:
