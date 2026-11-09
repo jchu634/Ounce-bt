@@ -253,7 +253,12 @@ export default function Credits() {
               <ul className="space-y-2">
                 {group.dependencies.map((dependency) => (
                   <li key={dependency.name}>
-                    <a className="text-blue-500" href={dependency.url}>
+                    <a
+                      className="text-blue-500"
+                      href={dependency.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
                       {dependency.name}
                     </a>
                     <span className="text-muted-foreground"> · {dependency.description}</span>

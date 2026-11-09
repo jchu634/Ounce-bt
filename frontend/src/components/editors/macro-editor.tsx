@@ -490,7 +490,7 @@ export const MacroEditor = forwardRef<MacroEditorHandle, MacroEditorProps>(
     return (
       <section className="flex w-full flex-col gap-3 text-left">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="font-mono text-lg font-semibold text-foreground">
+          <h2 className="text-lg font-semibold text-foreground">
             {name}.json
           </h2>
           <Button
