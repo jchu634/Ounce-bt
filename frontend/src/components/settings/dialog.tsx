@@ -118,7 +118,7 @@ export function SettingsDialog({ className }: { className?: string }) {
           render={
             <Button
               className={cn(
-                "fixed top-5 right-4 bg-muted-foreground dark:text-gray-900",
+                "fixed top-5 right-4 z-40 bg-muted-foreground dark:text-gray-900",
                 className,
               )}
             />
