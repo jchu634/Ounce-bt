@@ -272,7 +272,9 @@ class SessionState:
 def make_l2cap_handler(psm, state):
     """Build an L2CAP server handler for a given PSM."""
 
-    def on_open():
+    def on_open(channel):
+        if not is_current(channel):
+            return
         if psm == HID_CONTROL_PSM:
             logger.info("HID Control channel opened")
             state.ctrl_ready.set()
@@ -280,7 +282,17 @@ def make_l2cap_handler(psm, state):
             logger.info("HID Interrupt channel opened")
             state.intr_ready.set()
 
-    def on_close():
+    def is_current(channel):
+        return channel is (
+            state.ctrl_channel if psm == HID_CONTROL_PSM else state.intr_channel
+        )
+
+    def on_close(channel):
+        if not is_current(channel):
+            logger.debug(
+                "Ignoring close from an obsolete HID channel on PSM 0x%04X", psm
+            )
+            return
         if state.hid_opened:
             state.hid_opened = False
             state.on_hid_close()
@@ -304,14 +316,16 @@ def make_l2cap_handler(psm, state):
             )
         else:
             state.intr_channel = channel
-            channel.sink = lambda pdu: state.incoming.put_nowait(pdu)
+            channel.sink = lambda pdu: (
+                state.incoming.put_nowait(pdu) if is_current(channel) else None
+            )
 
-        channel.on("open", on_open)
-        channel.on("close", on_close)
+        channel.on("open", lambda: on_open(channel))
+        channel.on("close", lambda: on_close(channel))
 
         # The channel may already be OPEN by the time the handler runs.
         if channel.state == channel.State.OPEN:
-            on_open()
+            on_open(channel)
 
     return handler
 
@@ -733,8 +747,7 @@ async def main(
                     await state.intr_ready.wait()
 
                 if not await run_until_disconnected(wait_for_channels(), state):
-                    if bluetooth.connection is not None:
-                        await bluetooth.connection.disconnect()
+                    await cleanup_session(bluetooth)
                     continue
 
                 interrupt_channel = state.intr_channel
@@ -783,8 +796,7 @@ async def main(
                     logger.info("Session ended cleanly")
                 finally:
                     bluetooth.connected = False
-                    if bluetooth.connection is not None:
-                        await bluetooth.connection.disconnect()
+                    await cleanup_session(bluetooth)
 
                 logger.info("Re-listening for a new Switch connection...")
         finally:
@@ -795,6 +807,13 @@ async def main(
                     await web_task
                 except asyncio.CancelledError:
                     pass
+
+
+async def cleanup_session(bluetooth):
+    try:
+        await bluetooth.disconnect_connection(bluetooth.connection)
+    except Exception:
+        logger.exception("Bluetooth session cleanup failed; keeping session loop alive")
 
 
 async def run_until_disconnected(awaitable, state):
