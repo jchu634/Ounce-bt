@@ -56,13 +56,12 @@ export function VibrationSetting() {
 
   return (
     <div className="space-y-2">
-      <div className="flex w-full max-w-180 items-center justify-between gap-4">
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="controller-vibration">Vibration</Label>
-        </div>
+      <div className="flex items-center gap-4">
+        <Label className="font-semibold text-lg" htmlFor="controller-vibration">
+          Vibration
+        </Label>
         <Checkbox
           id="controller-vibration"
-          aria-describedby="controller-vibration-description"
           checked={enabled}
           disabled={!ready || saving}
           onCheckedChange={(value) => {

@@ -112,7 +112,7 @@ export function PresetPicker({
               onClick={() => onSelect(p)}
             >
               <div className="min-w-0 flex-1">
-                <p className="truncate font-mono">
+                <p className="truncate">
                   {p.name}
                   {p.builtin && (
                     <span className="ms-2 rounded-4xl bg-muted px-2 py-0.5 text-[10px] tracking-wide text-muted-foreground uppercase">
@@ -156,9 +156,7 @@ export function PresetPicker({
                   }}
                   disabled={p.active || macroActive || busy !== null}
                   title={
-                    macroActive
-                      ? "Presets are locked while a macro runs"
-                      : "Activate this preset"
+                    macroActive ? "Presets are locked while a macro runs" : "Activate this preset"
                   }
                   className={cn(
                     "",
@@ -197,17 +195,9 @@ export function PresetPicker({
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <DialogClose render={<Button variant="outline" />}>
-              Cancel
-            </DialogClose>
-            <Button
-              variant="destructive"
-              onClick={() => void remove()}
-              disabled={busy !== null}
-            >
-              {busy === deleting?.filename && (
-                <SpinnerGapIcon size={14} className="animate-spin" />
-              )}
+            <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+            <Button variant="destructive" onClick={() => void remove()} disabled={busy !== null}>
+              {busy === deleting?.filename && <SpinnerGapIcon size={14} className="animate-spin" />}
               Delete
             </Button>
           </DialogFooter>

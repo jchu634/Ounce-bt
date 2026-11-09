@@ -16,15 +16,16 @@ export function ControllerSettings({
   listError: string | null;
   onRefresh: () => void;
 }) {
-  const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
-  const [selectedBuiltin, setSelectedBuiltin] = useState(false);
+  const [selection, setSelection] = useState<Pick<PresetInfo, "filename" | "builtin"> | null>();
+  const selected = selection === undefined ? presets.find((preset) => preset.active) : selection;
+  const selectedPreset = selected?.filename ?? null;
+  const selectedBuiltin = selected?.builtin ?? false;
   const [editorSession, setEditorSession] = useState(0);
   const presetEditor = useRef<PresetEditorHandle | null>(null);
 
   function openPreset(name: string, builtin: boolean) {
     setEditorSession((session) => session + 1);
-    setSelectedPreset(name);
-    setSelectedBuiltin(builtin);
+    setSelection({ filename: name, builtin });
   }
 
   function requestPreset(name: string, builtin: boolean) {
@@ -52,13 +53,12 @@ export function ControllerSettings({
           onSelect={(preset) => requestPreset(preset.filename, preset.builtin)}
           onDeleted={(name) => {
             if (selectedPreset === name) {
-              setSelectedPreset(null);
-              setSelectedBuiltin(false);
+              setSelection(null);
             }
           }}
         />
         <PresetEditor
-          key={editorSession}
+          key={`${editorSession}:${selectedPreset}`}
           ref={presetEditor}
           name={selectedPreset}
           builtin={selectedBuiltin}

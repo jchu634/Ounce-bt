@@ -159,7 +159,7 @@ export function MacroRunPanel({
                 >
                   <Button
                     variant="ghost_no_hover"
-                    className="relative z-0 h-auto min-w-0 flex-1 cursor-pointer justify-start rounded-none border-0 bg-transparent px-1 py-0 text-left font-mono font-normal focus-visible:ring-0 active:translate-y-0"
+                    className="relative z-0 h-auto min-w-0 flex-1 cursor-pointer justify-start rounded-none border-0 bg-transparent px-1 py-0 text-left font-normal focus-visible:ring-0 active:translate-y-0"
                     aria-pressed={selected === name}
                     onClick={() => onSelect(name)}
                   >

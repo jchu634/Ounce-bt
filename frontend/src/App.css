@@ -2,6 +2,10 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/scoutie-sans";
+@import "@fontsource/intel-one-mono/latin-400.css";
+@import "@fontsource/intel-one-mono/latin-500.css";
+@import "@fontsource/intel-one-mono/latin-600.css";
+@import "@fontsource/intel-one-mono/latin-700.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -12,6 +16,8 @@
 }
 
 :root {
+  --diffs-font-family: "Intel One Mono", monospace;
+  --diffs-header-font-family: "Scoutie Sans Variable", sans-serif;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -87,6 +93,7 @@
 @theme inline {
   --font-sans: "Scoutie Sans Variable", sans-serif;
   --font-heading: "Scoutie Sans Variable", sans-serif;
+  --font-mono: "Intel One Mono", monospace;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -221,6 +228,12 @@
   html {
     @apply font-sans;
   }
+  code,
+  kbd,
+  samp,
+  pre {
+    @apply font-mono;
+  }
 }
 
 @utility app-scrollbar {
@@ -279,14 +292,7 @@
 }
 
 @utility font-media {
-  font-family: var(
-    --media-font-family,
-    "Inter Variable",
-    Inter,
-    ui-sans-serif,
-    system-ui,
-    sans-serif
-  );
+  font-family: var(--media-font-family, var(--font-sans));
 }
 
 @custom-variant media-opaque {
