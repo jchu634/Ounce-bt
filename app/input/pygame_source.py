@@ -7,6 +7,7 @@ import time
 # TODO Make Lazy for python 3.15
 from pygame import event, joystick
 from pygame import init as pygame_init
+from pygame._sdl2 import controller as sdl_controller
 
 from lib.input.presets import PresetConfig
 from lib.input.rumble import RumbleData
@@ -45,6 +46,52 @@ DEFAULT_RIGHT_STICK: tuple[int, int] = (2, 3)
 DEFAULT_DPAD_HAT: int | None = 0
 
 
+class XboxGamepad:
+    """Expose SDL's portable controller layout using the Xbox preset indices.
+
+    Raw joystick indices differ between Linux, Windows and device drivers.
+    SDL resolves those differences, including trigger ranges and D-pad buttons.
+    Keep the historical preset indices so custom raw presets remain compatible.
+    """
+
+    # SDL: A B X Y, shoulders, back/start, stick clicks, guide.
+    _BUTTONS = (0, 1, 2, 3, 9, 10, 4, 6, 7, 8, 5)
+
+    def __init__(self, controller, stick):
+        self._controller = controller
+        self._stick = stick
+
+    def get_numaxes(self):
+        return 6
+
+    def get_numbuttons(self):
+        return len(self._BUTTONS)
+
+    def get_numhats(self):
+        return 1
+
+    def get_axis(self, index):
+        value = self._controller.get_axis(index)
+        if index >= 4:
+            # SDL triggers are 0..32767; the raw Xbox preset expects -1..1.
+            return max(-1.0, min(1.0, value / 32767.0 * 2.0 - 1.0))
+        return max(-1.0, min(1.0, value / 32767.0))
+
+    def get_button(self, index):
+        return self._controller.get_button(self._BUTTONS[index])
+
+    def get_hat(self, index):
+        # SDL D-pad: up=11, down=12, left=13, right=14.
+        button = self._controller.get_button
+        return int(button(14)) - int(button(13)), int(button(11)) - int(button(12))
+
+    def rumble(self, *args):
+        return self._stick.rumble(*args)
+
+    def stop_rumble(self):
+        return self._stick.stop_rumble()
+
+
 class PygameInputThread(threading.Thread):
     """Daemon thread that polls a physical gamepad via pygame and pushes
     ``ControllerState`` snapshots onto a thread-safe command queue.
@@ -74,6 +121,10 @@ class PygameInputThread(threading.Thread):
         self._deadzone = deadzone
         self._trigger_threshold = trigger_threshold
         self._pump = pump
+
+        self._standard_gamepad = (
+            preset.standard_gamepad if preset is not None else button_map is None
+        )
 
         # Preset is primary source of truth
         if preset is not None:
@@ -163,6 +214,7 @@ class PygameInputThread(threading.Thread):
                 return
 
         stick = None
+        gamepad = None
         try:
             count = joystick.get_count()
             if count <= self._device_index:
@@ -177,10 +229,21 @@ class PygameInputThread(threading.Thread):
                 f"({stick.get_numaxes()} axes, {stick.get_numbuttons()} "
                 f"buttons, {stick.get_numhats()} hats)"
             )
-            self._loop(stick)
+            source = stick
+            if self._standard_gamepad:
+                sdl_controller.init()
+                if sdl_controller.is_controller(self._device_index):
+                    gamepad = sdl_controller.Controller(self._device_index)
+                    source = XboxGamepad(gamepad, stick)
+                    logger.info("Using SDL's portable Xbox controller mapping")
+                else:
+                    logger.warning("SDL has no controller mapping; using raw preset indices")
+            self._loop(source)
         except Exception:
             logger.exception("Pygame input thread crashed")
         finally:
+            if gamepad is not None:
+                gamepad.quit()
             # Close only this instance; ``joystick.quit()`` tears down whole module
             # and any other open devices (e.g. probes from the ControllerService enumeration).
             if stick is not None:

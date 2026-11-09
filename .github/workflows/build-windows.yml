@@ -1,6 +1,11 @@
 name: Build Windows app
 
 on:
+  workflow_call:
+    inputs:
+      source_ref:
+        type: string
+        default: ''
   push:
     tags: ["*"]
   workflow_dispatch:
@@ -17,6 +22,8 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
       - uses: pnpm/action-setup@v4
         with:
           version: 11.16.0

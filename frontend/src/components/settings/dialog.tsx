@@ -28,6 +28,7 @@ import { Separator } from "@/src/components/ui/separator";
 import { Label } from "@/src/components/ui/label";
 
 import { AudioInputSettings } from "@/src/components/settings/audio-input-settings";
+import type { PresetEditorHandle } from "@/src/components/editors/preset-editor";
 import { ControllerSettings } from "@/src/components/settings/controller-settings";
 import { CaptureDeviceSettings } from "@/src/components/settings/capture-device-settings";
 import { AppearanceSettings } from "@/src/components/settings/appearance-settings";
@@ -52,6 +53,8 @@ export function SettingsDialog({ className }: { className?: string }) {
   const [presetsLoading, setPresetsLoading] = useState(false);
   const [presetsError, setPresetsError] = useState<string | null>(null);
   const presetRequestId = useRef(0);
+  const controllerSettings = useRef<PresetEditorHandle | null>(null);
+  const pendingDiscard = useRef<(() => void) | null>(null);
   const refreshPresets = useCallback(() => {
     const requestId = ++presetRequestId.current;
     setPresetsLoading(true);
@@ -86,6 +89,34 @@ export function SettingsDialog({ className }: { className?: string }) {
   const hasUnsavedInputChanges =
     draftAudioInputId !== selectedAudioInputId || draftCaptureInputId !== selectedCameraInputId;
 
+  function closeSettings() {
+    setOpen(false);
+    if (draftControlsOnlyHomepage !== controlsOnlyHomepage) {
+      if (draftControlsOnlyHomepage) stop();
+      setControlsOnlyHomepage(draftControlsOnlyHomepage);
+    }
+  }
+
+  function requestNavigation(navigate: () => void, closing = false) {
+    if (appearanceState.saving) return;
+    const continueNavigation = () => {
+      if (
+        (currentTab === "appearance" && appearanceState.dirty) ||
+        (closing && (hasUnsavedInputChanges || appearanceState.dirty))
+      ) {
+        pendingDiscard.current = navigate;
+        setDiscardPromptOpen(true);
+        return;
+      }
+      navigate();
+    };
+    if (currentTab === "controller" && controllerSettings.current) {
+      controllerSettings.current.requestNavigation(continueNavigation);
+    } else {
+      continueNavigation();
+    }
+  }
+
   return (
     <>
       <Dialog
@@ -102,23 +133,14 @@ export function SettingsDialog({ className }: { className?: string }) {
             return;
           }
 
-          if (appearanceState.saving) return;
-          if (hasUnsavedInputChanges || appearanceState.dirty) {
-            setDiscardPromptOpen(true);
-            return;
-          }
-
-          setOpen(false);
-          if (draftControlsOnlyHomepage === controlsOnlyHomepage) return;
-          if (draftControlsOnlyHomepage) stop();
-          setControlsOnlyHomepage(draftControlsOnlyHomepage);
+          requestNavigation(closeSettings, true);
         }}
       >
         <DialogTrigger
           render={
             <Button
               className={cn(
-                "fixed top-5 right-4 bg-muted-foreground dark:text-gray-900",
+                "fixed top-5 right-4 z-40 bg-muted-foreground dark:text-gray-900 dark:hover:bg-red-800 dark:hover:text-white",
                 className,
               )}
             />
@@ -136,8 +158,11 @@ export function SettingsDialog({ className }: { className?: string }) {
           <Tabs
             value={currentTab}
             onValueChange={(newTab) => {
-              setCurrentTab(newTab);
-              if (newTab === "controller") refreshPresets();
+              if (newTab === currentTab) return;
+              requestNavigation(() => {
+                setCurrentTab(newTab);
+                if (newTab === "controller") refreshPresets();
+              });
             }}
             orientation="vertical"
             className="min-h-0 min-w-0 flex-1 flex-col overflow-hidden sm:flex-row"
@@ -244,6 +269,7 @@ export function SettingsDialog({ className }: { className?: string }) {
               value="controller"
             >
               <ControllerSettings
+                ref={controllerSettings}
                 presets={presets}
                 loading={presetsLoading}
                 listError={presetsError}
@@ -269,7 +295,13 @@ export function SettingsDialog({ className }: { className?: string }) {
           </p>
         </DialogContent>
       </Dialog>
-      <Dialog open={discardPromptOpen} onOpenChange={setDiscardPromptOpen}>
+      <Dialog
+        open={discardPromptOpen}
+        onOpenChange={(nextOpen) => {
+          setDiscardPromptOpen(nextOpen);
+          if (!nextOpen) pendingDiscard.current = null;
+        }}
+      >
         <DialogContent showCloseButton={false}>
           <DialogHeader>
             <DialogTitle>Leave without saving?</DialogTitle>
@@ -278,18 +310,24 @@ export function SettingsDialog({ className }: { className?: string }) {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDiscardPromptOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                pendingDiscard.current = null;
+                setDiscardPromptOpen(false);
+              }}
+            >
               Keep editing
             </Button>
             <Button
               variant="destructive"
               onClick={() => {
+                const navigate = pendingDiscard.current;
+                pendingDiscard.current = null;
                 setDiscardPromptOpen(false);
-                setOpen(false);
-                if (draftControlsOnlyHomepage !== controlsOnlyHomepage) {
-                  if (draftControlsOnlyHomepage) stop();
-                  setControlsOnlyHomepage(draftControlsOnlyHomepage);
-                }
+                setAppearanceState({ dirty: false, saving: false });
+                setAppearanceSession((session) => session + 1);
+                navigate?.();
               }}
             >
               Leave without saving

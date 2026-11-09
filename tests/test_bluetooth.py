@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from bumble.hci import Address
 from bumble.keys import JsonKeyStore, MemoryKeyStore, PairingKeys
 
 import app.main as application
@@ -14,13 +15,49 @@ from lib.config import Config
 ADDRESS = "12:34:56:78:90:AB"
 
 
+def test_old_channel_callbacks_cannot_stop_a_new_session():
+    from pyee import EventEmitter
+
+    state = SessionState()
+
+    def channel():
+        result = EventEmitter()
+        result.State = SimpleNamespace(OPEN="open")
+        result.state = "open"
+        return result
+
+    old = channel()
+    make_l2cap_handler(0x13, state)(old)
+    state.reset_for_session()
+    current = channel()
+    make_l2cap_handler(0x13, state)(current)
+    state.hid_opened = True
+    closed = Mock()
+    state.on_hid_close = closed
+    old.emit("close")
+    old.emit("open")
+    old.sink(b"stale command")
+    assert not state.session_stop.is_set()
+    assert state.intr_ready.is_set()
+    assert state.incoming.empty()
+    closed.assert_not_called()
+    current.emit("close")
+    assert state.session_stop.is_set()
+    closed.assert_called_once()
+
+
 @pytest.mark.parametrize("headless", [False, True])
-def test_startup_pairing_requires_ui_action_unless_headless(monkeypatch, headless):
+@pytest.mark.parametrize("realtek", [False, True])
+def test_startup_pairing_requires_ui_action_unless_headless(
+    monkeypatch, headless, realtek
+):
     async def scenario():
         powered = asyncio.Event()
         scan_settings = []
         device = SimpleNamespace(
             name="Pro Controller",
+            host=object(),
+            public_address=Address(ADDRESS, Address.PUBLIC_DEVICE_ADDRESS),
             on=Mock(),
             create_l2cap_server=Mock(),
             send_command=AsyncMock(),
@@ -39,9 +76,15 @@ def test_startup_pairing_requires_ui_action_unless_headless(monkeypatch, headles
         async def serve(*args, **kwargs):
             await asyncio.Future()
 
+        monkeypatch.setattr(
+            application,
+            "sys",
+            SimpleNamespace(platform="win32" if realtek else "linux"),
+        )
         monkeypatch.setattr(application, "setup_logging", lambda: None)
         monkeypatch.setattr(application, "missing_firmware", lambda _: None)
-        monkeypatch.setattr(application, "prepare_bluetooth", lambda *_: None)
+        prepare = Mock()
+        monkeypatch.setattr(application, "prepare_bluetooth", prepare)
         monkeypatch.setattr(application, "serve_web", serve)
         monkeypatch.setattr(
             application, "open_transport", AsyncMock(return_value=transport())
@@ -54,7 +97,8 @@ def test_startup_pairing_requires_ui_action_unless_headless(monkeypatch, headles
             "load",
             lambda _: Config(
                 input_specs=[],
-                bt_address="98:B6:E9:12:34:57",
+                transport_spec="usb:0" if realtek else "hci-socket:0",
+                bt_address=ADDRESS if realtek else "98:B6:E9:12:34:57",
                 web_host=None if headless else "127.0.0.1",
                 web_port=None if headless else 9127,
             ),
@@ -63,7 +107,11 @@ def test_startup_pairing_requires_ui_action_unless_headless(monkeypatch, headles
         task = asyncio.create_task(application.main())
         try:
             await asyncio.wait_for(powered.wait(), 2)
+            assert prepare.call_count == int(realtek)
             assert scan_settings == [(headless, headless)]
+            assert device.public_address.to_string(with_type_qualifier=False) == ADDRESS
+            device.send_command.assert_awaited_once()
+            assert not task.done()
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
@@ -296,6 +344,78 @@ def test_failed_disconnect_preserves_pairing_keys():
         with pytest.raises(RuntimeError, match="disconnect failed"):
             await service.forget(ADDRESS)
         assert await device.keystore.get(ADDRESS) is not None
+
+    asyncio.run(scenario())
+
+
+def test_session_cleanup_and_ui_disconnect_share_one_hci_disconnect():
+    async def scenario():
+        service, _, connection = await setup_service()
+        service._on_connection(connection)
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def disconnect():
+            entered.set()
+            await release.wait()
+            connection.on.call_args.args[1](0)
+
+        connection.disconnect.side_effect = disconnect
+        ui = asyncio.create_task(service.disconnect())
+        await entered.wait()
+        cleanup = asyncio.create_task(service.disconnect_connection(connection))
+        await asyncio.sleep(0)
+        release.set()
+        await asyncio.gather(ui, cleanup)
+        connection.disconnect.assert_awaited_once()
+
+    asyncio.run(scenario())
+
+
+def test_bumble_disconnection_cancellation_is_a_connection_error():
+    async def scenario():
+        service, _, connection = await setup_service()
+
+        async def authenticate():
+            connection.on.call_args.args[1](0x13)
+            raise asyncio.CancelledError("abort: disconnection event occurred.")
+
+        connection.authenticate.side_effect = authenticate
+        with pytest.raises(ConnectionError, match="disconnected during reconnect"):
+            await service.reconnect(ADDRESS)
+        assert not service.reconnecting
+        assert service.connection is None
+
+    asyncio.run(scenario())
+
+
+def test_reconnect_preserves_cancellation_requested_by_the_caller():
+    async def scenario():
+        service, _, connection = await setup_service()
+        entered = asyncio.Event()
+
+        async def authenticate():
+            entered.set()
+            await asyncio.Future()
+
+        connection.authenticate.side_effect = authenticate
+        task = asyncio.create_task(service.reconnect(ADDRESS))
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert service.connection is None
+        assert not service.reconnecting
+
+    asyncio.run(scenario())
+
+
+def test_cleanup_failure_does_not_escape_the_session_loop():
+    async def scenario():
+        service, _, connection = await setup_service()
+        service._on_connection(connection)
+        connection.disconnect.side_effect = RuntimeError("HCI disconnect rejected")
+        await application.cleanup_session(service)
 
     asyncio.run(scenario())
 

@@ -6,7 +6,7 @@ import json
 import logging
 import os
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from lib.input.state import Button
@@ -58,8 +58,10 @@ class PresetConfig:
     """Resolved, ready-to-use controller mapping preset.
 
     All axis/button/hat indices are :mod:`pygame.joystick` indices on the
-    physical gamepad. ``button_map`` maps digital buttons; ``trigger_map``
-    maps analog trigger axes (treated as digital above a threshold).
+    physical gamepad. The built-in Xbox preset uses SDL controller semantics
+    translated to the historical Xbox indices instead. ``button_map`` maps
+    digital buttons; ``trigger_map`` maps analog trigger axes (treated as
+    digital above a threshold).
     """
 
     name: str = "Default"
@@ -69,6 +71,9 @@ class PresetConfig:
     left_stick: tuple[int, int] = (0, 1)
     right_stick: tuple[int, int] = (2, 3)
     dpad_hat: int | None = 0
+    # Internal choice for the built-in Xbox preset, never inferred for a custom
+    # preset whose raw indices may have been deliberately edited by the user.
+    standard_gamepad: bool = False
 
     @classmethod
     def default(cls) -> PresetConfig:
@@ -79,6 +84,7 @@ class PresetConfig:
         """
         return cls(
             name="Default",
+            standard_gamepad=True,
             rumble_enabled=True,
             button_map={
                 0: Button.B,
@@ -89,9 +95,9 @@ class PresetConfig:
                 5: Button.R,
                 6: Button.MINUS,
                 7: Button.PLUS,
-                8: Button.HOME,
-                9: Button.STICK_L,
-                10: Button.STICK_R,
+                8: Button.STICK_L,
+                9: Button.STICK_R,
+                10: Button.HOME,
             },
             trigger_map={4: Button.ZL, 5: Button.ZR},
             left_stick=(0, 1),
@@ -113,7 +119,10 @@ def load_preset(source: str | Path) -> PresetConfig:
         data = json.load(f)
     if not isinstance(data, dict):
         raise TypeError(f"Preset {path} must be a JSON object")
-    return _build_preset(data)
+    preset = _build_preset(data)
+    if path == BUILTIN_PRESETS_DIR / "xbox.json":
+        preset = replace(preset, standard_gamepad=True)
+    return preset
 
 
 def validate_preset(data: dict) -> PresetConfig:

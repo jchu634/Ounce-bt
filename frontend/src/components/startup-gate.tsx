@@ -14,6 +14,7 @@ type StartupState =
   | { kind: "loading" }
   | { kind: "ready" }
   | { kind: "missing_firmware"; filename: string }
+  | { kind: "bluetooth_error"; message: string }
   | { kind: "usb_driver_error" };
 
 export function StartupGate({ children }: { children: ReactNode }) {
@@ -35,10 +36,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
         if (typeof body !== "object" || body === null || !("kind" in body)) {
           throw new Error("Invalid startup response");
         }
-        if (
-          !("ws_auth_required" in body) ||
-          typeof body.ws_auth_required !== "boolean"
-        ) {
+        if (!("ws_auth_required" in body) || typeof body.ws_auth_required !== "boolean") {
           throw new Error("Invalid startup security settings");
         }
         configureWebSocketAuth(body.ws_auth_required);
@@ -48,6 +46,12 @@ export function StartupGate({ children }: { children: ReactNode }) {
           setState({ kind: "ready" });
         } else if (body.kind === "usb_driver_error") {
           setState({ kind: "usb_driver_error" });
+        } else if (
+          body.kind === "bluetooth_error" &&
+          "message" in body &&
+          typeof body.message === "string"
+        ) {
+          setState({ kind: "bluetooth_error", message: body.message });
         } else if (
           body.kind === "missing_firmware" &&
           "filename" in body &&
@@ -75,11 +79,8 @@ export function StartupGate({ children }: { children: ReactNode }) {
     setClosing(true);
     setError(null);
     try {
-      const api = desktopApi();
-      if (api) {
-        await api.close_application();
-        return;
-      }
+      // Keep the native window alive while the backend shuts down. Closing
+      // it inside a pywebview API call can strand the bridge's reply thread.
       const response = await fetch("/api/application/close", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -87,7 +88,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
       });
       if (!response.ok) throw new Error("Shutdown failed");
       setClosed(true);
-      window.close();
+      if (!desktopApi()) window.close();
     } catch {
       setError("Could not close the application. Please try again.");
       setClosing(false);
@@ -110,37 +111,32 @@ export function StartupGate({ children }: { children: ReactNode }) {
             <>
               <DialogTitle>Required Bluetooth file is missing</DialogTitle>
               <DialogDescription>
-                Firmware is not distributed with Ounce-bt for licensing reasons.
-                Place your separately obtained {state.filename} file in the
-                application root folder, beside the executable, then restart the
-                application. Both rtl8761bu_fw.bin and rtl8761bu_config.bin are
-                required.
+                Firmware is not distributed with Ounce-bt for licensing reasons. Place your
+                separately obtained file at {state.filename}, then restart the application. Both
+                rtl8761bu_fw.bin and rtl8761bu_config.bin are required when Realtek firmware
+                patching is enabled.
               </DialogDescription>
+            </>
+          ) : state.kind === "bluetooth_error" ? (
+            <>
+              <DialogTitle>Bluetooth adapter could not start</DialogTitle>
+              <DialogDescription>{state.message}</DialogDescription>
             </>
           ) : (
             <>
               <DialogTitle>Bluetooth adapter could not start</DialogTitle>
               <DialogDescription>
-                Bumble could not open the USB Bluetooth adapter at usb:0.
-                Configure the adapter to use the WinUSB driver, then restart
-                Ounce-bt. Error: LIBUSB_ERROR_NOT_SUPPORTED.
+                Bumble could not open the USB Bluetooth adapter at usb:0. Configure the adapter to
+                use the WinUSB driver, then restart Ounce-bt. Error: LIBUSB_ERROR_NOT_SUPPORTED.
               </DialogDescription>
             </>
           )}
         </DialogHeader>
         {error && <p role="alert">{error}</p>}
-        {closed && (
-          <p role="status">
-            The backend has stopped. You can close this window.
-          </p>
-        )}
+        {closed && <p role="status">The backend has stopped. You can close this window.</p>}
         <DialogFooter>
           <Button disabled={closing} onClick={() => void closeApplication()}>
-            {closed
-              ? "Application closed"
-              : closing
-                ? "Closing…"
-                : "Close application"}
+            {closed ? "Application closed" : closing ? "Closing…" : "Close application"}
           </Button>
         </DialogFooter>
       </DialogContent>

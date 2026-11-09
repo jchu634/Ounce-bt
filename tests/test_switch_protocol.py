@@ -43,7 +43,7 @@ def test_handshake_advertises_and_returns_grip_colours(
     colours = exchange("10 50 60 00 00 0D")
     assert colours[:2] == bytes.fromhex("A1 21")
     assert colours[14:21] == bytes.fromhex("90 10 50 60 00 00 0D")
-    assert colours[21:27] == bytes.fromhex("000000 0F0F0F")
+    assert colours[21:27] == bytes.fromhex("000000 FFFFFF")
     assert colours[27:30] == bytes.fromhex(left_grip)
     right_grip = (
         "828282" if controller_type == ControllerTypes.PRO_CONTROLLER else "FFFFFF"

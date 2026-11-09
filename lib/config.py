@@ -37,7 +37,7 @@ def _config_dir() -> Path:
     then ``~/.config``. Created on first save, not on read.
     """
     appdata = os.environ.get("APPDATA")
-    if appdata:
+    if sys.platform == "win32" and appdata:
         return Path(appdata) / APP_NAME
     xdg = os.environ.get("XDG_CONFIG_HOME")
     if xdg:
@@ -46,11 +46,34 @@ def _config_dir() -> Path:
 
 
 def application_dir() -> Path:
+    # PyInstaller keeps bundled assets beside its embedded Python libraries.
+    if bundle := getattr(sys, "_MEIPASS", None):
+        return Path(bundle)
     # Nuitka onefile extracts __file__ into a temporary directory. argv[0]
     # locates the executable and its external, writable configuration.
     if "__compiled__" in globals() or getattr(sys, "frozen", False):
         return Path(sys.argv[0]).resolve().parent
     return Path(__file__).resolve().parent.parent
+
+
+def packaged_linux() -> bool:
+    return sys.platform == "linux" and (
+        "__compiled__" in globals() or getattr(sys, "frozen", False)
+    )
+
+
+def data_dir() -> Path:
+    if sys.platform == "linux":
+        base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
+        return base / APP_NAME
+    return application_dir()
+
+
+def state_dir() -> Path:
+    if sys.platform == "linux":
+        base = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
+        return base / APP_NAME
+    return _config_dir()
 
 
 def resolve_config_file(name: str) -> Path:
@@ -62,6 +85,8 @@ def resolve_config_file(name: str) -> Path:
 
 
 def config_path() -> Path:
+    if packaged_linux():
+        return _config_dir() / "config.json"
     return resolve_config_file("config.json")
 
 
@@ -76,6 +101,7 @@ class Config:
     ws_auth_required: bool = True
     bt_address: str = ""
     transport_spec: str = "usb:0"
+    firmware_dir: str | None = None
     device_config: str = "pro_controller.json"
     input_specs: list[str] = field(default_factory=lambda: ["controller"])
     macros_dir: str = "macros"
@@ -105,7 +131,14 @@ class Config:
 
     def resolve_folder(self, folder: str) -> Path:
         path = Path(folder).expanduser()
-        return path if path.is_absolute() else application_dir() / path
+        root = data_dir() if packaged_linux() else application_dir()
+        return path if path.is_absolute() else root / path
+
+    @property
+    def bluetooth_firmware_dir(self) -> Path:
+        if self.firmware_dir:
+            return self.resolve_folder(self.firmware_dir)
+        return data_dir() / "firmware" if sys.platform == "linux" else application_dir()
 
     @classmethod
     def _valid_keys(cls) -> set[str]:
@@ -132,7 +165,7 @@ class Config:
         if overrides:
             data = {**data, **overrides}
         valid = cls._valid_keys()
-        nullable = {"web_host", "web_port", "pairing_dir"}
+        nullable = {"web_host", "web_port", "pairing_dir", "firmware_dir"}
         filtered = {
             k: v
             for k, v in data.items()

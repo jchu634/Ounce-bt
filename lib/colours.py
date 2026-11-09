@@ -2,7 +2,7 @@ import re
 
 DEFAULT_CONTROLLER_COLOURS = {
     "body": "#000000",
-    "buttons": "#0F0F0F",
+    "buttons": "#FFFFFF",
     "left_grip": "#828282",
     "right_grip": "#828282",
 }

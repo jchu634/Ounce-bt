@@ -1,6 +1,5 @@
 type DesktopApi = {
   get_auth_token: () => Promise<string | null>;
-  close_application: () => Promise<void>;
 };
 
 declare global {

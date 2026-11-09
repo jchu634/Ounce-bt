@@ -148,16 +148,20 @@ export function MacroRunPanel({
                 <li
                   key={name}
                   className={cn(
-                    "relative flex shrink-0 items-center gap-2 rounded-md border border-border px-3 py-2 text-sm focus-within:bg-muted/60 hover:bg-muted/60",
-                    selected === name ? "bg-muted/60" : isActive ? "bg-primary/5" : "bg-background",
+                    "relative flex shrink-0 items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring",
+                    isActive
+                      ? "border-primary/60 bg-primary/25 focus-within:bg-primary/35 hover:bg-primary/35"
+                      : cn(
+                          "border-border focus-within:bg-foreground/15 hover:bg-foreground/15",
+                          selected === name ? "bg-foreground/10" : "bg-background",
+                        ),
                   )}
                 >
                   <Button
-                    variant="ghost"
-                    className="relative z-0 h-auto min-w-0 flex-1 cursor-pointer justify-start rounded-none border-0 bg-transparent px-1 py-0 text-left font-mono font-normal after:absolute after:inset-0 after:rounded-md hover:bg-transparent focus-visible:after:ring-2 focus-visible:after:ring-ring active:translate-y-0"
+                    variant="ghost_no_hover"
+                    className="relative z-0 h-auto min-w-0 flex-1 cursor-pointer justify-start rounded-none border-0 bg-transparent px-1 py-0 text-left font-normal focus-visible:ring-0 active:translate-y-0"
                     aria-pressed={selected === name}
                     onClick={() => onSelect(name)}
-                    title={name}
                   >
                     <span className="block truncate">{name}</span>
                   </Button>

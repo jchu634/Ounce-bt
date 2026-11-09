@@ -98,6 +98,10 @@ def _validate_actions(actions: list, path: list[str | int], depth: int) -> None:
                     f"unknown button {button!r} for '{kind}' (valid: {valid})",
                 )
         elif kind == "wait":
+            if "unit" in action and action["unit"] not in ("ms", "seconds"):
+                raise MacroValidationError(
+                    [*action_path, "unit"], "must be 'ms' or 'seconds'"
+                )
             ms = action.get("ms", 0)
             if not isinstance(ms, (int, float)) or isinstance(ms, bool):
                 raise MacroValidationError(

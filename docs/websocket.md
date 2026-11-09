@@ -57,6 +57,12 @@ Valid button names: `A B X Y L R ZL ZR UP DOWN LEFT RIGHT PLUS MINUS HOME CAPTUR
 
 JSON files under `macros/`.
 
+Wait actions can include an optional `unit` field of `"ms"` or `"seconds"` to
+restore the visual editor's last selected unit.
+E.g. `{"do": "wait", "ms": 1500, "unit": "seconds"}` displays as 1.5 seconds.
+This also applies to the wait inside a press and hold block.
+Defaults as ms. This is purely cosmetic.
+
 #### Example:
 
 ```jsonc

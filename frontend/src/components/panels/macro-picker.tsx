@@ -29,7 +29,7 @@ export function MacroPicker({ names, selected, onSelect, onCreate }: MacroPicker
               <li key={name}>
                 <Button
                   variant={selected === name ? "secondary" : "outline"}
-                  className="h-auto w-full justify-start rounded-xl px-3 py-2 font-mono font-normal"
+                  className="h-auto w-full justify-start rounded-xl px-3 py-2 font-normal"
                   onClick={() => onSelect(name)}
                   title={name}
                 >

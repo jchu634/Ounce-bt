@@ -1,9 +1,12 @@
 """UI control of the Switch radio and saved Classic Bluetooth bonds."""
 
 import asyncio
+import logging
 
 from bumble.hci import Address
 from bumble.l2cap import ClassicChannelSpec
+
+logger = logging.getLogger("switch_pair")
 
 
 class BluetoothService:
@@ -18,6 +21,7 @@ class BluetoothService:
         self.failure = None
         self._intentional_disconnect = False
         self._lock = asyncio.Lock()
+        self._disconnect_lock = asyncio.Lock()
 
     def attach(self, device, state, channel_handler):
         self.device = device
@@ -28,10 +32,17 @@ class BluetoothService:
         device.on("connection", self._on_connection)
 
     def _on_connection(self, connection):
+        logger.info("Bluetooth ACL connected: peer=%s", connection.peer_address)
         self.connection = connection
         self._intentional_disconnect = False
 
         def disconnected(_reason):
+            logger.info(
+                "Bluetooth ACL disconnected: peer=%s reason=0x%02X intentional=%s",
+                connection.peer_address,
+                _reason,
+                self._intentional_disconnect,
+            )
             if self.connection is connection:
                 self.connection = None
                 self.connected = False
@@ -81,11 +92,19 @@ class BluetoothService:
             self.pairing = enabled
             if not enabled and self.connection and not self.connected:
                 self._intentional_disconnect = True
-                await self.connection.disconnect()
+                await self.disconnect_connection(self.connection)
 
     async def disconnect(self):
         async with self._lock:
             await self._disconnect()
+
+    async def disconnect_connection(self, connection):
+        # The UI, reconnect error handler and session loop can all reach cleanup.
+        # Bumble sends a new HCI command for every disconnect() call.
+        async with self._disconnect_lock:
+            if connection is not None and self.connection is connection:
+                async with asyncio.timeout(10):
+                    await connection.disconnect()
 
     async def _disconnect(self):
         if self.device is None:
@@ -95,7 +114,7 @@ class BluetoothService:
         self.pairing = False
         if self.connection is not None:
             self._intentional_disconnect = True
-            await self.connection.disconnect()
+            await self.disconnect_connection(self.connection)
 
     async def forget(self, address):
         async with self._lock:
@@ -134,9 +153,18 @@ class BluetoothService:
                             ClassicChannelSpec(psm=psm)
                         )
                         self.channel_handler(psm, self.state)(channel)
-            except BaseException:
+            except BaseException as error:
                 if self.connection:
-                    await self.connection.disconnect()
+                    await self.disconnect_connection(self.connection)
+                # Bumble also uses CancelledError to signal a lost ACL. It is
+                # an operation failure unless our caller actually cancelled us.
+                if (
+                    isinstance(error, asyncio.CancelledError)
+                    and not asyncio.current_task().cancelling()
+                ):
+                    raise ConnectionError(
+                        "Switch disconnected during reconnect"
+                    ) from error
                 raise
             finally:
                 self.reconnecting = False

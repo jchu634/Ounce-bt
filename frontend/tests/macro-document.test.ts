@@ -31,6 +31,16 @@ describe("parseMacroDocument", () => {
     ["fractional repeat", { version: 1, repeat: 1.5, actions: [] }, ["repeat"]],
     ["negative wait", { version: 1, actions: [{ do: "wait", ms: -1 }] }, ["actions", 0, "ms"]],
     [
+      "invalid unit",
+      { version: 1, actions: [{ do: "wait", ms: 1000, unit: "minutes" }] },
+      ["actions", 0, "unit"],
+    ],
+    [
+      "null unit",
+      { version: 1, actions: [{ do: "wait", ms: 1000, unit: null }] },
+      ["actions", 0, "unit"],
+    ],
+    [
       "fractional loop count",
       { version: 1, actions: [{ do: "loop", count: 1.5, actions: [] }] },
       ["actions", 0, "count"],

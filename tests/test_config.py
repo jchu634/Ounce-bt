@@ -17,7 +17,7 @@ def test_controller_colours_persist_partial_updates(tmp_path, monkeypatch):
     store = ConfigStore(Config.load())
     assert store.config.controller_colours == {
         "body": "#000000",
-        "buttons": "#0F0F0F",
+        "buttons": "#FFFFFF",
         "left_grip": "#828282",
         "right_grip": "#828282",
     }
@@ -25,7 +25,7 @@ def test_controller_colours_persist_partial_updates(tmp_path, monkeypatch):
     store.update({"controller_colours": {"right_grip": "#123456"}})
     assert Config.load().controller_colours == {
         "body": "#000000",
-        "buttons": "#0F0F0F",
+        "buttons": "#FFFFFF",
         "left_grip": "#ABCDEF",
         "right_grip": "#123456",
     }

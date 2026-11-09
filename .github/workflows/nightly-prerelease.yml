@@ -76,8 +76,13 @@ jobs:
             build/windows/main.build/scons-report.txt
           if-no-files-found: ignore
 
+  linux:
+    uses: ./.github/workflows/build-linux.yml
+    with:
+      source_ref: ${{ inputs.source_ref }}
+
   prerelease:
-    needs: windows
+    needs: [windows, linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -92,6 +97,10 @@ jobs:
         with:
           name: Ounce-bt-windows-x64-standalone
           path: standalone-app
+      - uses: actions/download-artifact@v4
+        with:
+          name: Ounce-bt-linux-x86_64
+          path: release-assets
       - name: Package standalone app for release
         run: python -c "import shutil; shutil.make_archive('release-assets/Ounce-bt-windows-x64-standalone', 'zip', 'standalone-app')"
       - name: Prepare nightly release metadata

@@ -120,13 +120,6 @@ const dependencyGroups = [
         description: "UI component patterns and styling",
       },
       {
-        name: "Phosphor Icons",
-        licenseSlug: "phosphor-icons",
-        license: "MIT",
-        url: "https://phosphoricons.com/",
-        description: "Interface icons",
-      },
-      {
         name: "Blockly",
         licenseSlug: "blockly",
         license: "Apache-2.0",
@@ -153,6 +146,39 @@ const dependencyGroups = [
         license: "Apache-2.0",
         url: "https://diffs.com/",
         description: "Code diff rendering",
+      },
+    ],
+  },
+  {
+    name: "Design",
+    dependencies: [
+      {
+        name: "Scoutie Sans",
+        licenseSlug: "scoutie-sans",
+        license: "OFL-1.1",
+        url: "https://github.com/sursly/scoutie",
+        description: "Interface font by the Scoutie Sans Project Authors",
+      },
+      {
+        name: "Intel One Mono",
+        licenseSlug: "intel-one-mono",
+        license: "OFL-1.1",
+        url: "https://github.com/intel/intel-one-mono",
+        description: "Programming font by Intel",
+      },
+      {
+        name: "Phosphor Icons",
+        licenseSlug: "phosphor-icons",
+        license: "MIT",
+        url: "https://phosphoricons.com/",
+        description: "Interface icons",
+      },
+      {
+        name: "Input Prompts",
+        licenseSlug: "kenney",
+        license: "CC0",
+        url: "https://kenney.nl/assets/input-prompts",
+        description: "Controller icons by Kenney",
       },
     ],
   },
@@ -191,8 +217,8 @@ export default function Credits() {
           (License)
         </a>
         <br />
-        Ounce-bt's bluetooth core was implemented using NXBT's documentation,
-        and uses/adapts some code from that project. <br />
+        Ounce-bt's bluetooth core was implemented using NXBT's documentation, and uses/adapts some
+        code from that project. <br />
         We would also like to thank typenoob for their work on their{" "}
         <a
           className="text-blue-500"
@@ -202,9 +228,8 @@ export default function Credits() {
         >
           NXBT fork
         </a>{" "}
-        as their bumble implementation was used to help understand the pairing
-        protocol and fix the last bugs that prevented Ounce-bt's bumble
-        implementation from working. <br />
+        as their bumble implementation was used to help understand the pairing protocol and fix the
+        last bugs that prevented Ounce-bt's bumble implementation from working. <br />
         This could also not have been done without{" "}
         <a
           className="text-blue-500"
@@ -217,29 +242,8 @@ export default function Credits() {
         which was used for implementing Rumble and Colours.
       </p>
       <p>
-        Controller icons are from the Input Prompts pack by{" "}
-        <a
-          className="text-blue-500"
-          target="_blank"
-          rel="noopener noreferrer"
-          href="https://kenney.nl/"
-        >
-          Kenney,
-        </a>{" "}
-        licensed under{" "}
-        <a
-          className="text-blue-500"
-          target="_blank"
-          rel="noopener noreferrer"
-          href="/licenses/kenney"
-        >
-          CC0
-        </a>
-        .
-      </p>
-      <p>
-        Finally, we would like to thank the various open source library
-        maintainers whose projects this is built upon.
+        Finally, we would like to thank the various open source library maintainers whose projects
+        this is built upon.
       </p>
       <Accordion multiple>
         {dependencyGroups.map((group) => (
@@ -249,13 +253,15 @@ export default function Credits() {
               <ul className="space-y-2">
                 {group.dependencies.map((dependency) => (
                   <li key={dependency.name}>
-                    <a className="text-blue-500" href={dependency.url}>
+                    <a
+                      className="text-blue-500"
+                      href={dependency.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
                       {dependency.name}
                     </a>
-                    <span className="text-muted-foreground">
-                      {" "}
-                      · {dependency.description}
-                    </span>
+                    <span className="text-muted-foreground"> · {dependency.description}</span>
                     <div className="text-xs text-muted-foreground">
                       License:{" "}
                       <a

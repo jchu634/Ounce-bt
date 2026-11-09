@@ -1,11 +1,15 @@
 """Own the native window and the backend event loop for one application run."""
 
 import asyncio
+import os
 import secrets
+import sys
 import threading
 from urllib.parse import urlsplit
 
 import webview
+
+from lib.config import application_dir
 
 
 class DesktopBridge:
@@ -24,10 +28,6 @@ class DesktopBridge:
     def get_auth_token(self):
         self._check_origin()
         return self._token
-
-    def close_application(self):
-        self._check_origin()
-        self._window.destroy()
 
 
 def run_application(config, args, backend):
@@ -119,7 +119,19 @@ def run_application(config, args, backend):
             if not closed.is_set():
                 window.destroy()
 
-        webview.start(monitor_backend, private_mode=False)
+        options = {}
+        if sys.platform == "linux":
+            # qtpy otherwise chooses whichever Qt binding it finds first.
+            os.environ["QT_API"] = "pyside6"
+            # Wayland identifies windows by the matching desktop-file name.
+            # Set it before pywebview constructs QApplication / its first window.
+            from PySide6.QtGui import QGuiApplication
+
+            QGuiApplication.setApplicationName("Ounce-bt")
+            QGuiApplication.setDesktopFileName("ounce-bt")
+            options["gui"] = "qt"
+            options["icon"] = str(application_dir() / "frontend/public/icon-512.png")
+        webview.start(monitor_backend, private_mode=False, **options)
     finally:
         request_stop()
         thread.join()
