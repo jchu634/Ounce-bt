@@ -29,7 +29,7 @@ Linux uses the kernel's bundled firmware.
 Download and extract the Linux release ZIP, then launch from its extracted folder:
 
 ```bash
-./run-with-hci-caps.sh "$PWD/Ounce-bt-0.1.3-x86_64.AppImage" usb:0
+./run-with-hci-caps.sh "$PWD/Ounce-bt-x86_64.AppImage" usb:0
 ```
 
 #### Arguments

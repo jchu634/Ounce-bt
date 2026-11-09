@@ -1,0 +1,74 @@
+import hashlib
+import runpy
+import subprocess
+import sys
+from pathlib import Path
+from zipfile import ZipFile
+
+import pytest
+
+
+PACKAGE_SCRIPT = Path(__file__).resolve().parents[1] / "scripts/package-linux.py"
+package_appimage = runpy.run_path(str(PACKAGE_SCRIPT))["package_appimage"]
+
+
+@pytest.mark.parametrize("architecture", ["x86_64", "aarch64"])
+@pytest.mark.parametrize("version", ["0.1.3", "0.2.0"])
+def test_release_zip_keeps_version_out_of_bundled_filenames(
+    tmp_path, architecture, version
+):
+    appimage = tmp_path / f"Ounce-bt-{architecture}.AppImage"
+    contents = b"AppImage test contents"
+    appimage.write_bytes(contents)
+
+    output = package_appimage(appimage, version)
+
+    assert output == tmp_path / f"Ounce-bt-{version}-linux-{architecture}.zip"
+    assert not output.with_suffix(".zip.tmp").exists()
+    bundle_name = f"Ounce-bt-linux-{architecture}"
+    checksum_name = f"{appimage.name}.sha256"
+    with ZipFile(output) as archive:
+        assert set(archive.namelist()) == {
+            f"{bundle_name}/{appimage.name}",
+            f"{bundle_name}/run-with-hci-caps.sh",
+            f"{bundle_name}/{checksum_name}",
+            f"{bundle_name}/README.txt",
+        }
+        assert archive.read(f"{bundle_name}/{appimage.name}") == contents
+        assert archive.read(f"{bundle_name}/{checksum_name}").decode() == (
+            f"{hashlib.sha256(contents).hexdigest()}  {appimage.name}\n"
+        )
+        instructions = archive.read(f"{bundle_name}/README.txt").decode()
+        assert f'./run-with-hci-caps.sh "$PWD/{appimage.name}" usb:0' in instructions
+        assert f"sha256sum -c {checksum_name}" in instructions
+        assert version not in instructions
+        for filename in (appimage.name, "run-with-hci-caps.sh"):
+            permissions = archive.getinfo(f"{bundle_name}/{filename}").external_attr >> 16
+            assert permissions & 0o111 == 0o111
+
+
+@pytest.mark.parametrize("filename", ["missing.AppImage", "not-an-appimage.txt"])
+def test_package_rejects_invalid_appimage(tmp_path, filename):
+    appimage = tmp_path / filename
+    if appimage.suffix != ".AppImage":
+        appimage.write_bytes(b"not an AppImage")
+
+    with pytest.raises(ValueError, match="Expected an existing .AppImage file"):
+        package_appimage(appimage, "0.1.3")
+
+
+def test_package_cli_accepts_version_for_zip(tmp_path):
+    appimage = tmp_path / "Ounce-bt-x86_64.AppImage"
+    appimage.write_bytes(b"AppImage test contents")
+
+    result = subprocess.run(
+        [sys.executable, str(PACKAGE_SCRIPT), str(appimage), "0.2.0"],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+
+    output = tmp_path / "Ounce-bt-0.2.0-linux-x86_64.zip"
+    assert output.is_file()
+    assert result.stdout.strip() == f"Linux release ZIP: {output}"

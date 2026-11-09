@@ -7,13 +7,13 @@ from pathlib import Path
 from zipfile import ZipFile, ZipInfo
 
 
-def package_appimage(appimage: Path) -> Path:
+def package_appimage(appimage: Path, version: str) -> Path:
     appimage = appimage.resolve()
     if not appimage.is_file() or appimage.suffix != ".AppImage":
         raise ValueError("Expected an existing .AppImage file")
     name, architecture = appimage.stem.rsplit("-", 1)
-    release_name = f"{name}-linux-{architecture}"
-    output = appimage.parent / f"{release_name}.zip"
+    bundle_name = f"{name}-linux-{architecture}"
+    output = appimage.parent / f"{name}-{version}-linux-{architecture}.zip"
     launcher = appimage.parent / "run-with-hci-caps.sh"
     shutil.copy2(Path(__file__).resolve().with_name(launcher.name), launcher)
     # Store executable permissions in the ZIP for Linux archive extractors.
@@ -25,7 +25,7 @@ def package_appimage(appimage: Path) -> Path:
     checksum_file.write_text(f"{checksum}  {appimage.name}\n", encoding="utf-8")
     instructions = f"""Ounce-bt for Linux
 
-Extract this ZIP, open a terminal in the extracted {release_name} folder,
+Extract this ZIP, open a terminal in the extracted {bundle_name} folder,
 and run as your desktop user:
 
 chmod +x {appimage.name} run-with-hci-caps.sh
@@ -48,8 +48,8 @@ sha256sum -c {checksum_file.name}
         # AppImages are already compressed. Store them without recompression.
         with ZipFile(temporary, "w") as archive:
             for path in (appimage, launcher, checksum_file):
-                archive.write(path, f"{release_name}/{path.name}")
-            readme = ZipInfo(f"{release_name}/README.txt")
+                archive.write(path, f"{bundle_name}/{path.name}")
+            readme = ZipInfo(f"{bundle_name}/README.txt")
             readme.create_system = 3
             readme.external_attr = 0o100644 << 16
             archive.writestr(readme, instructions)
@@ -62,5 +62,6 @@ sha256sum -c {checksum_file.name}
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("appimage", type=Path)
+    parser.add_argument("version", help="Application version for the release ZIP filename")
     args = parser.parse_args()
-    print(f"Linux release ZIP: {package_appimage(args.appimage)}")
+    print(f"Linux release ZIP: {package_appimage(args.appimage, args.version)}")

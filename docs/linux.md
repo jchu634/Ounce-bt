@@ -12,10 +12,10 @@ Extract it and run the launcher as your desktop user.
 
 e.g.
 ```bash
-unzip Ounce-bt-0.1.3-linux-x86_64.zip
-cd Ounce-bt-0.1.3-linux-x86_64
-chmod +x Ounce-bt-0.1.3-x86_64.AppImage run-with-hci-caps.sh
-./run-with-hci-caps.sh "$PWD/Ounce-bt-0.1.3-x86_64.AppImage" usb:0
+unzip Ounce-bt-*-linux-x86_64.zip
+cd Ounce-bt-linux-x86_64
+chmod +x Ounce-bt-x86_64.AppImage run-with-hci-caps.sh
+./run-with-hci-caps.sh "$PWD/Ounce-bt-x86_64.AppImage" usb:0
 ```
 
 `usb:0` selects the first adapter in Bumble's USB enumeration.\
@@ -31,7 +31,7 @@ If your system lacks FUSE, use the same launcher with
 `APPIMAGE_EXTRACT_AND_RUN=1`:
 
 ```bash
-APPIMAGE_EXTRACT_AND_RUN=1 ./run-with-hci-caps.sh "$PWD/Ounce-bt-0.1.3-x86_64.AppImage" usb:0
+APPIMAGE_EXTRACT_AND_RUN=1 ./run-with-hci-caps.sh "$PWD/Ounce-bt-x86_64.AppImage" usb:0
 ```
 
 Startup errors appear in the application dialog and log.
@@ -111,9 +111,10 @@ lists the system packages used by CI. Then run:
 
 The script builds the frontend, creates an isolated Python 3.12 build
 environment, and packages the app with PyInstaller and PySide6's WebEngine
-hooks. It generates `dist/Ounce-bt-<version>-linux-<arch>.zip`, containing the
-AppImage, `run-with-hci-caps.sh`, the AppImage's SHA-256 checksum and launch
-instructions in one folder. The build uses appimagetool 1.9.1 and retains the
+hooks. It generates `dist/Ounce-bt-<version>-linux-<arch>.zip`, containing
+`Ounce-bt-<arch>.AppImage`, `run-with-hci-caps.sh`,
+`Ounce-bt-<arch>.AppImage.sha256` and launch instructions in an
+`Ounce-bt-linux-<arch>` folder. The build uses appimagetool 1.9.1 and retains the
 loose AppImage in `dist/` for local testing.
 
 `--skip-frontend` reuses an existing frontend build. `PYTHON_VERSION` changes

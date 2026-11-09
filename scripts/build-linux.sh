@@ -53,8 +53,8 @@ if [[ -z $appimage_tool ]]; then
     appimage_tool="$build_root/squashfs-root/AppRun"
 fi
 version=$(uv run --no-sync --python "$python_version" python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
-output="$repo_root/dist/Ounce-bt-$version-$app_arch.AppImage"
+output="$repo_root/dist/Ounce-bt-$app_arch.AppImage"
 ARCH="$app_arch" "$appimage_tool" --no-appstream "$app_dir" "$output"
 "$output" --appimage-extract-and-run --help
-uv run --no-sync --python "$python_version" python scripts/package-linux.py "$output"
+uv run --no-sync --python "$python_version" python scripts/package-linux.py "$output" "$version"
 printf 'Linux AppImage: %s\n' "$output"
