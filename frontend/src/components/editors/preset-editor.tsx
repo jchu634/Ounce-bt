@@ -202,6 +202,7 @@ export function PresetEditor({
     ref,
     () => ({
       requestNavigation(navigate) {
+        if (saving || savingAs) return;
         if (!dirty) {
           navigate();
           return;
@@ -210,7 +211,7 @@ export function PresetEditor({
         setNavigationPromptOpen(true);
       },
     }),
-    [dirty],
+    [dirty, saving, savingAs],
   );
 
   const cancelNavigation = useCallback(() => {
@@ -622,8 +623,7 @@ export function PresetEditor({
           <DialogHeader>
             <DialogTitle>Leave without saving?</DialogTitle>
             <DialogDescription>
-              You have unsaved changes to this preset. Save them before opening
-              another preset?
+              You have unsaved changes to this preset. Save them before leaving?
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

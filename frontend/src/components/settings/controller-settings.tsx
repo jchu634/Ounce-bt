@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useImperativeHandle, useRef, useState, type Ref } from "react";
 import { VibrationSetting } from "@/src/components/settings/vibration-setting";
 import { ControllerPanel } from "@/src/components/settings/controller-panel";
 import { PresetEditor, type PresetEditorHandle } from "@/src/components/editors/preset-editor";
@@ -10,11 +10,13 @@ export function ControllerSettings({
   loading,
   listError,
   onRefresh,
+  ref,
 }: {
   presets: PresetInfo[];
   loading: boolean;
   listError: string | null;
   onRefresh: () => void;
+  ref?: Ref<PresetEditorHandle>;
 }) {
   const [selection, setSelection] = useState<Pick<PresetInfo, "filename" | "builtin"> | null>();
   const selected = selection === undefined ? presets.find((preset) => preset.active) : selection;
@@ -22,6 +24,17 @@ export function ControllerSettings({
   const selectedBuiltin = selected?.builtin ?? false;
   const [editorSession, setEditorSession] = useState(0);
   const presetEditor = useRef<PresetEditorHandle | null>(null);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      requestNavigation(navigate) {
+        if (presetEditor.current) presetEditor.current.requestNavigation(navigate);
+        else navigate();
+      },
+    }),
+    [],
+  );
 
   function openPreset(name: string, builtin: boolean) {
     setEditorSession((session) => session + 1);
