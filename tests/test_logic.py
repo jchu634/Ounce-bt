@@ -99,6 +99,20 @@ def test_validate_macro_ok():
     validate_macro(_ok_macro())
 
 
+@pytest.mark.parametrize("unit", ["ms", "seconds"])
+def test_validate_macro_preserves_duration_presentation(unit):
+    macro = {"version": 1, "actions": [{"do": "wait", "ms": 1500, "unit": unit}]}
+    assert validate_macro(macro) == macro
+
+
+@pytest.mark.parametrize("unit", ["minutes", None, 1000, True])
+def test_validate_macro_rejects_invalid_duration_unit(unit):
+    macro = {"version": 1, "actions": [{"do": "wait", "ms": 1500, "unit": unit}]}
+    with pytest.raises(MacroValidationError) as exc:
+        validate_macro(macro)
+    assert exc.value.path == ["actions", 0, "unit"]
+
+
 @pytest.mark.parametrize(
     ("mutate", "path"),
     [

@@ -55,6 +55,12 @@ function connectNext(previous: Blockly.Block, next: Blockly.Block): void {
   previous.nextConnection.connect(next.previousConnection);
 }
 
+function loadDuration(block: Blockly.Block, wait: Extract<MacroAction, { do: "wait" }>): void {
+  const unit = wait.unit ?? "ms";
+  block.setFieldValue(unit, "UNIT");
+  block.setFieldValue(unit === "seconds" ? wait.ms / 1000 : wait.ms, "MS");
+}
+
 function createActionBlock(workspace: Blockly.Workspace, action: MacroAction): Blockly.Block {
   switch (action.do) {
     case "press":
@@ -66,7 +72,7 @@ function createActionBlock(workspace: Blockly.Workspace, action: MacroAction): B
     }
     case "wait": {
       const block = newBlock(workspace, MACRO_BLOCK_TYPES.wait);
-      block.setFieldValue(action.ms, "MS");
+      loadDuration(block, action);
       return block;
     }
     case "stick": {
@@ -77,6 +83,21 @@ function createActionBlock(workspace: Blockly.Workspace, action: MacroAction): B
       return block;
     }
     case "loop": {
+      // A single-iteration group preserves the hold block in the existing macro format.
+      const [press, wait, release] = action.actions;
+      if (
+        action.count === 1 &&
+        action.actions.length === 3 &&
+        press?.do === "press" &&
+        wait?.do === "wait" &&
+        release?.do === "release" &&
+        press.button === release.button
+      ) {
+        const block = newBlock(workspace, MACRO_BLOCK_TYPES.pressAndHold);
+        block.setFieldValue(press.button, "BUTTON");
+        loadDuration(block, wait);
+        return block;
+      }
       const block = newBlock(workspace, MACRO_BLOCK_TYPES.loop);
       block.setFieldValue(action.count, "COUNT");
       const firstChild = createActionChain(workspace, action.actions);
@@ -169,6 +190,26 @@ function signedNumberField(
   return null;
 }
 
+function durationField(
+  block: Blockly.Block,
+  label: string,
+  context: ReadContext,
+): Extract<MacroAction, { do: "wait" }> | null {
+  const duration = numberField(block, "MS", label, context, false);
+  const unit = fieldValue(block, "UNIT");
+  if (unit !== "ms" && unit !== "seconds") {
+    context.issues.push({ blockId: block.id, message: "Choose ms or seconds." });
+    return null;
+  }
+  if (duration === null) return null;
+  const ms = unit === "seconds" ? duration * 1000 : duration;
+  if (!Number.isFinite(ms)) {
+    context.issues.push({ blockId: block.id, message: `${label} in milliseconds must be finite.` });
+    return null;
+  }
+  return { do: "wait", ms, unit };
+}
+
 function isButtonName(value: unknown): value is ButtonName {
   return typeof value === "string" && BUTTON_NAMES.some((buttonName) => buttonName === value);
 }
@@ -194,8 +235,29 @@ function readAction(
       return { do: operation, button };
     }
     case MACRO_BLOCK_TYPES.wait: {
-      const ms = numberField(block, "MS", "Wait duration", context, false);
-      return ms === null ? null : { do: "wait", ms };
+      return durationField(block, "Wait duration", context);
+    }
+    case MACRO_BLOCK_TYPES.pressAndHold: {
+      if (depth >= 16) {
+        context.issues.push({
+          blockId: block.id,
+          message: "Loops may be nested at most 16 levels deep.",
+        });
+        return null;
+      }
+      const button = fieldValue(block, "BUTTON");
+      const wait = durationField(block, "Hold duration", context);
+      if (!isButtonName(button)) {
+        context.issues.push({ blockId: block.id, message: "Choose a valid button." });
+        return null;
+      }
+      return wait === null
+        ? null
+        : {
+            do: "loop",
+            count: 1,
+            actions: [{ do: "press", button }, wait, { do: "release", button }],
+          };
     }
     case MACRO_BLOCK_TYPES.stick: {
       const side = fieldValue(block, "SIDE");

@@ -18,7 +18,7 @@ const ROOT_KEYS = new Set(["version", "name", "repeat", "actions"]);
 const ACTION_KEYS = {
   press: new Set(["do", "button"]),
   release: new Set(["do", "button"]),
-  wait: new Set(["do", "ms"]),
+  wait: new Set(["do", "ms", "unit"]),
   stick: new Set(["do", "side", "x", "y"]),
   loop: new Set(["do", "count", "actions"]),
 } satisfies Record<MacroAction["do"], ReadonlySet<string>>;
@@ -68,7 +68,18 @@ function parseActions(
         if (!isFiniteNumber(candidate.ms) || candidate.ms < 0) {
           return invalid("Wait duration must be a non-negative number.", [...actionPath, "ms"]);
         }
-        actions.push({ do: "wait", ms: candidate.ms });
+        if (
+          candidate.unit !== undefined &&
+          candidate.unit !== "ms" &&
+          candidate.unit !== "seconds"
+        ) {
+          return invalid("Wait unit must be 'ms' or 'seconds'.", [...actionPath, "unit"]);
+        }
+        actions.push(
+          candidate.unit === undefined
+            ? { do: "wait", ms: candidate.ms }
+            : { do: "wait", ms: candidate.ms, unit: candidate.unit },
+        );
         break;
       case "stick":
         if (candidate.side !== "left" && candidate.side !== "right") {

@@ -31,7 +31,7 @@ export type EventAction =
 
 export type MacroAction =
   | { do: "press" | "release"; button: ButtonName }
-  | { do: "wait"; ms: number }
+  | { do: "wait"; ms: number; unit?: "ms" | "seconds" }
   | { do: "stick"; side: "left" | "right"; x: number; y: number }
   | { do: "loop"; count: number; actions: MacroAction[] };
 
