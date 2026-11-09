@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from bumble.hci import Address
 from bumble.keys import JsonKeyStore, MemoryKeyStore, PairingKeys
 
 import app.main as application
@@ -15,12 +16,17 @@ ADDRESS = "12:34:56:78:90:AB"
 
 
 @pytest.mark.parametrize("headless", [False, True])
-def test_startup_pairing_requires_ui_action_unless_headless(monkeypatch, headless):
+@pytest.mark.parametrize("realtek", [False, True])
+def test_startup_pairing_requires_ui_action_unless_headless(
+    monkeypatch, headless, realtek
+):
     async def scenario():
         powered = asyncio.Event()
         scan_settings = []
         device = SimpleNamespace(
             name="Pro Controller",
+            host=object(),
+            public_address=Address(ADDRESS, Address.PUBLIC_DEVICE_ADDRESS),
             on=Mock(),
             create_l2cap_server=Mock(),
             send_command=AsyncMock(),
@@ -39,9 +45,11 @@ def test_startup_pairing_requires_ui_action_unless_headless(monkeypatch, headles
         async def serve(*args, **kwargs):
             await asyncio.Future()
 
+        monkeypatch.setattr(application, "sys", SimpleNamespace(platform="win32" if realtek else "linux"))
         monkeypatch.setattr(application, "setup_logging", lambda: None)
         monkeypatch.setattr(application, "missing_firmware", lambda _: None)
-        monkeypatch.setattr(application, "prepare_bluetooth", lambda *_: None)
+        prepare = Mock()
+        monkeypatch.setattr(application, "prepare_bluetooth", prepare)
         monkeypatch.setattr(application, "serve_web", serve)
         monkeypatch.setattr(
             application, "open_transport", AsyncMock(return_value=transport())
@@ -54,7 +62,8 @@ def test_startup_pairing_requires_ui_action_unless_headless(monkeypatch, headles
             "load",
             lambda _: Config(
                 input_specs=[],
-                bt_address="98:B6:E9:12:34:57",
+                transport_spec="usb:0" if realtek else "hci-socket:0",
+                bt_address=ADDRESS if realtek else "98:B6:E9:12:34:57",
                 web_host=None if headless else "127.0.0.1",
                 web_port=None if headless else 9127,
             ),
@@ -63,7 +72,11 @@ def test_startup_pairing_requires_ui_action_unless_headless(monkeypatch, headles
         task = asyncio.create_task(application.main())
         try:
             await asyncio.wait_for(powered.wait(), 2)
+            assert prepare.call_count == int(realtek)
             assert scan_settings == [(headless, headless)]
+            assert device.public_address.to_string(with_type_qualifier=False) == ADDRESS
+            device.send_command.assert_awaited_once()
+            assert not task.done()
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)

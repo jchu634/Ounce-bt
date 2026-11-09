@@ -57,15 +57,16 @@ def test_empty_realtek_config_gains_address_entry(tmp_path, monkeypatch):
 
     assert config.bt_address.startswith("98:B6:E9:")
     assert Config.load().bt_address == config.bt_address
-    assert path.read_bytes() == CONFIG_HEADER + bytes.fromhex(
-        config.bt_address.replace(":", "")
-    )[::-1]
+    assert (
+        path.read_bytes()
+        == CONFIG_HEADER + bytes.fromhex(config.bt_address.replace(":", ""))[::-1]
+    )
 
 
 def test_address_update_preserves_other_config_entries(tmp_path):
     config = Config(bt_address="98:B6:E9:01:02:03")
-    other_entry = b"\x01\x00\x02\xAA\xBB"
-    contents = b"\x55\xAB\x23\x87\x0E\x00" + other_entry + b"\x30\x00\x06" + b"\x00" * 6
+    other_entry = b"\x01\x00\x02\xaa\xbb"
+    contents = b"\x55\xab\x23\x87\x0e\x00" + other_entry + b"\x30\x00\x06" + b"\x00" * 6
     path = tmp_path / CONFIG_NAME
     path.write_bytes(contents)
 
@@ -76,7 +77,7 @@ def test_address_update_preserves_other_config_entries(tmp_path):
 
 def test_address_update_rejects_config_without_address_entry(tmp_path):
     path = tmp_path / CONFIG_NAME
-    path.write_bytes(b"\x55\xAB\x23\x87\x05\x00\x01\x00\x02\xAA\xBB")
+    path.write_bytes(b"\x55\xab\x23\x87\x05\x00\x01\x00\x02\xaa\xbb")
 
     with pytest.raises(ValueError, match="no six-byte Bluetooth address entry"):
         prepare_bluetooth(Config(), tmp_path)
@@ -122,10 +123,17 @@ def test_missing_firmware_signal_and_close(tmp_path):
 
 @pytest.mark.parametrize("headless", [False, True])
 @pytest.mark.parametrize("missing", [FIRMWARE_NAME, CONFIG_NAME])
-def test_missing_firmware_never_opens_transport(tmp_path, monkeypatch, headless, missing):
+def test_missing_firmware_never_opens_transport(
+    tmp_path, monkeypatch, headless, missing
+):
     if missing == CONFIG_NAME:
         (tmp_path / FIRMWARE_NAME).write_bytes(b"firmware")
-    config = Config(web_host=None if headless else "127.0.0.1")
+    monkeypatch.setattr(application, "sys", type("Platform", (), {"platform": "win32"}))
+    config = Config(
+        web_host=None if headless else "127.0.0.1",
+        transport_spec="usb:0",
+        firmware_dir=str(tmp_path),
+    )
     monkeypatch.setattr(application.Config, "load", lambda _: config)
     monkeypatch.setattr(application, "application_dir", lambda: tmp_path)
     monkeypatch.setattr(application, "setup_logging", lambda: None)
@@ -146,4 +154,4 @@ def test_missing_firmware_never_opens_transport(tmp_path, monkeypatch, headless,
         assert not served
     else:
         asyncio.run(application.main())
-        assert served == [missing]
+        assert served == [str(tmp_path / missing)]

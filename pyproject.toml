@@ -8,13 +8,15 @@ dependencies = [
   "bumble==0.0.235",
   "pygame-ce>=2.5.6",
   "pywebview>=6.2.1",
+  "pyside6>=6.8,<7; sys_platform == 'linux'",
+  "qtpy>=2.4; sys_platform == 'linux'",
   "starlette>=1.6.0",
   "uvicorn>=0.52.1",
   "websockets>=15.0.1",
 ]
 
 [dependency-groups]
-build = ["nuitka==4.3.1"]
+build = ["nuitka==4.3.1", "pyinstaller>=6.16,<7; sys_platform == 'linux'"]
 dev = ["httpx2>=0.28.1", "pytest>=9.1.1", "ruff>=0.16.2"]
 
 [tool.pytest.ini_options]

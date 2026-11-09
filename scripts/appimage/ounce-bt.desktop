@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Ounce-bt
+Comment=Nintendo Switch Pro Controller emulation
+Exec=Ounce-bt
+Icon=ounce-bt
+StartupWMClass=Ounce-bt
+Categories=Game;
+Terminal=false

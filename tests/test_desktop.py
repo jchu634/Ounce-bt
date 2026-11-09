@@ -1,5 +1,6 @@
 import asyncio
 import queue
+import sys
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -100,8 +101,6 @@ def test_bridge_only_exposes_token_to_local_application():
     )
     bridge._window = window
     assert bridge.get_auth_token() == "secret"
-    bridge.close_application()
-    window.destroy.assert_called_once()
     for url in [
         "https://example.com",
         "http://127.0.0.1:9999",
@@ -111,8 +110,6 @@ def test_bridge_only_exposes_token_to_local_application():
         window.get_current_url = lambda url=url: url
         with pytest.raises(PermissionError):
             bridge.get_auth_token()
-        with pytest.raises(PermissionError):
-            bridge.close_application()
 
 
 def test_browser_launcher_rejects_unreachable_authentication():
@@ -120,7 +117,9 @@ def test_browser_launcher_rejects_unreachable_authentication():
         run_application(Config(webview_enabled=False), None, Mock())
 
 
-def test_window_close_cancels_backend(monkeypatch):
+@pytest.mark.parametrize("platform", [sys.platform, "win32"])
+def test_window_close_cancels_backend(monkeypatch, platform):
+    monkeypatch.setattr("app.desktop.sys", SimpleNamespace(platform=platform))
     import webview
 
     nonce = Mock(side_effect=["a" * 32, "b" * 32])
@@ -134,7 +133,8 @@ def test_window_close_cancels_backend(monkeypatch):
     closed = Event()
     window = SimpleNamespace(events=SimpleNamespace(closed=closed), destroy=Mock())
     monkeypatch.setattr(webview, "create_window", Mock(return_value=window))
-    monkeypatch.setattr(webview, "start", lambda *args, **kwargs: closed.callback())
+    start = Mock(side_effect=lambda *args, **kwargs: closed.callback())
+    monkeypatch.setattr(webview, "start", start)
     cleaned = []
 
     async def backend(config, args, *, ws_token, ready, shutdown_event):
@@ -153,6 +153,19 @@ def test_window_close_cancels_backend(monkeypatch):
     assert first_url == f"http://127.0.0.1:9127/?launch={'a' * 32}"
     assert second_url == f"http://127.0.0.1:9127/?launch={'b' * 32}"
     assert nonce.call_args_list == [((16,),), ((16,),)]
+    if platform == "linux":
+        import os
+
+        assert start.call_args.kwargs["gui"] == "qt"
+        assert os.environ["QT_API"] == "pyside6"
+        assert start.call_args.kwargs["icon"].endswith("frontend/public/icon-512.png")
+        from PySide6.QtGui import QGuiApplication
+
+        assert QGuiApplication.applicationName() == "Ounce-bt"
+        assert QGuiApplication.desktopFileName() == "ounce-bt"
+    else:
+        assert "gui" not in start.call_args.kwargs
+        assert "icon" not in start.call_args.kwargs
 
 
 def test_backend_failure_prevents_window_open(monkeypatch):

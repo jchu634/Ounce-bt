@@ -4,6 +4,7 @@
   "controller_guid": null,
   "controller_presets": null,
   "device_config": "pro_controller.json",
+  "firmware_dir": null,
   "input_specs": [
     "controller"
   ],
@@ -16,7 +17,7 @@
   "presets_dir": "presets",
   "switch_device_names": null,
   "tick_rate_hz": 132,
-  "transport_spec": "usb:0",
+  "transport_spec": null,
   "vibration_enabled": true,
   "web_host": "127.0.0.1",
   "web_port": 9127,

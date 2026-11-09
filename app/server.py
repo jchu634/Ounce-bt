@@ -608,6 +608,11 @@ async def startup_status(request: Request) -> JSONResponse:
         status = {"kind": "missing_firmware", "filename": firmware}
     elif request.app.state.usb_driver_error:
         status = {"kind": "usb_driver_error"}
+    elif request.app.state.bluetooth_error:
+        status = {
+            "kind": "bluetooth_error",
+            "message": request.app.state.bluetooth_error,
+        }
     elif request.app.state.transport_pending:
         status = {"kind": "checking"}
     else:
@@ -702,6 +707,7 @@ def build_app(
     app.state.macro_store = macro_store
     app.state.missing_firmware = missing_firmware
     app.state.usb_driver_error = usb_driver_error
+    app.state.bluetooth_error = None
     app.state.transport_pending = False
     app.state.shutdown_event = shutdown_event
     app.state.ws_token = (
