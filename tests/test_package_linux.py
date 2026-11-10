@@ -39,11 +39,14 @@ def test_release_zip_keeps_version_out_of_bundled_filenames(
         assert f'./run-with-hci-caps.sh "$PWD/{appimage.name}" usb:0' in instructions
         assert f"sha256sum -c {checksum_name}" in instructions
         assert version not in instructions
-        for filename in (appimage.name, "run-with-hci-caps.sh"):
-            permissions = (
-                archive.getinfo(f"{bundle_name}/{filename}").external_attr >> 16
+        for filename in (appimage.name, "run-with-hci-caps.sh", checksum_name, "README.txt"):
+            entry = archive.getinfo(f"{bundle_name}/{filename}")
+            assert entry.create_system == 3
+            expected_mode = (
+                0o100755 if filename in (appimage.name, "run-with-hci-caps.sh")
+                else 0o100644
             )
-            assert permissions & 0o111 == 0o111
+            assert entry.external_attr >> 16 == expected_mode
 
 
 @pytest.mark.parametrize("filename", ["missing.AppImage", "not-an-appimage.txt"])
