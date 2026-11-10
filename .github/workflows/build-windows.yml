@@ -6,8 +6,6 @@ on:
       source_ref:
         type: string
         default: ''
-  push:
-    tags: ["*"]
   workflow_dispatch:
 
 permissions:
