@@ -1,6 +1,17 @@
 ## Ounce-bt
 
-Nintendo Switch Pro Controller emulation using the [Bumble](https://github.com/nickoala/bumble) Bluetooth framework, with a Starlette-served web UI and WebSocket for live macro control.
+<div class="grid" markdown>
+    ![Homepage](./assets/Homepage.png){: style="height:83px"}
+
+    ![Compact Homepage](./assets/CompactHomepage.png){: style="height:83px"}
+
+    ![Controller Appearance](./assets/Appearance.png)
+
+    ![Macro Editor](./assets/MacroEditor.png)
+
+    ![Preset Editor](./assets/PresetEditor.png)
+
+</div>
 
 ### Configuration
 
@@ -14,6 +25,7 @@ The Linux AppImage always uses the per-user configuration path.\
 See [Linux setup and AppImage builds](docs/linux.md) for Linux specific changes.
 
 ### Zadig
+
 On Windows, your bluetooth adapter needs to be adapted to WinUSB firmware.\
 See [Instructions](https://google.github.io/bumble/platforms/windows.html)
 
@@ -37,17 +49,17 @@ Download and extract the Linux release ZIP, then launch from its extracted folde
 Settings can overridden for a single run with these command-line arguments.\
 Run `uv run main.py --help` for the full help text.
 
-| Argument                                             | Description                                                |
-| ---------------------------------------------------- | ---------------------------------------------------------- |
-| `[device_config]`                                    | Optional Bumble device configuration JSON path.            |
+| Argument                                             | Description                                                                      |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `[device_config]`                                    | Optional Bumble device configuration JSON path.                                  |
 | `[transport_spec]`                                   | Bluetooth transport, default `usb:0`. Can be supplied without `[device_config]`. |
-| `[bt_address]`                                       | Optional Bluetooth address for the Realtek firmware patch. |
-| `--input controller\|controller:<idx>\|macro:<path>` | Enable an input source; repeat to enable multiple sources. |
-| `--web-host HOST`                                    | Web server bind host. Defaults to `127.0.0.1`.             |
-| `--web-port PORT`                                    | Web server bind port. Defaults to `9127`.                  |
-| `--nolog`                                            | Disable logging for this run.                              |
-| `--preset NAME\|PATH`                                | Controller mapping preset                                  |
-| `--firmware-dir PATH`                                | Windows: location of separately obtained Realtek firmware files.   |
+| `[bt_address]`                                       | Optional Bluetooth address for the Realtek firmware patch.                       |
+| `--input controller\|controller:<idx>\|macro:<path>` | Enable an input source; repeat to enable multiple sources.                       |
+| `--web-host HOST`                                    | Web server bind host. Defaults to `127.0.0.1`.                                   |
+| `--web-port PORT`                                    | Web server bind port. Defaults to `9127`.                                        |
+| `--nolog`                                            | Disable logging for this run.                                                    |
+| `--preset NAME\|PATH`                                | Controller mapping preset                                                        |
+| `--firmware-dir PATH`                                | Windows: location of separately obtained Realtek firmware files.                 |
 
 Command-line values override configuration for the current run and are not saved.
 
