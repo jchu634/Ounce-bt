@@ -1,15 +1,18 @@
 """Own the native window and the backend event loop for one application run."""
 
 import asyncio
+import json
 import os
 import secrets
 import sys
 import threading
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import webview
 
 from lib.config import application_dir
+from lib.server.files import validate_name
 
 
 class DesktopBridge:
@@ -28,6 +31,22 @@ class DesktopBridge:
     def get_auth_token(self):
         self._check_origin()
         return self._token
+
+    def save_json(self, name, contents):
+        self._check_origin()
+        filename = f"{validate_name(name)}.json"
+        json.loads(contents)
+        paths = self._window.create_file_dialog(
+            webview.FileDialog.SAVE,
+            save_filename=filename,
+            file_types=("JSON files (*.json)",),
+        )
+        if not paths:
+            return False
+        path = paths if isinstance(paths, str) else paths[0]
+        self._check_origin()
+        Path(path).write_text(contents, encoding="utf-8")
+        return True
 
 
 def run_application(config, args, backend):

@@ -117,6 +117,45 @@ def test_browser_launcher_rejects_unreachable_authentication():
         run_application(Config(webview_enabled=False), None, Mock())
 
 
+@pytest.mark.parametrize("as_tuple", [True, False])
+def test_bridge_saves_json_to_dialog_selection(tmp_path, as_tuple):
+    destination = tmp_path / "chosen.json"
+    destination.write_text("old contents")
+    selection = (str(destination),) if as_tuple else str(destination)
+    dialog = Mock(return_value=selection)
+    bridge = DesktopBridge(None, ("http", "localhost:9127"))
+    bridge._window = SimpleNamespace(
+        get_current_url=lambda: "http://localhost:9127/macros",
+        create_file_dialog=dialog,
+    )
+    contents = '{"name":"My macro","actions":[]}'
+    assert bridge.save_json("My macro", contents) is True
+    assert destination.read_text(encoding="utf-8") == contents
+    assert dialog.call_args.kwargs["save_filename"] == "My macro.json"
+
+
+def test_bridge_save_cancellation_does_not_write(tmp_path):
+    dialog = Mock(return_value=None)
+    bridge = DesktopBridge(None, ("http", "localhost:9127"))
+    bridge._window = SimpleNamespace(
+        get_current_url=lambda: "http://localhost:9127/macros",
+        create_file_dialog=dialog,
+    )
+    assert bridge.save_json("My macro", "{}") is False
+    assert not list(tmp_path.iterdir())
+
+
+def test_bridge_save_refuses_external_pages():
+    dialog = Mock()
+    bridge = DesktopBridge(None, ("http", "localhost:9127"))
+    bridge._window = SimpleNamespace(
+        get_current_url=lambda: "https://example.com", create_file_dialog=dialog
+    )
+    with pytest.raises(PermissionError):
+        bridge.save_json("My macro", "{}")
+    dialog.assert_not_called()
+
+
 @pytest.mark.parametrize("platform", [sys.platform, "win32"])
 def test_window_close_cancels_backend(monkeypatch, platform):
     monkeypatch.setattr("app.desktop.sys", SimpleNamespace(platform=platform))

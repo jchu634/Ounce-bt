@@ -95,6 +95,7 @@ import {
 } from "@/src/assets/input-prompts/playstation";
 import { errorMessage } from "@/src/lib/errors";
 import { Button } from "@/src/components/ui/button";
+import { JsonExportButtons } from "@/src/components/editors/json-export-buttons";
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
 import {
@@ -453,6 +454,7 @@ export function PresetEditor({
           </span>
         )}
         <div className="ms-auto flex flex-wrap items-center gap-2">
+          <JsonExportButtons name={name} contents={value} disabled={loading || savedText === null} />
           <Button
             size="sm"
             variant={advanced ? "secondary" : "outline"}

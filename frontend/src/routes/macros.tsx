@@ -139,6 +139,7 @@ function MacrosPage() {
           selected={selected}
           onSelect={selectMacro}
           onCreate={startCreate}
+          onImported={() => router.invalidate()}
         />
         <MacroEditor
           key={`${editorSession}:${renamedSelection?.to === selected ? renamedSelection.from : selected}`}
