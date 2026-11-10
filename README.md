@@ -1,17 +1,15 @@
 ## Ounce-bt
 
-<div class="grid" markdown>
-    ![Homepage](./assets/Homepage.png){: style="height:83px"}
+<p float="left">
+    <img src="./assets/Homepage.png" alt="Homepage" width="70%" />
+    <img src="./assets/CompactHomepage.png" alt="Compact Homepage" width="29%" />
+</p>
+<p float="left">
+  <img src="./assets/PresetEditor.png" alt="Macro Editor" width="33%" />
+  <img src="./assets/MacroEditor.png" alt="Preset Editor" width="33%" />
+  <img src="./assets/Appearance.png" alt="Controller Appearance" width="33%" />
+</p>
 
-    ![Compact Homepage](./assets/CompactHomepage.png){: style="height:83px"}
-
-    ![Controller Appearance](./assets/Appearance.png)
-
-    ![Macro Editor](./assets/MacroEditor.png)
-
-    ![Preset Editor](./assets/PresetEditor.png)
-
-</div>
 
 ### Configuration
 
