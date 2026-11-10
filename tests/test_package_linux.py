@@ -1,7 +1,5 @@
 import hashlib
 import runpy
-import subprocess
-import sys
 from pathlib import Path
 from zipfile import ZipFile
 
