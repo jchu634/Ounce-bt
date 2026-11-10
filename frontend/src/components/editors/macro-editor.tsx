@@ -21,6 +21,7 @@ import {
   WarningIcon,
 } from "@phosphor-icons/react";
 import { Button } from "@/src/components/ui/button";
+import { JsonExportButtons } from "@/src/components/editors/json-export-buttons";
 import { Input } from "@/src/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/src/components/ui/tabs";
 import {
@@ -519,6 +520,11 @@ export const MacroEditor = forwardRef<MacroEditorHandle, MacroEditorProps>(
             </span>
           )}
           <div className="ms-auto flex flex-wrap items-center gap-2">
+            <JsonExportButtons
+              name={name}
+              contents={value}
+              disabled={loading || savedText === null || (editorMode === "blocks" && !blockValid)}
+            />
             {editorMode === "json" && (
               <Button
                 size="icon-sm"

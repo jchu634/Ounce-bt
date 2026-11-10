@@ -1,5 +1,6 @@
 type DesktopApi = {
   get_auth_token: () => Promise<string | null>;
+  save_json?: (name: string, contents: string) => Promise<boolean>;
 };
 
 declare global {

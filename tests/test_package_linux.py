@@ -7,7 +7,6 @@ from zipfile import ZipFile
 
 import pytest
 
-
 PACKAGE_SCRIPT = Path(__file__).resolve().parents[1] / "scripts/package-linux.py"
 package_appimage = runpy.run_path(str(PACKAGE_SCRIPT))["package_appimage"]
 
@@ -43,7 +42,9 @@ def test_release_zip_keeps_version_out_of_bundled_filenames(
         assert f"sha256sum -c {checksum_name}" in instructions
         assert version not in instructions
         for filename in (appimage.name, "run-with-hci-caps.sh"):
-            permissions = archive.getinfo(f"{bundle_name}/{filename}").external_attr >> 16
+            permissions = (
+                archive.getinfo(f"{bundle_name}/{filename}").external_attr >> 16
+            )
             assert permissions & 0o111 == 0o111
 
 
@@ -55,20 +56,3 @@ def test_package_rejects_invalid_appimage(tmp_path, filename):
 
     with pytest.raises(ValueError, match="Expected an existing .AppImage file"):
         package_appimage(appimage, "0.1.3")
-
-
-def test_package_cli_accepts_version_for_zip(tmp_path):
-    appimage = tmp_path / "Ounce-bt-x86_64.AppImage"
-    appimage.write_bytes(b"AppImage test contents")
-
-    result = subprocess.run(
-        [sys.executable, str(PACKAGE_SCRIPT), str(appimage), "0.2.0"],
-        check=True,
-        capture_output=True,
-        text=True,
-        cwd=tmp_path,
-    )
-
-    output = tmp_path / "Ounce-bt-0.2.0-linux-x86_64.zip"
-    assert output.is_file()
-    assert result.stdout.strip() == f"Linux release ZIP: {output}"

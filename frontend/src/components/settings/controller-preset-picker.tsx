@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { Effect } from "effect";
 import { SpinnerGapIcon, TrashIcon, WarningIcon } from "@phosphor-icons/react";
 import { Button } from "@/src/components/ui/button";
+import { JsonImportButton } from "@/src/components/panels/json-import-button";
 import {
   Dialog,
   DialogClose,
@@ -74,7 +75,10 @@ export function PresetPicker({
 
   return (
     <section className="flex w-full max-w-100 flex-col gap-3 text-left">
-      <h2 className="text-lg font-semibold text-foreground">Presets</h2>
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="me-auto text-lg font-semibold text-foreground">Presets</h2>
+        <JsonImportButton kind="preset" onImported={onRefresh} />
+      </div>
 
       {(error !== null || listError !== null) && (
         <div
