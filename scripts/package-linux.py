@@ -16,13 +16,15 @@ def package_appimage(appimage: Path, version: str) -> Path:
     output = appimage.parent / f"{name}-{version}-linux-{architecture}.zip"
     launcher = appimage.parent / "run-with-hci-caps.sh"
     shutil.copy2(Path(__file__).resolve().with_name(launcher.name), launcher)
-    # Store executable permissions in the ZIP for Linux archive extractors.
+    # Keep the loose files executable when packaging on Linux.
     appimage.chmod(appimage.stat().st_mode | 0o111)
     launcher.chmod(0o755)
     with appimage.open("rb") as source:
         checksum = hashlib.file_digest(source, "sha256").hexdigest()
     checksum_file = appimage.with_name(f"{appimage.name}.sha256")
-    checksum_file.write_text(f"{checksum}  {appimage.name}\n", encoding="utf-8")
+    checksum_file.write_text(
+        f"{checksum}  {appimage.name}\n", encoding="utf-8", newline="\n"
+    )
     instructions = f"""Ounce-bt for Linux
 
 Extract this ZIP, open a terminal in the extracted {bundle_name} folder,
@@ -48,7 +50,13 @@ sha256sum -c {checksum_file.name}
         # AppImages are already compressed. Store them without recompression.
         with ZipFile(temporary, "w") as archive:
             for path in (appimage, launcher, checksum_file):
-                archive.write(path, f"{bundle_name}/{path.name}")
+                entry = ZipInfo.from_file(path, f"{bundle_name}/{path.name}")
+                # Windows file modes cannot represent Unix executable permissions.
+                entry.create_system = 3
+                mode = 0o100644 if path == checksum_file else 0o100755
+                entry.external_attr = mode << 16
+                with path.open("rb") as source, archive.open(entry, "w") as target:
+                    shutil.copyfileobj(source, target)
             readme = ZipInfo(f"{bundle_name}/README.txt")
             readme.create_system = 3
             readme.external_attr = 0o100644 << 16
