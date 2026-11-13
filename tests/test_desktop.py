@@ -176,7 +176,9 @@ def test_window_close_cancels_backend(monkeypatch, platform):
     monkeypatch.setattr(webview, "start", start)
     cleaned = []
 
-    async def backend(config, args, *, ws_token, ready, shutdown_event):
+    async def backend(
+        config, args, *, ws_token, ready, shutdown_event, restart_callback
+    ):
         assert len(ws_token) == 43
         ready.set()
         try:
@@ -264,3 +266,43 @@ def test_web_server_closes_active_websockets_before_cancellation(tmp_path, monke
             await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(scenario())
+
+
+def test_browser_restart_cancels_backend_before_return():
+    cleaned = []
+
+    async def backend(config, args, *, shutdown_event, restart_callback):
+        try:
+            restart_callback()
+            shutdown_event.set()
+            await asyncio.Future()
+        finally:
+            cleaned.append(True)
+
+    assert (
+        run_application(
+            Config(webview_enabled=False, ws_auth_required=False), None, backend
+        )
+        is True
+    )
+    assert cleaned == [True]
+
+
+def test_launch_reexecutes_after_restart(monkeypatch):
+    import os
+
+    import app.main as application
+
+    config = Config()
+    args = object()
+    monkeypatch.setattr(application, "load_options", lambda: (config, args))
+    run = Mock(return_value=True)
+    monkeypatch.setattr("app.desktop.run_application", run)
+    execute = Mock()
+    monkeypatch.setattr(os, "execv", execute)
+    monkeypatch.setattr(sys, "argv", ["main.py", "--nolog"])
+    application.launch()
+    run.assert_called_once_with(config, args, application.main)
+    execute.assert_called_once_with(
+        sys.executable, [sys.executable, "main.py", "--nolog"]
+    )

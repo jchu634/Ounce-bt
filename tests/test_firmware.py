@@ -136,7 +136,7 @@ def test_missing_firmware_never_opens_transport(
     )
     monkeypatch.setattr(application.Config, "load", lambda _: config)
     monkeypatch.setattr(application, "application_dir", lambda: tmp_path)
-    monkeypatch.setattr(application, "setup_logging", lambda: None)
+    monkeypatch.setattr(application, "setup_logging", lambda _bumble_logging=True: None)
     monkeypatch.setattr(
         application, "open_transport", lambda _: pytest.fail("Transport opened")
     )

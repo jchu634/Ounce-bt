@@ -53,8 +53,9 @@ export function ConnectionToggleButton({
 }: ConnectionToggleButtonProps) {
   const active = status?.state !== "disconnected";
   const reconnecting = status?.state === "reconnecting";
+  const disconnecting = status?.state === "disconnecting";
   const buttonDisabled = active
-    ? disabled || !status?.address || reconnecting
+    ? disabled || !status?.address || reconnecting || disconnecting
     : disabled || !address;
 
   return (
@@ -64,14 +65,20 @@ export function ConnectionToggleButton({
       onClick={active ? onDisconnect : onReconnect}
       className={className}
     >
-      {busy ? (
+      {busy || disconnecting ? (
         <SpinnerGapIcon className="hidden animate-spin 2xl:block" />
       ) : active ? (
         <PlugsIcon weight="fill" className="hidden 2xl:block" />
       ) : (
         <PlugsConnectedIcon weight="fill" className="hidden 2xl:block" />
       )}
-      {busy ? "Connecting…" : active ? "Disconnect Controller" : "Reconnect Controller"}
+      {disconnecting
+        ? "Disconnecting…"
+        : busy
+          ? "Connecting…"
+          : active
+            ? "Disconnect Controller"
+            : "Reconnect Controller"}
     </Button>
   );
 }
@@ -100,7 +107,9 @@ export function ConnectionStatus({
               ? "Connecting"
               : status.state === "reconnecting"
                 ? "Reconnecting"
-                : "Disconnected";
+                : status.state === "disconnecting"
+                  ? "Disconnecting"
+                  : "Disconnected";
   const statusDetail = statusError
     ? statusError
     : !status
@@ -113,7 +122,10 @@ export function ConnectionStatus({
       ? "error"
       : !status
         ? "loading"
-        : status.pairing || status.state === "connecting" || status.state === "reconnecting"
+        : status.pairing ||
+            status.state === "connecting" ||
+            status.state === "reconnecting" ||
+            status.state === "disconnecting"
           ? "pending"
           : status.state === "connected"
             ? "connected"

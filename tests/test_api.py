@@ -13,6 +13,7 @@ from starlette.testclient import TestClient
 
 import lib.input.presets as presets_module
 from app.input.manager import InputManager, MacroActiveError
+from app.main import SessionState
 from app.server import build_app
 from lib.config import Config, ConfigStore
 from lib.server.files import JsonDocStore
@@ -140,6 +141,22 @@ def test_bluetooth_disconnect_and_delete_routes(fx):
         assert c.request("DELETE", "/api/bluetooth", json={}).status_code == 400
         service.forget.side_effect = ValueError("Select a previously paired device")
         assert c.request("DELETE", "/api/bluetooth", json={"address": "unknown"}).status_code == 409
+
+
+def test_bluetooth_cleanup_is_reported_as_a_retryable_conflict(fx):
+    with fx.client() as c:
+        service = c.app.state.bluetooth
+        service.device = object()
+        service.state = SessionState()
+        service.state.session_stop.set()
+        for method, body in (
+            ("POST", {"address": "12:34:56:78:90:AB/P"}),
+            ("PUT", {"pairing": True}),
+        ):
+            response = c.request(method, "/api/bluetooth", json=body)
+            assert response.status_code == 409
+            assert response.json()["code"] == "disconnecting"
+            assert "wait a moment" in response.json()["error"]
 
 
 def test_macro_put_validation(fx):
@@ -511,3 +528,129 @@ def test_invalid_vibration_rejected_atomically(fx, invalid):
         )
         assert result.status_code == 400
         assert client.get("/api/config").json() == before
+
+
+def test_debug_visibility_persists_without_restart(fx):
+    with fx.client() as client:
+        assert client.get("/api/config").json()["debug_enabled"] is False
+        response = client.patch("/api/config", json={"debug_enabled": True})
+        assert response.status_code == 200
+        assert response.json()["config"]["debug_enabled"] is True
+        assert Config.load().debug_enabled is True
+        status = client.get("/api/debug").json()
+        assert status["bd_address"] is None
+        assert status["acl_connected"] is False
+        assert status["hid_control_ready"] is False
+        assert status["controllers"]["active"] == "g1"
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"tick_rate_hz": 0},
+        {"macro_rate_hz": 1001},
+        {"tick_rate_hz": True},
+        {"macro_rate_hz": 1.5},
+        {"nolog": "yes"},
+        {"bumble_logging": None},
+        {"ws_auth_required": 1},
+        {"debug_enabled": "true"},
+    ],
+)
+def test_invalid_debug_settings_do_not_persist(fx, changes):
+    with fx.client() as client:
+        before = fx.config_store.snapshot()
+        assert client.patch("/api/config", json=changes).status_code == 400
+        assert fx.config_store.snapshot() == before
+
+
+def test_debug_changes_require_explicit_restart(fx):
+    with fx.client() as client:
+        before = fx.config_store.snapshot()
+        assert (
+            client.patch("/api/config", json={"tick_rate_hz": 144}).status_code == 409
+        )
+        assert (
+            client.post(
+                "/api/debug", json={"changes": {"tick_rate_hz": 144}}
+            ).status_code
+            == 403
+        )
+        client.patch("/api/config", json={"debug_enabled": True})
+        assert (
+            client.post(
+                "/api/debug", json={"changes": {"tick_rate_hz": 144}}
+            ).status_code
+            == 409
+        )
+        assert fx.config_store.config.tick_rate_hz == before["tick_rate_hz"]
+
+
+def test_debug_save_requests_restart_and_persists_new_identity(fx, monkeypatch, tmp_path):
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from bumble.keys import JsonKeyStore, PairingKeys
+
+    monkeypatch.setattr("app.server.sys.platform", "win32")
+    address = "AA:BB:CC:DD:EE:FF"
+    key_file = tmp_path / "bonds.json"
+    keys = JsonKeyStore(namespace="old-controller", filename=str(key_file))
+    asyncio.run(keys.update(address, PairingKeys(link_key=PairingKeys.Key(bytes(16)))))
+    with fx.client() as client:
+        restart = Mock()
+        client.app.state.restart_callback = restart
+        client.app.state.shutdown_event = asyncio.Event()
+        client.app.state.bluetooth.device = SimpleNamespace(
+            keystore=keys, set_discoverable=AsyncMock(), set_connectable=AsyncMock(),
+        )
+        client.patch("/api/config", json={
+            "debug_enabled": True, "switch_device_names": {address: "Living room Switch"},
+        })
+        assert asyncio.run(keys.get_all())
+        response = client.post("/api/debug", json={
+            "changes": {"tick_rate_hz": 144, "macro_rate_hz": 60, "bumble_logging": False},
+            "regenerate_address": True,
+        })
+        assert response.status_code == 200
+        restart.assert_called_once()
+        assert client.app.state.shutdown_event.is_set()
+        saved = Config.load()
+        assert saved.tick_rate_hz == 144
+        assert saved.macro_rate_hz == 60
+        assert saved.bumble_logging is False
+        assert saved.bt_address.startswith("98:B6:E9:")
+        assert len(saved.bt_address) == 17
+        assert saved.switch_device_names == {}
+        reopened = JsonKeyStore(namespace="old-controller", filename=str(key_file))
+        assert asyncio.run(reopened.get_all()) == []
+
+
+def test_regeneration_failure_preserves_config_and_does_not_restart(fx, monkeypatch):
+    import asyncio
+    from unittest.mock import Mock
+
+    monkeypatch.setattr("app.server.sys.platform", "win32")
+    with fx.client() as client:
+        restart = Mock()
+        client.app.state.restart_callback = restart
+        client.app.state.shutdown_event = asyncio.Event()
+        client.patch("/api/config", json={"debug_enabled": True})
+        before = fx.config_store.snapshot()
+        response = client.post("/api/debug", json={"regenerate_address": True})
+        assert response.status_code == 503
+        assert fx.config_store.snapshot() == before
+        restart.assert_not_called()
+        assert not client.app.state.shutdown_event.is_set()
+
+
+def test_debug_status_includes_switch_name_and_address(fx):
+    with fx.client() as client:
+        response = client.patch("/api/config", json={
+            "switch_device_names": {"AA:BB:CC:DD:EE:FF": "Living room Switch"},
+        })
+        assert response.status_code == 200
+        assert client.get("/api/debug").json()["switch_devices"] == [
+            {"address": "AA:BB:CC:DD:EE:FF", "name": "Living room Switch"},
+        ]

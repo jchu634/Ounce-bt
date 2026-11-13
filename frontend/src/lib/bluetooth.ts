@@ -1,7 +1,7 @@
 export type BluetoothStatus = {
   available: boolean;
   pairing: boolean;
-  state: "disconnected" | "connecting" | "reconnecting" | "connected";
+  state: "disconnected" | "disconnecting" | "connecting" | "reconnecting" | "connected";
   address: string | null;
   peers: string[];
   names: Record<string, string>;
@@ -28,6 +28,7 @@ function isBluetoothStatus(value: unknown): value is BluetoothStatus {
     typeof value.pairing === "boolean" &&
     "state" in value &&
     (value.state === "disconnected" ||
+      value.state === "disconnecting" ||
       value.state === "connecting" ||
       value.state === "reconnecting" ||
       value.state === "connected") &&
@@ -52,10 +53,14 @@ export function deviceName(status: BluetoothStatus | null, address: string): str
 }
 
 export function connectionDetail(status: BluetoothStatus): string {
+  if (status.state === "disconnecting")
+    return "Disconnecting. Please wait for the previous connection to finish closing.";
   if (status.state === "reconnecting")
     return status.address ? `Reconnecting to ${status.address}` : "Reconnecting";
   return `${status.pairing ? "Pairing, " : ""}${status.state}${status.address ? `: ${status.address}` : ""}`;
 }
+
+export class BluetoothDisconnectingError extends Error {}
 
 export async function requestStatus(init?: RequestInit): Promise<BluetoothStatus> {
   let response: Response;
@@ -85,6 +90,15 @@ export async function requestStatus(init?: RequestInit): Promise<BluetoothStatus
       typeof body === "object" && body !== null && "error" in body && typeof body.error === "string"
         ? body.error
         : `Bluetooth request failed (HTTP ${response.status})`;
+    if (
+      response.status === 409 &&
+      typeof body === "object" &&
+      body !== null &&
+      "code" in body &&
+      body.code === "disconnecting"
+    ) {
+      throw new BluetoothDisconnectingError(message);
+    }
     throw new Error(message);
   }
   if (!isBluetoothStatus(body)) throw new Error("Invalid Bluetooth status response");

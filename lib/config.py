@@ -107,6 +107,8 @@ class Config:
     macros_dir: str = "macros"
     presets_dir: str = "presets"
     pairing_dir: str | None = None
+    debug_enabled: bool = False
+    bumble_logging: bool = True
     nolog: bool = False
     last_camera_device_id: str = ""
     tick_rate_hz: int = 132

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
+import sys
 from pathlib import Path
 
 from starlette.applications import Starlette
@@ -16,7 +17,7 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from app.bluetooth import BluetoothService
+from app.bluetooth import BluetoothDisconnectingError, BluetoothService
 from app.input.manager import InputManager, MacroActiveError, state_from_event
 from lib.colours import normalize_controller_colours
 from lib.config import ConfigStore
@@ -249,6 +250,8 @@ async def bluetooth_control(request: Request) -> Response:
             for index, address in enumerate(status["peers"], 1)
         }
         return JSONResponse(status)
+    except BluetoothDisconnectingError as e:
+        return JSONResponse({"error": str(e), "code": "disconnecting"}, status_code=409)
     except (TypeError, ValueError) as e:
         return _error(str(e), status=409)
     except Exception as e:
@@ -491,6 +494,116 @@ async def preset_activate(request: Request) -> Response:
     return JSONResponse(payload)
 
 
+DEBUG_RESTART_KEYS = {
+    "nolog",
+    "bumble_logging",
+    "ws_auth_required",
+    "macro_rate_hz",
+    "tick_rate_hz",
+    "bt_address",
+}
+
+
+def validate_debug_changes(body):
+    for key in ("debug_enabled", "nolog", "bumble_logging", "ws_auth_required"):
+        if key in body and not isinstance(body[key], bool):
+            raise ValueError(f"{key} must be a boolean")
+    for key in ("macro_rate_hz", "tick_rate_hz"):
+        if key in body and (type(body[key]) is not int or not 1 <= body[key] <= 1000):
+            raise ValueError(f"{key} must be an integer between 1 and 1000")
+    if "bt_address" in body:
+        raise ValueError("Use Regenerate BD address to change the Bluetooth identity")
+
+
+async def debug_status(request: Request) -> Response:
+    service = request.app.state.bluetooth
+    state = service.state
+    bluetooth = await service.status()
+    names = request.app.state.config_store.config.switch_device_names
+    addresses = set(bluetooth["peers"]) | set(names)
+    if bluetooth["address"]:
+        addresses.add(bluetooth["address"])
+    return JSONResponse(
+        {
+            "bd_address": str(service.device.public_address)
+            if service.device
+            else None,
+            "bluetooth": bluetooth,
+            "switch_devices": [
+                {
+                    "address": address,
+                    "name": names.get(address.upper())
+                    or (
+                        f"Switch Device {bluetooth['peers'].index(address) + 1}"
+                        if address in bluetooth["peers"]
+                        else "Switch Device"
+                    ),
+                }
+                for address in sorted(addresses)
+            ],
+            "acl_connected": service.connection is not None,
+            "hid_control_ready": bool(state and state.ctrl_ready.is_set()),
+            "hid_interrupt_ready": bool(state and state.intr_ready.is_set()),
+            "session_stopped": bool(state and state.session_stop.is_set()),
+            "input": request.app.state.manager.status(),
+            "controllers": request.app.state.manager.controllers_payload(),
+            "ws_auth_required": request.app.state.ws_token is not None,
+            "address_regeneration_available": sys.platform == "win32"
+            and service.device is not None,
+            "restart_available": request.app.state.restart_callback is not None,
+        }
+    )
+
+
+async def debug_apply(request: Request) -> Response:
+    store = request.app.state.config_store
+    if request.headers.get("content-type", "").split(";", 1)[0] != "application/json":
+        return _error("Expected application/json", status=415)
+    if not store.config.debug_enabled:
+        return _error("Debug settings are disabled", status=403)
+    try:
+        body = await request.json()
+        if not isinstance(body, dict) or set(body) - {"changes", "regenerate_address"}:
+            raise ValueError("Invalid debug settings request")
+        changes = body.get("changes", {})
+        if not isinstance(changes, dict) or set(changes) - (
+            DEBUG_RESTART_KEYS - {"bt_address"}
+        ):
+            raise ValueError("Unknown debug setting")
+        validate_debug_changes(changes)
+        regenerate = body.get("regenerate_address", False)
+        if not isinstance(regenerate, bool):
+            raise TypeError("regenerate_address must be a boolean")
+        if changes.get("ws_auth_required") and not store.config.webview_enabled:
+            raise ValueError("WebSocket authentication requires desktop mode")
+        if regenerate:
+            if sys.platform != "win32":
+                raise ValueError("This platform uses the adapter's hardware address")
+            changes["bt_address"] = "98:B6:E9:" + ":".join(
+                f"{b:02X}" for b in secrets.token_bytes(3)
+            )
+    except (ValueError, TypeError) as error:
+        return _error(str(error))
+    if (
+        request.app.state.restart_callback is None
+        or request.app.state.shutdown_event is None
+    ):
+        return _error("Application restart is unavailable", status=409)
+    if regenerate:
+        try:
+            await request.app.state.bluetooth.forget_all()
+        except (OSError, RuntimeError, TimeoutError) as error:
+            return _error(f"Could not clear saved Switch devices: {error}", status=503)
+        changes["switch_device_names"] = {}
+    store.update(changes)
+
+    async def restart():
+        request.app.state.restart_callback()
+        request.app.state.shutdown_event.set()
+
+    return JSONResponse({"restarting": True}, background=BackgroundTask(restart))
+
+
 async def config_get(request: Request) -> Response:
     store: ConfigStore = request.app.state.config_store
     return JSONResponse(store.snapshot())
@@ -505,6 +618,17 @@ async def config_patch(request: Request) -> Response:
         return _error("invalid JSON body")
     if not isinstance(body, dict):
         return _error("expected a JSON object")
+    try:
+        validate_debug_changes(body)
+    except ValueError as error:
+        return _error(str(error))
+    if any(
+        key in body and body[key] != store.snapshot().get(key)
+        for key in DEBUG_RESTART_KEYS
+    ):
+        return _error(
+            "These settings require Save and restart in the Debug tab", status=409
+        )
     if "vibration_enabled" in body and not isinstance(body["vibration_enabled"], bool):
         return _error("vibration_enabled must be a boolean")
     if "controller_colours" in body:
@@ -646,6 +770,7 @@ def build_app(
     usb_driver_error: bool = False,
     shutdown_event: asyncio.Event | None = None,
     ws_token: str | None = None,
+    restart_callback=None,
 ) -> Starlette:
     """Construct the Starlette application.
 
@@ -658,6 +783,8 @@ def build_app(
         macro_store = JsonDocStore(manager.macros_dir)
 
     routes = [
+        Route("/api/debug", debug_status, methods=["GET"]),
+        Route("/api/debug", debug_apply, methods=["POST"]),
         Route("/api/startup", startup_status, methods=["GET"]),
         Route("/api/application/close", close_application, methods=["POST"]),
         Route(
@@ -709,6 +836,7 @@ def build_app(
     app.state.usb_driver_error = usb_driver_error
     app.state.bluetooth_error = None
     app.state.transport_pending = False
+    app.state.restart_callback = restart_callback
     app.state.shutdown_event = shutdown_event
     app.state.ws_token = (
         (ws_token or secrets.token_urlsafe(32))

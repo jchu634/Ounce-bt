@@ -132,3 +132,31 @@ export const renameMacro = (name: string, newName: string) =>
     method: "PATCH",
     body: JSON.stringify({ name: newName }),
   });
+
+export const getDebugStatus = () =>
+  requestJson<
+    {
+      bd_address: string | null;
+      bluetooth: { state: string; pairing: boolean };
+      acl_connected: boolean;
+      hid_control_ready: boolean;
+      hid_interrupt_ready: boolean;
+      switch_devices: { address: string; name: string }[];
+      address_regeneration_available: boolean;
+      restart_available: boolean;
+    } & Record<string, unknown>
+  >("/api/debug");
+
+export type DebugChanges = {
+  nolog: boolean;
+  bumble_logging: boolean;
+  ws_auth_required: boolean;
+  macro_rate_hz: number;
+  tick_rate_hz: number;
+};
+
+export const saveDebugAndRestart = (changes: DebugChanges, regenerateAddress: boolean) =>
+  requestJson<{ restarting: boolean }>("/api/debug", {
+    method: "POST",
+    body: JSON.stringify({ changes, regenerate_address: regenerateAddress }),
+  });

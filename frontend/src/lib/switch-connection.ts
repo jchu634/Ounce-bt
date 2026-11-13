@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "@/src/components/ui/toast";
-import { requestStatus, type BluetoothStatus } from "@/src/lib/bluetooth";
+import {
+  BluetoothDisconnectingError,
+  requestStatus,
+  type BluetoothStatus,
+} from "@/src/lib/bluetooth";
 
 export function useSwitchConnection() {
   const [status, setStatus] = useState<BluetoothStatus | null>(null);
@@ -63,11 +67,14 @@ export function useSwitchConnection() {
         }),
       );
     } catch (cause) {
+      const disconnecting = cause instanceof BluetoothDisconnectingError;
       toast.add({
-        type: "error",
+        type: disconnecting ? "warning" : "error",
         priority: "high",
-        title: "Connection error",
-        description: `${cause instanceof Error ? cause.message : "Bluetooth operation failed"} Try connecting again. If the issue persists, restart the app.`,
+        title: disconnecting ? "Please wait before reconnecting" : "Connection error",
+        description: disconnecting
+          ? cause.message
+          : `${cause instanceof Error ? cause.message : "Bluetooth operation failed"} Try connecting again. If the issue persists, restart the app.`,
         timeout: 5000,
       });
     } finally {

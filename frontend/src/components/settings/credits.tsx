@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import {
   Accordion,
   AccordionContent,
@@ -184,11 +185,23 @@ const dependencyGroups = [
   },
 ];
 
-export default function Credits() {
+export default function Credits({ onToggleDebug }: { onToggleDebug?: () => void }) {
+  const presses = useRef(0);
   return (
     <div className="space-y-4">
       <p>
-        Ounce-bt was developed by{" "}
+        <span
+          onClick={() => {
+            presses.current += 1;
+            if (presses.current === 10) {
+              presses.current = 0;
+              onToggleDebug?.();
+            }
+          }}
+        >
+          Ounce-bt
+        </span>{" "}
+        was developed by{" "}
         <a
           className="text-blue-500"
           target="_blank"
