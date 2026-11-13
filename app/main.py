@@ -51,8 +51,11 @@ TICK_RATE_HZ = 132
 logger = logging.getLogger("switch_pair")
 
 
-def setup_logging():
+def setup_logging(bumble_logging: bool = True):
     bumble.logging.setup_basic_logging("info")
+    logging.getLogger("bumble").setLevel(
+        logging.INFO if bumble_logging else logging.CRITICAL + 1
+    )
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
 
@@ -160,6 +163,7 @@ async def run_mainloop(
     rumble_enabled: bool = True,
     controller_service: ControllerService | None = None,
     vibration_allowed: Callable[[], bool] | None = None,
+    tick_rate_hz: int = TICK_RATE_HZ,
 ):
     """Steady-state loop: apply the latest controller input, process one
     Switch PDU per tick, forward rumble, and emit reports.
@@ -221,7 +225,7 @@ async def run_mainloop(
                 if report[3:] != cached:
                     interrupt_channel.send_pdu(report)
                     cached = report[3:]
-                elif tick >= TICK_RATE_HZ:
+                elif tick >= tick_rate_hz:
                     interrupt_channel.send_pdu(report)
                     tick = 0
             except Exception as e:
@@ -234,7 +238,7 @@ async def run_mainloop(
             duration_end = perf_counter()
             elapsed = duration_end - duration_start
             duration_start = duration_end
-            sleep_time = max(0.0, 1 / TICK_RATE_HZ - elapsed)
+            sleep_time = max(0.0, 1 / tick_rate_hz - elapsed)
             await asyncio.sleep(sleep_time)
 
     finally:
@@ -473,14 +477,20 @@ def load_options():
 
 
 async def main(
-    config=None, args=None, *, ws_token=None, ready=None, shutdown_event=None
+    config=None,
+    args=None,
+    *,
+    ws_token=None,
+    ready=None,
+    shutdown_event=None,
+    restart_callback=None,
 ):
     if config is None:
         config, args = load_options()
     if config.nolog or args.nolog:
         logging.disable(logging.CRITICAL)
     else:
-        setup_logging()
+        setup_logging(config.bumble_logging)
     config_store = ConfigStore(config)
     logger.info(f"Config path: {config_path()}")
     logger.info(f"Config: {config_store.snapshot()}")
@@ -517,6 +527,7 @@ async def main(
             missing_firmware=str(firmware_root / firmware),
             shutdown_event=stop_event,
             ws_token=ws_token,
+            restart_callback=restart_callback,
         )
         try:
             await serve_web(
@@ -593,6 +604,7 @@ async def main(
             bluetooth=bluetooth,
             shutdown_event=stop_event,
             ws_token=ws_token,
+            restart_callback=restart_callback,
         )
         app.state.transport_pending = True
         web_task = asyncio.create_task(
@@ -783,6 +795,7 @@ async def main(
                         state.session_stop,
                         command_queue,
                         controller_service=controller_service,
+                        tick_rate_hz=config.tick_rate_hz,
                         vibration_allowed=lambda: (
                             config_store.config.vibration_enabled
                             and (manager.current_preset or preset).rumble_enabled
@@ -855,4 +868,11 @@ def launch():
     from app.desktop import run_application
 
     config, args = load_options()
-    run_application(config, args, main)
+    if run_application(config, args, main):
+        import os
+
+        packaged = "__compiled__" in globals() or getattr(sys, "frozen", False)
+        argv = (
+            [sys.executable, *sys.argv[1:]] if packaged else [sys.executable, *sys.argv]
+        )
+        os.execv(sys.executable, argv)

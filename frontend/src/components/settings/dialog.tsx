@@ -18,7 +18,7 @@ import {
 } from "@/src/stores/general-settings";
 import { cn } from "cn";
 import { GearSixIcon } from "@phosphor-icons/react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Effect } from "effect";
 import { useCaptureControls, useCaptureInput } from "@/src/hooks/use-capture";
 
@@ -34,7 +34,9 @@ import { CaptureDeviceSettings } from "@/src/components/settings/capture-device-
 import { AppearanceSettings } from "@/src/components/settings/appearance-settings";
 import Credits from "@/src/components/settings/credits";
 
-import { listPresets } from "@/src/lib/api";
+import { DebugSettings } from "@/src/components/settings/debug-settings";
+
+import { getConfig, patchConfig, listPresets } from "@/src/lib/api";
 import { errorMessage } from "@/src/lib/errors";
 import type { PresetInfo } from "@/src/lib/types";
 
@@ -43,10 +45,48 @@ const SETTINGS_DESCRIPTIONS: Record<string, string> = {
   controller: "Choose a controller and manage its mapping presets.",
   appearance: "Choose how your controller appears on the Switch.",
   credits: "Acknowledgements and Licenses",
+  debug: "Inspect connection states and change debug settings.",
 };
 
 export function SettingsDialog({ className }: { className?: string }) {
   const [open, setOpen] = useState(false);
+  const [debugEnabled, setDebugEnabled] = useState(false);
+  const [debugError, setDebugError] = useState<string | null>(null);
+  const debugTogglePending = useRef(false);
+  const [debugState, setDebugState] = useState({ dirty: false, saving: false });
+  const [debugSession, setDebugSession] = useState(0);
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void Effect.runPromise(getConfig())
+      .then((config) => {
+        if (!cancelled) setDebugEnabled(config.debug_enabled === true);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setDebugError(errorMessage(error));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  async function toggleDebug() {
+    if (debugTogglePending.current) return;
+    debugTogglePending.current = true;
+    try {
+      const result = await Effect.runPromise(patchConfig({ debug_enabled: !debugEnabled }));
+      setDebugEnabled(result.config.debug_enabled === true);
+      if (result.config.debug_enabled !== true) {
+        setCurrentTab("credits");
+        setDebugState({ dirty: false, saving: false });
+      }
+      setDebugError(null);
+    } catch (error) {
+      setDebugError(errorMessage(error));
+    } finally {
+      debugTogglePending.current = false;
+    }
+  }
   const [discardPromptOpen, setDiscardPromptOpen] = useState(false);
   const [currentTab, setCurrentTab] = useState("general");
   const [presets, setPresets] = useState<PresetInfo[]>([]);
@@ -98,11 +138,12 @@ export function SettingsDialog({ className }: { className?: string }) {
   }
 
   function requestNavigation(navigate: () => void, closing = false) {
-    if (appearanceState.saving) return;
+    if (appearanceState.saving || debugState.saving) return;
     const continueNavigation = () => {
       if (
         (currentTab === "appearance" && appearanceState.dirty) ||
-        (closing && (hasUnsavedInputChanges || appearanceState.dirty))
+        (currentTab === "debug" && debugState.dirty) ||
+        (closing && (hasUnsavedInputChanges || appearanceState.dirty || debugState.dirty))
       ) {
         pendingDiscard.current = navigate;
         setDiscardPromptOpen(true);
@@ -172,6 +213,7 @@ export function SettingsDialog({ className }: { className?: string }) {
               <TabsTrigger value="controller">Controller</TabsTrigger>
               <TabsTrigger value="appearance">Appearance</TabsTrigger>
               <TabsTrigger value="credits">Credits</TabsTrigger>
+              {debugEnabled && <TabsTrigger value="debug">Debug</TabsTrigger>}
             </TabsList>
             <TabsContent
               className="app-scrollbar min-h-0 min-w-0 space-y-4 overflow-x-hidden overflow-y-auto p-2"
@@ -287,8 +329,23 @@ export function SettingsDialog({ className }: { className?: string }) {
               className="app-scrollbar min-h-0 min-w-0 overflow-y-auto p-2"
               value="credits"
             >
-              <Credits />
+              <Credits onToggleDebug={() => void toggleDebug()} />
+              {debugError && <p role="alert">{debugError}</p>}
             </TabsContent>
+            {debugEnabled && (
+              <TabsContent
+                value="debug"
+                keepMounted
+                className="app-scrollbar min-h-0 min-w-0 overflow-y-auto p-2"
+              >
+                <DebugSettings
+                  key={debugSession}
+                  active={open && currentTab === "debug"}
+                  onStateChange={setDebugState}
+                  onHideDebug={() => requestNavigation(() => void toggleDebug())}
+                />
+              </TabsContent>
+            )}
           </Tabs>
           <p className="shrink-0 text-right text-xs font-semibold text-muted-foreground">
             v{import.meta.env.VITE_APP_VERSION}
@@ -327,6 +384,8 @@ export function SettingsDialog({ className }: { className?: string }) {
                 setDiscardPromptOpen(false);
                 setAppearanceState({ dirty: false, saving: false });
                 setAppearanceSession((session) => session + 1);
+                setDebugState({ dirty: false, saving: false });
+                setDebugSession((session) => session + 1);
                 navigate?.();
               }}
             >

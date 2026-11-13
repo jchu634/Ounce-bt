@@ -83,7 +83,9 @@ def test_startup_pairing_requires_ui_action_unless_headless(
             "sys",
             SimpleNamespace(platform="win32" if realtek else "linux"),
         )
-        monkeypatch.setattr(application, "setup_logging", lambda: None)
+        monkeypatch.setattr(
+            application, "setup_logging", lambda _bumble_logging=True: None
+        )
         monkeypatch.setattr(application, "missing_firmware", lambda _: None)
         prepare = Mock()
         monkeypatch.setattr(application, "prepare_bluetooth", prepare)
@@ -526,5 +528,26 @@ def test_forget_persists_across_key_store_reload(tmp_path):
         await service.forget(ADDRESS)
         reloaded = JsonKeyStore(namespace="controller", filename=filename)
         assert await reloaded.get(ADDRESS) is None
+
+    asyncio.run(scenario())
+
+
+def test_forget_all_disconnects_before_deleting_pairing_keys():
+    async def scenario():
+        service, device, connection = await setup_service()
+        service._on_connection(connection)
+        service.connected = True
+        original_delete = device.keystore.delete_all
+
+        async def delete_after_disconnect():
+            assert service.connection is None
+            assert not service.connected
+            assert not service.pairing
+            await original_delete()
+
+        device.keystore.delete_all = delete_after_disconnect
+        await service.forget_all()
+        connection.disconnect.assert_awaited_once()
+        assert await device.keystore.get_all() == []
 
     asyncio.run(scenario())

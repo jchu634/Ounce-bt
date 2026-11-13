@@ -162,6 +162,17 @@ class BluetoothService:
                 await self._disconnect()
             await self.device.keystore.delete(address)
 
+    async def forget_all(self):
+        """Disconnect before removing every bond for the current controller identity."""
+        async with self._lock:
+            if self.device is None:
+                raise RuntimeError(
+                    "Bluetooth must be ready before regenerating its address"
+                )
+            await self._disconnect()
+            if self.device.keystore is not None:
+                await self.device.keystore.delete_all()
+
     async def reconnect(self, address):
         self._check_disconnecting()
         async with self._lock:
