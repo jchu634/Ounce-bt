@@ -13,6 +13,7 @@ from starlette.testclient import TestClient
 
 import lib.input.presets as presets_module
 from app.input.manager import InputManager, MacroActiveError
+from app.main import SessionState
 from app.server import build_app
 from lib.config import Config, ConfigStore
 from lib.server.files import JsonDocStore
@@ -140,6 +141,22 @@ def test_bluetooth_disconnect_and_delete_routes(fx):
         assert c.request("DELETE", "/api/bluetooth", json={}).status_code == 400
         service.forget.side_effect = ValueError("Select a previously paired device")
         assert c.request("DELETE", "/api/bluetooth", json={"address": "unknown"}).status_code == 409
+
+
+def test_bluetooth_cleanup_is_reported_as_a_retryable_conflict(fx):
+    with fx.client() as c:
+        service = c.app.state.bluetooth
+        service.device = object()
+        service.state = SessionState()
+        service.state.session_stop.set()
+        for method, body in (
+            ("POST", {"address": "12:34:56:78:90:AB/P"}),
+            ("PUT", {"pairing": True}),
+        ):
+            response = c.request(method, "/api/bluetooth", json=body)
+            assert response.status_code == 409
+            assert response.json()["code"] == "disconnecting"
+            assert "wait a moment" in response.json()["error"]
 
 
 def test_macro_put_validation(fx):

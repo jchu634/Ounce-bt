@@ -16,7 +16,7 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from app.bluetooth import BluetoothService
+from app.bluetooth import BluetoothDisconnectingError, BluetoothService
 from app.input.manager import InputManager, MacroActiveError, state_from_event
 from lib.colours import normalize_controller_colours
 from lib.config import ConfigStore
@@ -249,6 +249,8 @@ async def bluetooth_control(request: Request) -> Response:
             for index, address in enumerate(status["peers"], 1)
         }
         return JSONResponse(status)
+    except BluetoothDisconnectingError as e:
+        return JSONResponse({"error": str(e), "code": "disconnecting"}, status_code=409)
     except (TypeError, ValueError) as e:
         return _error(str(e), status=409)
     except Exception as e:
