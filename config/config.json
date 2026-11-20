@@ -1,4 +1,6 @@
 {
+  "adapter_address_seed": "",
+  "adapter_addresses": {},
   "adapter_colours": {
     "usb:0bda:8771/00e04c239987": {
       "body": "#000000",
@@ -50,18 +52,104 @@
     }
   },
   "adapter_presets": {},
+  "adapter_profiles": [
+    {
+      "address": "98:B6:E9:19:13:08",
+      "colours": {
+        "body": "#47002C",
+        "buttons": "#8A8E3D",
+        "left_grip": "#4437B1",
+        "right_grip": "#78B119"
+      },
+      "controller_guid": "0300bb977e0500000920000000026803",
+      "legacy_keystore": true,
+      "preset": ""
+    },
+    {
+      "address": "02:E4:1B:45:4C:2C",
+      "colours": {
+        "body": "#000000",
+        "buttons": "#FFFFFF",
+        "left_grip": "#FFFFFF",
+        "right_grip": "#FF0FE3"
+      },
+      "controller_guid": "",
+      "legacy_keystore": false,
+      "preset": ""
+    },
+    {
+      "address": "02:A5:CB:60:72:5B",
+      "colours": {
+        "body": "#000000",
+        "buttons": "#FFFFFF",
+        "left_grip": "#002FFF",
+        "right_grip": "#11FF21"
+      },
+      "controller_guid": "",
+      "legacy_keystore": false,
+      "preset": ""
+    },
+    {
+      "address": "02:0D:49:8A:6D:B1",
+      "colours": {
+        "body": "#000000",
+        "buttons": "#FFFFFF",
+        "left_grip": "#7615CF",
+        "right_grip": "#ECAEAE"
+      },
+      "controller_guid": "",
+      "legacy_keystore": false,
+      "preset": ""
+    },
+    {
+      "address": "02:E9:A1:B1:CA:FB",
+      "colours": {
+        "body": "#000000",
+        "buttons": "#676767",
+        "left_grip": "#D12121",
+        "right_grip": "#CE0D0D"
+      },
+      "controller_guid": "",
+      "legacy_keystore": false,
+      "preset": ""
+    },
+    {
+      "address": "02:40:ED:27:F5:03",
+      "colours": {
+        "body": "#000000",
+        "buttons": "#FFFFFF",
+        "left_grip": "#4EEC15",
+        "right_grip": "#11FF21"
+      },
+      "controller_guid": "",
+      "legacy_keystore": false,
+      "preset": ""
+    },
+    {
+      "address": "02:47:32:35:38:7C",
+      "colours": {
+        "body": "#000000",
+        "buttons": "#FFFFFF",
+        "left_grip": "#6DE715",
+        "right_grip": "#DE0E72"
+      },
+      "controller_guid": "",
+      "legacy_keystore": false,
+      "preset": ""
+    }
+  ],
   "bt_address": "98:B6:E9:19:13:08",
   "bumble_logging": true,
   "controller_colours": {
-    "body": "#000000",
-    "buttons": "#828282",
-    "left_grip": "#7615CF",
-    "right_grip": "#00E7A6"
+    "body": "#47002C",
+    "buttons": "#8A8E3D",
+    "left_grip": "#4437B1",
+    "right_grip": "#78B119"
   },
   "controller_guid": "",
   "controller_presets": {},
   "controller_vibration": {},
-  "debug_enabled": false,
+  "debug_enabled": true,
   "device_config": "pro_controller.json",
   "firmware_dir": null,
   "input_specs": [
