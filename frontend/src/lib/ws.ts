@@ -1,4 +1,4 @@
-import type { ControllersFrame, ServerFrame, StatusFrame, WsInbound } from "./types";
+import type { AdapterSelection, ControllersFrame, ServerFrame, StatusFrame, WsInbound } from "./types";
 import { websocketProtocols } from "./desktop";
 
 export type ConnectionState = "connecting" | "open" | "closed";
@@ -23,6 +23,7 @@ class ControllerSocket {
   private stateHandlers = new Set<(state: ConnectionState) => void>();
   private lastStatus: StatusFrame | null = null;
   private lastControllers: ControllersFrame | null = null;
+  private adapterSelection: AdapterSelection | null = null;
 
   start(): void {
     if (this.started) return;
@@ -44,6 +45,7 @@ class ControllerSocket {
     ws.onopen = () => {
       this.attempts = 0;
       this.setState("open");
+      if (this.adapterSelection) this.rawSend(this.adapterSelection);
       const pending = this.queue.splice(0, this.queue.length);
       for (const msg of pending) this.rawSend(msg);
     };
@@ -113,6 +115,9 @@ class ControllerSocket {
     if (this.ws?.readyState !== WebSocket.OPEN) return false;
     try {
       this.ws.send(JSON.stringify(msg));
+      if (msg.type === "select_adapter" || msg.type === "select_adapters") {
+        this.adapterSelection = msg;
+      }
       return true;
     } catch {
       return false;

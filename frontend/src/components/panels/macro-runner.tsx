@@ -34,7 +34,8 @@ export function MacroRunPanel({
   fillHeight?: boolean;
 }) {
   const [search, setSearch] = useState("");
-  const { macro, macroActive, isPaused, startByName, pause, resume, cancel } = useMacroRunner();
+  const { activeMacros, canStart, canPause, canResume, startByName, pause, resume, cancel } =
+    useMacroRunner();
   const { lastError, clearError } = useSocket();
 
   const wsError = lastError !== null && lastError.message !== "" ? lastError : null;
@@ -101,16 +102,22 @@ export function MacroRunPanel({
               className="h-8 w-full rounded-md border border-input bg-background pr-3 pl-8 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
             />
           </Label>
-          {isPaused ? (
-            <Button size="sm" variant="outline" onClick={resume}>
-              <PlayIcon size={14} weight="fill" /> Resume
-            </Button>
-          ) : (
-            <Button size="sm" variant="outline" onClick={pause} disabled={!macroActive}>
+          {(canPause || !canResume) && (
+            <Button size="sm" variant="outline" onClick={pause} disabled={!canPause}>
               <PauseIcon size={14} weight="fill" /> Pause
             </Button>
           )}
-          <Button size="sm" variant="destructive" onClick={cancel} disabled={!macroActive}>
+          {canResume && (
+            <Button size="sm" variant="outline" onClick={resume}>
+              <PlayIcon size={14} weight="fill" /> Resume
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={cancel}
+            disabled={activeMacros.length === 0}
+          >
             <StopIcon size={14} weight="fill" /> Stop
           </Button>
         </div>
@@ -143,7 +150,8 @@ export function MacroRunPanel({
             )}
           >
             {filteredNames.map((name) => {
-              const isActive = macroActive && macro?.name === name;
+              const matchingRuns = activeMacros.filter((macro) => macro.name === name);
+              const isActive = matchingRuns.length > 0;
               return (
                 <li
                   key={name}
@@ -175,19 +183,19 @@ export function MacroRunPanel({
                   >
                     <PencilSimpleIcon size={12} /> Edit
                   </Button>
-                  {isActive && isPaused && (
+                  {isActive && matchingRuns.every(({ state }) => state === "paused") && (
                     <span className="text-xs text-muted-foreground">paused</span>
                   )}
                   <Button
                     size="xs"
                     className="relative z-10"
                     variant={isActive ? "secondary" : "default"}
-                    disabled={macroActive && !isActive && !isPaused}
+                    disabled={!canStart}
                     onClick={() => startByName(name)}
-                    title={isActive ? "Restart" : "Run"}
+                    title="Run"
                   >
                     <PlayIcon size={12} weight="fill" />
-                    {isActive ? "Restart" : "Run"}
+                    Run
                   </Button>
                 </li>
               );

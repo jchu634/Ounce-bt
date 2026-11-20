@@ -3,8 +3,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from lib.input.presets import load_preset
 from app.input.pygame_source import PygameInputThread, XboxGamepad
+from lib.input.presets import load_preset
 from lib.input.state import NEUTRAL, Button, ControllerState
 
 
@@ -92,6 +92,7 @@ def test_builtin_xbox_uses_sdl_mapping(monkeypatch, driver, axes, buttons, expec
         raw[index] = value
     stick = Mock(wraps=XboxJoystick(raw, (0, 0)))
     stick.get_name = Mock(return_value="Xbox")
+    stick.get_guid = Mock(return_value="0300938d5e040000ff02000000007200")
     stick.init = Mock()
     stick.quit = Mock()
 

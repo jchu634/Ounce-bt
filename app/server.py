@@ -17,16 +17,23 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from app.bluetooth import BluetoothDisconnectingError, BluetoothService
+from app.bluetooth import (
+    AdapterSession,
+    BluetoothDisconnectingError,
+    BluetoothPageTimeoutError,
+    BluetoothService,
+)
+from app.input.controller_service import ControllerRoute
 from app.input.manager import InputManager, MacroActiveError, state_from_event
 from lib.colours import normalize_controller_colours
-from lib.config import ConfigStore, normalize_controller_vibration
+from lib.config import ConfigStore, new_profile_address, normalize_controller_vibration
 from lib.device_names import normalize_device_names, validate_device_name
 from lib.input.macros import MacroValidationError, validate_macro
 from lib.input.presets import (
     PresetValidationError,
     delete_preset,
     list_preset_infos,
+    load_preset,
     preset_name_is_builtin,
     read_preset_text,
     save_preset_text,
@@ -39,16 +46,19 @@ from lib.server.files import (
     parse_json_text,
 )
 from lib.server.protocol import (
+    EventMessage,
+    InboundMessage,
     MacroCancel,
     MacroPause,
     MacroResume,
     MacroStartByName,
     MacroStartInline,
     ProtocolError,
+    SelectAdapter,
+    StateMessage,
     error_frame,
     frame_text,
     parse_message,
-    status_frame,
 )
 
 logger = logging.getLogger("switch_pair")
@@ -71,12 +81,34 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
         ):
             await websocket.close(code=1008)
             return
+    primary: InputManager = websocket.app.state.manager
+    sessions: dict[str, AdapterSession] = websocket.app.state.adapter_sessions
+    if websocket.app.state.startup_phase is not None and not sessions:
+        await websocket.close(code=1013)
+        return
     await websocket.accept(subprotocol="ounce-bt" if token is not None else None)
-    manager: InputManager = websocket.app.state.manager
-    # Guarantee thread-safe broadcasts even when the manager was built
-    # without a bound loop (tests / library embedding).
-    manager.ensure_loop(asyncio.get_running_loop())
-    status_q = manager.subscribe()
+    managers = {"primary": primary}
+    managers.update({
+        slot.id: slot.input_manager for slot in sessions.values() if slot.input_manager
+    })
+    selected = ("primary",)
+    manual_targets: set[InputManager] = set()
+
+    def selection_status() -> dict:
+        if len(selected) == 1:
+            return managers[selected[0]].status_payload()
+        statuses = {adapter_id: managers[adapter_id].status() for adapter_id in selected}
+        return {
+            "type": "status",
+            "adapter_id": selected[0],
+            **statuses[selected[0]],
+            "adapter_statuses": statuses,
+        }
+
+    status_q: asyncio.Queue = asyncio.Queue()
+    for source in managers.values():
+        source.ensure_loop(asyncio.get_running_loop())
+        source.subscribe(status_q)
 
     # Exactly one outstanding websocket.receive() at any time (multiple
     # concurrent receive() calls race disconnects and raise).
@@ -86,6 +118,8 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
         try:
             while True:
                 event = await websocket.receive()
+                if event["type"] == "websocket.disconnect":
+                    return
                 text = event.get("text") or ""
                 if text:
                     incoming.put_nowait(text)
@@ -95,22 +129,14 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
             incoming.put_nowait(None)  # disconnect sentinel
 
     reader_task = asyncio.create_task(reader())
-
-    initial = manager.status()
-    try:
-        await websocket.send_text(status_frame(initial["mode"], initial["macro"]))
-        await websocket.send_text(frame_text(manager.controllers_payload()))
-    except WebSocketDisconnect:
-        reader_task.cancel()
-        await asyncio.gather(reader_task, return_exceptions=True)
-        manager.unsubscribe(status_q)
-        return
+    incoming_task = asyncio.create_task(incoming.get())
+    status_task = asyncio.create_task(status_q.get())
 
     try:
+        await websocket.send_text(frame_text(selection_status()))
+        await websocket.send_text(frame_text(primary.controllers_payload()))
         # Persistent get-tasks, renewed immediately after consumption so
         # no frame is ever stranded in an abandoned task.
-        incoming_task = asyncio.create_task(incoming.get())
-        status_task = asyncio.create_task(status_q.get())
         while True:
             done, _pending = await asyncio.wait(
                 {incoming_task, status_task},
@@ -123,7 +149,39 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
                     break
                 incoming_task = asyncio.create_task(incoming.get())
                 try:
-                    await _dispatch_ws(text, websocket, manager)
+                    message = parse_message(text)
+                    if isinstance(message, SelectAdapter):
+                        if any(adapter_id not in managers for adapter_id in message.adapter_ids):
+                            raise ProtocolError("Unknown adapter")
+                        if set(selected) != set(message.adapter_ids):
+                            for manager in manual_targets:
+                                manager.release_manual_input()
+                            manual_targets.clear()
+                            selected = message.adapter_ids
+                        await websocket.send_text(frame_text(selection_status()))
+                    elif isinstance(message, (EventMessage, StateMessage)):
+                        state = (
+                            state_from_event(message.action)
+                            if isinstance(message, EventMessage) else message.to_state()
+                        )
+                        accepted = False
+                        for adapter_id in selected:
+                            manager = managers[adapter_id]
+                            if manager.submit_state(state):
+                                accepted = True
+                                manual_targets.add(manager)
+                        if not accepted:
+                            await websocket.send_text(
+                                error_frame("manual input disabled while macro running")
+                            )
+                    else:
+                        error = None
+                        for adapter_id in selected:
+                            failure = _dispatch_macro(message, managers[adapter_id])
+                            if failure is not None:
+                                error = failure
+                        if error is not None:
+                            await websocket.send_text(error)
                 except ProtocolError as e:
                     await websocket.send_text(error_frame(str(e)))
                 except WebSocketDisconnect:
@@ -140,6 +198,11 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
             if status_task in done:
                 payload = status_task.result()
                 status_task = asyncio.create_task(status_q.get())
+                if payload["type"] == "status":
+                    if payload.get("adapter_id", "primary") not in selected:
+                        continue
+                    if len(selected) > 1:
+                        payload = selection_status()
                 try:
                     await websocket.send_text(frame_text(payload))
                 except WebSocketDisconnect:
@@ -153,58 +216,40 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
         # their own (reader swallows its own disconnect errors).
         for task in (incoming_task, status_task, reader_task):
             task.cancel()
-        manager.unsubscribe(status_q)
+        for source in managers.values():
+            source.unsubscribe(status_q)
+        for manager in manual_targets:
+            if manager.adapter_id is not None:
+                manager.release_manual_input()
 
 
-async def _dispatch_ws(text: str, websocket: WebSocket, manager: InputManager) -> None:
-    msg = parse_message(text)
-
-    if hasattr(msg, "action"):  # EventMessage
-        accepted = manager.submit_state(state_from_event(msg.action))
-        if not accepted:
-            await websocket.send_text(
-                error_frame("manual input disabled while macro running")
-            )
-        return
-
-    if hasattr(msg, "buttons"):  # StateMessage
-        accepted = manager.submit_state(msg.to_state())
-        if not accepted:
-            await websocket.send_text(
-                error_frame("manual input disabled while macro running")
-            )
-        return
-
+def _dispatch_macro(msg: InboundMessage, manager: InputManager) -> str | None:
     if isinstance(msg, MacroStartInline):
         try:
             manager.start_macro(msg.macro)
         except MacroValidationError as e:
-            await websocket.send_text(
-                error_frame(
-                    "invalid macro",
-                    detail=str(e),
-                )
-            )
-        return
-    if isinstance(msg, MacroStartByName):
+            return error_frame("invalid macro", detail=str(e))
+    elif isinstance(msg, MacroStartByName):
         try:
             manager.start_macro_by_name(msg.name)
         except (FileNotFoundError, ValueError) as e:
-            await websocket.send_text(error_frame(f"could not load macro: {e}"))
-        return
-    if isinstance(msg, MacroCancel):
+            return error_frame(f"could not load macro: {e}")
+    elif isinstance(msg, MacroCancel):
         manager.cancel_macro()
-        return
-    if isinstance(msg, MacroPause):
+    elif isinstance(msg, MacroPause):
         manager.pause_macro()
-        return
-    if isinstance(msg, MacroResume):
+    elif isinstance(msg, MacroResume):
         manager.resume_macro()
-        return
+    return None
 
 
 async def bluetooth_control(request: Request) -> Response:
     service: BluetoothService = request.app.state.bluetooth
+    sessions: dict[str, AdapterSession] = request.app.state.adapter_sessions
+    if session_id := request.path_params.get("session_id"):
+        if session_id not in sessions:
+            return _error("Unknown adapter", status=404)
+        service = sessions[session_id].bluetooth
     store: ConfigStore = request.app.state.config_store
     try:
         if request.method != "GET":
@@ -226,7 +271,7 @@ async def bluetooth_control(request: Request) -> Response:
                 if request.method == "DELETE":
                     await service.forget(body["address"])
                     names = dict(store.config.switch_device_names)
-                    if names.pop(body["address"].upper(), None) is not None:
+                    if len(sessions) <= 1 and names.pop(body["address"].upper(), None) is not None:
                         store.update({"switch_device_names": names})
                 elif request.method == "PATCH":
                     if body["address"] not in (await service.status())["peers"]:
@@ -252,11 +297,128 @@ async def bluetooth_control(request: Request) -> Response:
         return JSONResponse(status)
     except BluetoothDisconnectingError as e:
         return JSONResponse({"error": str(e), "code": "disconnecting"}, status_code=409)
+    except BluetoothPageTimeoutError as e:
+        return JSONResponse({"error": str(e), "code": "page_timeout"}, status_code=503)
     except (TypeError, ValueError) as e:
         return _error(str(e), status=409)
     except Exception as e:
         logger.exception("Bluetooth operation failed")
         return _error(f"Bluetooth operation failed: {e}", status=503)
+
+
+async def adapters_get(request: Request) -> Response:
+    try:
+        return JSONResponse(await adapter_inventory(request.app.state.adapter_sessions))
+    except RuntimeError as error:
+        return _error(str(error), status=503)
+
+
+async def adapter_inventory(sessions: dict[str, AdapterSession]) -> dict:
+    primary = sessions.get("primary")
+    controllers = (
+        await asyncio.to_thread(primary.controller.status)
+        if primary and primary.controller
+        else {}
+    )
+    assignments = controllers.get("assignments", {})
+    return {
+        "adapters": [
+            {
+                "id": session.id,
+                "transport": session.transport,
+                "local_address": session.local_address,
+                "controller_id": assignments.get(session.id),
+                "error": session.error,
+                "preset": (
+                    session.controller.preset_name
+                    if isinstance(session.controller, ControllerRoute)
+                    else session.input_manager.current_preset_name
+                    if session.input_manager
+                    else None
+                ),
+                "macro_mode": bool(
+                    session.input_manager and session.input_manager.status()["mode"] == "macro"
+                ),
+            }
+            for session in sessions.values()
+        ],
+        "controllers": [
+            {"id": pad["instance_id"], "name": pad["name"], "guid": pad["guid"]}
+            for pad in controllers.get("controllers", [])
+            if pad.get("instance_id") is not None
+        ],
+        "controllers_available": controllers.get("available", False),
+    }
+
+
+async def adapter_assign(request: Request) -> Response:
+    sessions: dict[str, AdapterSession] = request.app.state.adapter_sessions
+    session_id = request.path_params["session_id"]
+    if session_id not in sessions:
+        return _error("Unknown adapter", status=404)
+    service = sessions["primary"].controller
+    if service is None:
+        return _error("Controller service is unavailable", status=503)
+    try:
+        body = await request.json()
+    except ValueError:
+        return _error("invalid JSON body")
+    if not isinstance(body, dict) or "controller_id" not in body:
+        return _error("controller_id is required")
+    instance_id = body["controller_id"]
+    if instance_id is not None and type(instance_id) is not int:
+        return _error("controller_id must be an instance ID or null")
+    try:
+        await asyncio.to_thread(service.assign, session_id, instance_id)
+    except ValueError as error:
+        return _error(str(error), status=409)
+    except RuntimeError as error:
+        return _error(str(error), status=503)
+    return await adapters_get(request)
+
+
+async def adapter_colours(request: Request) -> Response:
+    slot = request.app.state.adapter_sessions.get(request.path_params["session_id"])
+    if slot is None:
+        return _error("Unknown adapter", status=404)
+    store: ConfigStore = request.app.state.config_store
+    profile_index = slot.profile_index
+    colours = (
+        store.config.adapter_profiles[profile_index].colours if profile_index is not None
+        else store.config.colours_for_adapter(slot.transport, primary=slot.primary)
+    )
+    changed = False
+    if request.method == "PATCH":
+        try:
+            updated = normalize_controller_colours(await request.json(), colours)
+        except (TypeError, ValueError) as error:
+            return _error(str(error))
+        changed = updated != colours
+        if changed:
+            if profile_index is not None:
+                store.update_adapter_profile(profile_index, colours=updated)
+            elif slot.primary:
+                store.update({"controller_colours": updated})
+            else:
+                store.update({"adapter_colours": {
+                    **store.config.adapter_colours, slot.transport.casefold(): updated
+                }})
+            colours = updated
+    radio = slot.bluetooth
+    return JSONResponse({
+        "controller_colours": colours,
+        "colours_reconnect_required": changed and bool(
+            radio.connection or radio.connected or radio.reconnecting
+        ),
+    })
+
+
+def macro_is_running(request: Request, name: str) -> bool:
+    managers = [request.app.state.manager, *(
+        slot.input_manager for slot in request.app.state.adapter_sessions.values()
+        if not slot.primary and slot.input_manager
+    )]
+    return any((manager.status().get("macro") or {}).get("name") == name for manager in managers)
 
 
 async def macros_list(request: Request) -> Response:
@@ -317,8 +479,7 @@ async def macro_rename(request: Request) -> Response:
     new_name = body.get("name") if isinstance(body, dict) else None
     if not isinstance(new_name, str):
         return _error("expected {'name': '<new macro name>'}")
-    running = request.app.state.manager.status().get("macro") or {}
-    if running.get("name") == name:
+    if macro_is_running(request, name):
         return _error(f"macro '{name}' is currently running", status=409)
     try:
         new_name = store.rename(name, new_name)
@@ -331,10 +492,8 @@ async def macro_rename(request: Request) -> Response:
 
 async def macro_delete(request: Request) -> Response:
     store: JsonDocStore = request.app.state.macro_store
-    manager: InputManager = request.app.state.manager
     name = request.path_params["name"]
-    running = manager.status().get("macro") or {}
-    if running.get("name") == name:
+    if macro_is_running(request, name):
         return _error(f"macro '{name}' is currently running", status=409)
     try:
         store.delete(name)
@@ -378,7 +537,8 @@ async def controller_select(request: Request) -> Response:
         return _error(str(e), status=503)
 
     # Persist the selection (GUID) so it survives restarts.
-    if info.get("guid"):
+    primary = request.app.state.adapter_sessions.get("primary")
+    if info.get("guid") and (primary is None or primary.profile_index is None):
         store.update({"controller_guid": info["guid"]})
     payload = await asyncio.to_thread(manager.controllers_payload)
     return JSONResponse(payload)
@@ -449,7 +609,12 @@ async def preset_delete(request: Request) -> Response:
             f"'{name}' is a built-in preset and cannot be deleted",
             status=403,
         )
-    if store.config.preset == name or name in store.config.controller_presets.values():
+    if (
+        store.config.preset == name
+        or name in store.config.controller_presets.values()
+        or name in store.config.adapter_presets.values()
+        or any(profile.preset == name for profile in store.config.adapter_profiles)
+    ):
         return _error(
             f"preset '{name}' is active or assigned to a controller",
             status=409,
@@ -471,6 +636,29 @@ async def preset_activate(request: Request) -> Response:
     if name not in [info["filename"] for info in list_preset_infos()]:
         return _error(f"preset '{name}' does not exist", status=404)
 
+    session_id = request.path_params.get("session_id")
+    if session_id:
+        sessions = request.app.state.adapter_sessions
+        slot = sessions.get(session_id)
+        if slot is None:
+            return _error("Unknown adapter", status=404)
+        if not slot.primary:
+            service = sessions["primary"].controller
+            if service is None:
+                return _error("Controller service is unavailable", status=503)
+            try:
+                preset = load_preset(name)
+                await asyncio.to_thread(service.set_preset, preset, name, session_id=session_id)
+            except (FileNotFoundError, TypeError, ValueError, RuntimeError) as error:
+                return _error(str(error), status=409)
+            if slot.profile_index is not None:
+                store.update_adapter_profile(slot.profile_index, preset=name)
+            else:
+                store.update({"adapter_presets": {
+                    **store.config.adapter_presets, slot.transport.casefold(): name
+                }})
+            return await adapters_get(request)
+
     try:
         preset = await asyncio.to_thread(manager.apply_preset, name)
     except MacroActiveError as e:
@@ -483,6 +671,13 @@ async def preset_activate(request: Request) -> Response:
     # Persist the selection so it survives restarts (and so the config
     # store stays the single source of truth).
     payload = await asyncio.to_thread(manager.controllers_payload)
+    primary = request.app.state.adapter_sessions.get("primary")
+    if primary is not None and primary.profile_index is not None:
+        store.update_adapter_profile(primary.profile_index, preset=name)
+        if session_id:
+            return await adapters_get(request)
+        payload["applied"] = preset.name
+        return JSONResponse(payload)
     changes: dict = {"preset": name}
     active_guid = payload.get("active")
     if active_guid:
@@ -490,6 +685,8 @@ async def preset_activate(request: Request) -> Response:
         controller_presets[str(active_guid).casefold()] = name
         changes["controller_presets"] = controller_presets
     store.update(changes)
+    if session_id:
+        return await adapters_get(request)
     payload["applied"] = preset.name
     return JSONResponse(payload)
 
@@ -511,46 +708,83 @@ def validate_debug_changes(body):
     for key in ("macro_rate_hz", "tick_rate_hz"):
         if key in body and (type(body[key]) is not int or not 1 <= body[key] <= 1000):
             raise ValueError(f"{key} must be an integer between 1 and 1000")
-    if "bt_address" in body:
+    if {"bt_address", "adapter_address_seed", "adapter_addresses", "adapter_profiles"} & body.keys():
         raise ValueError("Use Regenerate BD address to change the Bluetooth identity")
 
 
-async def debug_status(request: Request) -> Response:
-    service = request.app.state.bluetooth
+async def _bluetooth_debug_status(
+    service: BluetoothService, names: dict[str, str], *, include_unbonded_names: bool = False
+) -> dict:
     state = service.state
     bluetooth = await service.status()
-    names = request.app.state.config_store.config.switch_device_names
-    addresses = set(bluetooth["peers"]) | set(names)
+    addresses = set(bluetooth["peers"])
+    if include_unbonded_names:
+        addresses.update(names)
     if bluetooth["address"]:
         addresses.add(bluetooth["address"])
+    return {
+        "bd_address": str(service.device.public_address) if service.device else None,
+        "bluetooth": bluetooth,
+        "switch_devices": [
+            {
+                "address": address,
+                "name": names.get(address.upper())
+                or (
+                    f"Switch Device {bluetooth['peers'].index(address) + 1}"
+                    if address in bluetooth["peers"]
+                    else "Switch Device"
+                ),
+            }
+            for address in sorted(addresses)
+        ],
+        "acl_connected": service.connection is not None,
+        "hid_control_ready": bool(state and state.ctrl_ready.is_set()),
+        "hid_interrupt_ready": bool(state and state.intr_ready.is_set()),
+        "session_stopped": bool(state and state.session_stop.is_set()),
+    }
+
+
+async def debug_status(request: Request) -> Response:
+    state = request.app.state
+    config = state.config_store.config
+    sessions = state.adapter_sessions
+    names = config.switch_device_names
+    primary = await _bluetooth_debug_status(
+        state.bluetooth, names, include_unbonded_names=len(sessions) <= 1
+    )
+    try:
+        inventory = await adapter_inventory(sessions)
+    except RuntimeError as error:
+        return _error(str(error), status=503)
+    controller_names = {pad["id"]: pad["name"] for pad in inventory["controllers"]}
+    adapters = []
+    for adapter in inventory["adapters"]:
+        session = sessions[adapter["id"]]
+        diagnostics = (
+            primary
+            if session.primary
+            else await _bluetooth_debug_status(session.bluetooth, names)
+        )
+        adapters.append(
+            {
+                **adapter,
+                **diagnostics,
+                "controller_name": controller_names.get(adapter["controller_id"]),
+                "address_regeneration_available": sys.platform == "win32"
+                and session.bluetooth.device is not None,
+                "input": session.input_manager.status() if session.input_manager else None,
+            }
+        )
     return JSONResponse(
         {
-            "bd_address": str(service.device.public_address)
-            if service.device
-            else None,
-            "bluetooth": bluetooth,
-            "switch_devices": [
-                {
-                    "address": address,
-                    "name": names.get(address.upper())
-                    or (
-                        f"Switch Device {bluetooth['peers'].index(address) + 1}"
-                        if address in bluetooth["peers"]
-                        else "Switch Device"
-                    ),
-                }
-                for address in sorted(addresses)
-            ],
-            "acl_connected": service.connection is not None,
-            "hid_control_ready": bool(state and state.ctrl_ready.is_set()),
-            "hid_interrupt_ready": bool(state and state.intr_ready.is_set()),
-            "session_stopped": bool(state and state.session_stop.is_set()),
-            "input": request.app.state.manager.status(),
-            "controllers": request.app.state.manager.controllers_payload(),
-            "ws_auth_required": request.app.state.ws_token is not None,
+            **primary,
+            "adapters": adapters,
+            "input": state.manager.status(),
+            "controllers": await asyncio.to_thread(state.manager.controllers_payload),
+            "ws_auth_required": state.ws_token is not None,
             "address_regeneration_available": sys.platform == "win32"
-            and service.device is not None,
-            "restart_available": request.app.state.restart_callback is not None,
+            and state.bluetooth.device is not None,
+            "restart_available": state.restart_callback is not None,
         }
     )
 
@@ -572,16 +806,12 @@ async def debug_apply(request: Request) -> Response:
             raise ValueError("Unknown debug setting")
         validate_debug_changes(changes)
         regenerate = body.get("regenerate_address", False)
-        if not isinstance(regenerate, bool):
-            raise TypeError("regenerate_address must be a boolean")
+        if not isinstance(regenerate, (bool, str)) or regenerate == "":
+            raise TypeError("regenerate_address must be a boolean or adapter ID")
         if changes.get("ws_auth_required") and not store.config.webview_enabled:
             raise ValueError("WebSocket authentication requires desktop mode")
-        if regenerate:
-            if sys.platform != "win32":
-                raise ValueError("This platform uses the adapter's hardware address")
-            changes["bt_address"] = "98:B6:E9:" + ":".join(
-                f"{b:02X}" for b in secrets.token_bytes(3)
-            )
+        if regenerate and sys.platform != "win32":
+            raise ValueError("This platform uses the adapter's hardware address")
     except (ValueError, TypeError) as error:
         return _error(str(error))
     if (
@@ -590,11 +820,52 @@ async def debug_apply(request: Request) -> Response:
     ):
         return _error("Application restart is unavailable", status=409)
     if regenerate:
+        state = request.app.state
+        sessions = state.adapter_sessions
+        adapter_id = "primary" if regenerate is True else regenerate
+        session = sessions.get(adapter_id)
+        if session is None and adapter_id != "primary":
+            return _error("Unknown adapter", status=404)
+        service = session.bluetooth if session else state.bluetooth
+        config = store.config
+        transport = session.transport.casefold() if session else config.transport_spec.casefold()
+        use_primary_address = adapter_id == "primary" and transport not in config.adapter_addresses
+        used_addresses = {
+            slot.local_address.upper()
+            for slot in sessions.values()
+            if slot.local_address
+        }
+        used_addresses.add(config.bt_address.upper())
+        used_addresses.update(value.upper() for value in config.adapter_addresses.values())
+        used_addresses.update(profile.address for profile in config.adapter_profiles)
+        if current_address := getattr(service.device, "public_address", None):
+            used_addresses.add(str(current_address).split("/")[0].upper())
+        prefix = bytes([0x98, 0xB6, 0xE9]) if use_primary_address else bytes([2])
+        while True:
+            octets = prefix + secrets.token_bytes(6 - len(prefix))
+            address = ":".join(f"{byte:02X}" for byte in octets)
+            if address not in used_addresses:
+                break
         try:
-            await request.app.state.bluetooth.forget_all()
+            await service.forget_all()
         except (OSError, RuntimeError, TimeoutError) as error:
             return _error(f"Could not clear saved Switch devices: {error}", status=503)
-        changes["switch_device_names"] = {}
+        if session is not None and session.profile_index is not None:
+            store.update_adapter_profile(
+                session.profile_index, address=new_profile_address(used_addresses), legacy_keystore=False
+            )
+        elif use_primary_address:
+            changes["bt_address"] = address
+            # Keep the secondary adapters' derived addresses stable.
+            if not config.adapter_address_seed:
+                changes["adapter_address_seed"] = config.bt_address
+        else:
+            changes["adapter_addresses"] = {
+                **config.adapter_addresses,
+                transport: address,
+            }
+        if len(sessions) <= 1 and adapter_id == "primary":
+            changes["switch_device_names"] = {}
     store.update(changes)
 
     async def restart():
@@ -666,6 +937,19 @@ async def config_patch(request: Request) -> Response:
             controller_presets[str(active_guid).casefold()] = requested_preset
             body["controller_presets"] = controller_presets
     changed = store.update(body)
+    primary = request.app.state.adapter_sessions.get("primary")
+    if primary is not None and primary.profile_index is not None:
+        profile = store.config.adapter_profiles[primary.profile_index]
+        profile_changes = {}
+        if "controller_colours" in body:
+            colours = normalize_controller_colours(body["controller_colours"], profile.colours)
+            if colours != profile.colours:
+                profile_changes["colours"] = colours
+                changed["controller_colours"] = colours
+        if requested_preset is not None:
+            profile_changes["preset"] = requested_preset
+        if profile_changes:
+            store.update_adapter_profile(primary.profile_index, **profile_changes)
     bluetooth: BluetoothService = request.app.state.bluetooth
     return JSONResponse(
         {
@@ -742,8 +1026,8 @@ async def startup_status(request: Request) -> JSONResponse:
             "kind": "bluetooth_error",
             "message": request.app.state.bluetooth_error,
         }
-    elif request.app.state.transport_pending:
-        status = {"kind": "checking"}
+    elif request.app.state.startup_phase is not None:
+        status = {"kind": "checking", "phase": request.app.state.startup_phase}
     else:
         status = {"kind": "ready"}
     return JSONResponse(
@@ -776,6 +1060,7 @@ def build_app(
     shutdown_event: asyncio.Event | None = None,
     ws_token: str | None = None,
     restart_callback=None,
+    adapter_sessions: dict[str, AdapterSession] | None = None,
 ) -> Starlette:
     """Construct the Starlette application.
 
@@ -794,6 +1079,15 @@ def build_app(
         Route("/api/application/close", close_application, methods=["POST"]),
         Route(
             "/api/bluetooth",
+            bluetooth_control,
+            methods=["GET", "PUT", "POST", "DELETE", "PATCH"],
+        ),
+        Route("/api/adapters", adapters_get, methods=["GET"]),
+        Route("/api/adapters/{session_id}/controller", adapter_assign, methods=["PUT"]),
+        Route("/api/adapters/{session_id}/colours", adapter_colours, methods=["GET", "PATCH"]),
+        Route("/api/adapters/{session_id}/preset/{name}", preset_activate, methods=["POST"]),
+        Route(
+            "/api/adapters/{session_id}/bluetooth",
             bluetooth_control,
             methods=["GET", "PUT", "POST", "DELETE", "PATCH"],
         ),
@@ -835,12 +1129,13 @@ def build_app(
     app = Starlette(routes=routes)
     app.state.manager = manager
     app.state.bluetooth = bluetooth if bluetooth is not None else BluetoothService()
+    app.state.adapter_sessions = adapter_sessions or {}
     app.state.config_store = config_store
     app.state.macro_store = macro_store
     app.state.missing_firmware = missing_firmware
     app.state.usb_driver_error = usb_driver_error
     app.state.bluetooth_error = None
-    app.state.transport_pending = False
+    app.state.startup_phase = None
     app.state.restart_callback = restart_callback
     app.state.shutdown_event = shutdown_event
     app.state.ws_token = (

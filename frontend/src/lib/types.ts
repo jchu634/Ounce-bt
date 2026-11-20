@@ -47,10 +47,15 @@ export type MacroStatus = {
   state: "running" | "paused";
 };
 
-export type StatusFrame = {
-  type: "status";
+export type AdapterInputStatus = {
   mode: "manual" | "macro";
   macro: MacroStatus | null;
+};
+
+export type StatusFrame = AdapterInputStatus & {
+  type: "status";
+  adapter_id?: string;
+  adapter_statuses?: Record<string, AdapterInputStatus>;
 };
 
 export type ControllerInfo = {
@@ -78,7 +83,12 @@ export type ErrorFrame = {
 
 export type ServerFrame = StatusFrame | ControllersFrame | ErrorFrame;
 
+export type AdapterSelection =
+  | { type: "select_adapter"; adapter_id: string }
+  | { type: "select_adapters"; adapter_ids: string[] };
+
 export type WsInbound =
+  | AdapterSelection
   | {
       type: "state";
       buttons: ButtonName[];

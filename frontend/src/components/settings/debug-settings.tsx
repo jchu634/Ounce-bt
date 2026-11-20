@@ -4,6 +4,7 @@ import {
   getConfig,
   getDebugStatus,
   saveDebugAndRestart,
+  type BluetoothDiagnostics,
   type DebugChanges,
 } from "@/src/lib/api";
 import { errorMessage } from "@/src/lib/errors";
@@ -24,6 +25,54 @@ import {
 
 const loadDebugStatus = () => Effect.runPromise(getDebugStatus());
 type DebugStatus = Awaited<ReturnType<typeof loadDebugStatus>>;
+
+function AdapterDiagnostics({ status }: { status: BluetoothDiagnostics }) {
+  return (
+    <>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+        <dt>BD address</dt>
+        <dd>
+          <code>{status.bd_address ?? "Unavailable"}</code>
+        </dd>
+        <dt>Bluetooth</dt>
+        <dd className="text-muted-foreground">
+          {status.bluetooth.available ? status.bluetooth.state : "Unavailable"}
+          {status.bluetooth.pairing ? ", pairing enabled" : ""}
+        </dd>
+        <dt>ACL connection</dt>
+        <dd className="text-muted-foreground">
+          {status.acl_connected ? "Connected" : "Disconnected"}
+        </dd>
+        <dt>HID control</dt>
+        <dd className="text-muted-foreground">
+          {status.hid_control_ready ? "Ready" : "Not ready"}
+        </dd>
+        <dt>HID interrupt</dt>
+        <dd className="text-muted-foreground">
+          {status.hid_interrupt_ready ? "Ready" : "Not ready"}
+        </dd>
+      </dl>
+      <div className="space-y-1">
+        <h3 className="text-sm font-medium">Saved Switch devices</h3>
+        {status.switch_devices.length > 0 ? (
+          <dl className="space-y-1 text-sm">
+            {status.switch_devices.map((device) => (
+              <div
+                key={device.address}
+                className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1"
+              >
+                <dt>{device.name}</dt>
+                <dd className="font-mono text-muted-foreground">{device.address}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : (
+          <p className="text-sm text-muted-foreground">No saved Switch devices.</p>
+        )}
+      </div>
+    </>
+  );
+}
 
 function RateSetting({
   id,
@@ -109,7 +158,15 @@ export function DebugSettings({
   const [saved, setSaved] = useState<DebugChanges | null>(null);
   const [draft, setDraft] = useState<DebugChanges | null>(null);
   const [status, setStatus] = useState<DebugStatus | null>(null);
-  const [regenerate, setRegenerate] = useState(false);
+  const [selectedId, setSelectedId] = useState("primary");
+  const [regenerateId, setRegenerateId] = useState<string | null>(null);
+  const adapter =
+    status?.adapters.find((item) => item.id === selectedId) ?? status?.adapters[0];
+  const selected = adapter ?? status;
+  const adapterId = adapter?.id ?? "primary";
+  const regenerate = regenerateId === adapterId;
+  const canRegenerate = selected?.address_regeneration_available;
+  const adapterLabel = adapterId === "primary" ? "Primary adapter" : `Adapter ${adapterId.slice("adapter-".length)}`;
   const [prompt, setPrompt] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -176,11 +233,11 @@ export function DebugSettings({
     );
 
   async function restart() {
-    if (!draft) return;
+    if (!draft || (regenerate && !canRegenerate)) return;
     setSaving(true);
     setError(null);
     try {
-      await Effect.runPromise(saveDebugAndRestart(draft, regenerate));
+      await Effect.runPromise(saveDebugAndRestart(draft, regenerate ? adapterId : false));
     } catch (cause) {
       setError(errorMessage(cause));
       setSaving(false);
@@ -190,67 +247,55 @@ export function DebugSettings({
   return (
     <div className="space-y-4">
       <section className="space-y-2 rounded-lg border p-4">
-        <h2 className="font-semibold">Current info</h2>
-        <p>
-          Current BD address:{" "}
-          <code>{status?.bd_address ?? "Bluetooth is not ready"}</code>
-        </p>
-        {status && (
-          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-            <dt>Bluetooth</dt>
-            <dd className="text-muted-foreground">
-              {status.bluetooth.state}
-              {status.bluetooth.pairing ? ", pairing enabled" : ""}
-            </dd>
-            <dt>ACL connection</dt>
-            <dd className="text-muted-foreground">
-              {status.acl_connected ? "Connected" : "Disconnected"}
-            </dd>
-            <dt>HID control</dt>
-            <dd className="text-muted-foreground">
-              {status.hid_control_ready ? "Ready" : "Not ready"}
-            </dd>
-            <dt>HID interrupt</dt>
-            <dd className="text-muted-foreground">
-              {status.hid_interrupt_ready ? "Ready" : "Not ready"}
-            </dd>
-          </dl>
+        <h2 className="font-semibold">Bluetooth adapters</h2>
+        {status && status.adapters.length > 1 && (
+          <label className="flex flex-wrap items-center gap-2 text-sm">
+            Adapter
+            <select
+              className="max-w-full rounded-md border bg-background px-2 py-1"
+              value={adapterId}
+              disabled={saving}
+              onChange={(event) => {
+                setSelectedId(event.target.value);
+                setRegenerateId(null);
+              }}
+            >
+              {status.adapters.map((option, index) => (
+                <option key={option.id} value={option.id}>
+                  {option.id === "primary" ? "Primary adapter" : `Adapter ${index + 1}`}
+                  {" · "}{option.transport}
+                </option>
+              ))}
+            </select>
+          </label>
         )}
-        <div className="space-y-1">
-          <h3 className="text-sm font-medium">Saved Switch devices</h3>
-          {status ? (
-            status.switch_devices.length > 0 ? (
-              <dl className="space-y-1 text-sm">
-                {status.switch_devices.map((device) => (
-                  <div
-                    key={device.address}
-                    className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1"
-                  >
-                    <dt>{device.name}</dt>
-                    <dd className="font-mono text-muted-foreground">
-                      {device.address}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                No saved Switch devices.
-              </p>
-            )
+        {selected ? (
+          adapter ? (
+              <section key={adapter.id} className="space-y-2 rounded-md border p-3">
+                <p className="break-all text-sm text-muted-foreground">
+                  <code>{adapter.transport}</code>
+                </p>
+                {adapter.error && <p className="text-sm text-destructive">{adapter.error}</p>}
+                <p className="text-sm">
+                  {adapter.controller_name ?? "No controller assigned"}
+                  {adapter.preset && ` · ${adapter.preset}`}
+                  {adapter.macro_mode && " · Macro mode"}
+                </p>
+                <AdapterDiagnostics status={adapter} />
+              </section>
           ) : (
-            <p className="text-sm text-muted-foreground">
-              Loading saved devices...
-            </p>
-          )}
-        </div>
+            <AdapterDiagnostics status={selected} />
+          )
+        ) : (
+          <p className="text-sm text-muted-foreground">Loading Bluetooth status…</p>
+        )}
         <details className="rounded-md border p-3">
           <summary className="cursor-pointer text-sm font-medium">
             Connection details, JSON
           </summary>
           <pre className="mt-3 overflow-auto text-xs whitespace-pre-wrap">
-            {status
-              ? JSON.stringify(status, null, 2)
+            {selected
+              ? JSON.stringify(selected, null, 2)
               : "Loading connection states..."}
           </pre>
         </details>
@@ -372,44 +417,43 @@ export function DebugSettings({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0 flex-1 basis-64">
               <Label id="debug-address-label" className="inline leading-normal">
-                BD address
+                {adapter ? `BD address · ${adapterLabel}` : "BD address"}
               </Label>
               <span
                 id="debug-address-description"
                 className="text-sm text-muted-foreground"
               >
                 <br />
-                Generate a new Bluetooth identity on save and delete all saved
-                Switch devices and pairing keys. You will need to pair any
-                connections again.
+                Generate a new Bluetooth identity on save and delete the selected
+                adapter’s pairing keys. You will need to pair it again.
               </span>
             </div>
             <Button
               variant="outline"
-              disabled={!status?.address_regeneration_available}
+              disabled={!canRegenerate}
               aria-describedby="debug-address-description"
-              onClick={() => setRegenerate(!regenerate)}
+              onClick={() => setRegenerateId(regenerate ? null : adapterId)}
             >
               {regenerate
                 ? "Cancel BD address regeneration"
                 : "Regenerate BD address"}
             </Button>
           </div>
-          {status && !status.address_regeneration_available && (
+          {status && !canRegenerate && (
             <p className="text-sm text-muted-foreground">
-              BD address regeneration requires a ready Bluetooth adapter on
-              Windows.
+              BD address regeneration requires a ready Bluetooth adapter on Windows.
             </p>
           )}
           {regenerate && (
             <p className="text-sm text-muted-foreground">
-              Saving will delete all saved Switch devices and pairing keys. You
-              may need to unplug and reconnect the adapter after restarting.
+              You may need to unplug and reconnect the adapter after restarting.
             </p>
           )}
           <div>
             <Button
-              disabled={!dirty || !validRates || !status?.restart_available}
+              disabled={
+                !dirty || !validRates || !status?.restart_available || (regenerate && !canRegenerate)
+              }
               onClick={() => setPrompt(true)}
             >
               Save debug settings
@@ -433,7 +477,7 @@ export function DebugSettings({
               Saving these settings will restart the application and disconnect
               active controllers. Running macros will stop.
               {regenerate &&
-                " All saved Switch devices and pairing keys will be deleted. Pair with your Switch again after restarting."}
+                ` The pairing keys for ${adapterLabel} will be deleted. Pair with your Switch again after restarting.`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

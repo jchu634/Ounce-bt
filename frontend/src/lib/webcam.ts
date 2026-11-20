@@ -73,7 +73,14 @@ export const enumerateCameras = Effect.gen(function* () {
     })) satisfies ReadonlyArray<CameraDevice>;
 });
 
-export const acquireStream = (deviceId: string, audioDeviceId: string) =>
+export const captureAudioConstraints = (deviceId: string): MediaTrackConstraints => ({
+  ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+  echoCancellation: { exact: false },
+  noiseSuppression: { exact: false },
+  autoGainControl: { exact: false },
+});
+
+export const acquireStream = (deviceId: string, audioDeviceId: string | false) =>
   Effect.gen(function* () {
     const md = navigator.mediaDevices;
     if (!md?.getUserMedia) {
@@ -83,7 +90,7 @@ export const acquireStream = (deviceId: string, audioDeviceId: string) =>
       try: () =>
         md.getUserMedia({
           video: deviceId ? { deviceId: { exact: deviceId } } : true,
-          audio: audioDeviceId ? { deviceId: { exact: audioDeviceId } } : true,
+          audio: audioDeviceId === false ? false : captureAudioConstraints(audioDeviceId),
         }),
       catch: (e) => toCameraError(e),
     });

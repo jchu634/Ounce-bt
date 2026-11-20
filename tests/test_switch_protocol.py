@@ -4,6 +4,17 @@ from lib.controller import ControllerTypes
 from lib.switch_protocol import ControllerProtocol
 
 
+@pytest.mark.parametrize(
+    "pattern, player", [(0x09, 5), (0x50, 6), (0x0D, 7), (0x60, 8)]
+)
+def test_player_light_patterns_above_four(pattern, player):
+    protocol = ControllerProtocol(ControllerTypes.PRO_CONTROLLER, "98:B6:E9:7E:E9:8D")
+    request = bytes.fromhex("A2 01 00 00 00 00 00 00 00 00 00 30") + bytes([pattern])
+    protocol.process_commands(request.ljust(50, b"\0"))
+    assert protocol.get_report()[14:16] == bytes.fromhex("80 30")
+    assert protocol.player_number == player
+
+
 @pytest.mark.parametrize("suffix", ["", "/P"])
 def test_device_info_uses_public_bluetooth_address(suffix):
     protocol = ControllerProtocol(

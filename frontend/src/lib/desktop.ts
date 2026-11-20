@@ -1,6 +1,9 @@
 type DesktopApi = {
   get_auth_token: () => Promise<string | null>;
   save_json?: (name: string, contents: string) => Promise<boolean>;
+  start_capture_audio?: (label: string) => Promise<number | null>;
+  set_capture_volume?: (session: number, volume: number) => Promise<void>;
+  stop_capture_audio?: (session: number) => Promise<void>;
 };
 
 declare global {

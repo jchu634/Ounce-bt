@@ -206,7 +206,7 @@ const BUTTON_GROUPS = {
 } satisfies Record<string, ReadonlyArray<ButtonVisual>>;
 
 export function ManualControl() {
-  const { connection, send, status } = useSocket();
+  const { connection, send, adapterStatuses } = useSocket();
   const heldButtons = useRef<Set<ButtonName>>(new Set());
   const heldSticks = useRef<Set<StickInput>>(new Set());
   const analogSticks = useRef<Record<StickSide, StickPosition | null>>({
@@ -221,7 +221,8 @@ export function ManualControl() {
   const [pressedSticks, setPressedSticks] = useState<Set<StickInput>>(
     () => new Set(),
   );
-  const disabled = connection !== "open" || status?.mode === "macro";
+  const hasManualTarget = Object.values(adapterStatuses).some(({ mode }) => mode === "manual");
+  const disabled = connection !== "open" || !hasManualTarget;
 
   useEffect(() => {
     try {
@@ -244,26 +245,41 @@ export function ManualControl() {
     });
   }, [send]);
 
-  const releaseAll = useCallback(() => {
+  const clearHeld = useCallback(() => {
     if (
       heldButtons.current.size === 0 &&
       heldSticks.current.size === 0 &&
       analogSticks.current.left === null &&
       analogSticks.current.right === null
     )
-      return;
+      return false;
     heldButtons.current = new Set();
     heldSticks.current = new Set();
     analogSticks.current = { left: null, right: null };
     setAnalogPositions(analogSticks.current);
     setPressedButtons(new Set());
     setPressedSticks(new Set());
-    sendState();
-  }, [sendState]);
+    return true;
+  }, []);
+
+  const releaseAll = useCallback(() => {
+    if (clearHeld()) sendState();
+  }, [clearHeld, sendState]);
+
+  const selection = JSON.stringify(Object.keys(adapterStatuses));
+  const previousSelection = useRef(selection);
+  useEffect(() => {
+    if (previousSelection.current !== selection) {
+      previousSelection.current = selection;
+      if (disabled) clearHeld();
+      else releaseAll();
+    }
+  }, [selection, disabled, clearHeld, releaseAll]);
 
   useEffect(() => {
-    if (disabled) releaseAll();
-  }, [disabled, releaseAll]);
+    if (!hasManualTarget) clearHeld();
+    else if (connection !== "open") releaseAll();
+  }, [hasManualTarget, connection, clearHeld, releaseAll]);
 
   useEffect(() => {
     window.addEventListener("blur", releaseAll);

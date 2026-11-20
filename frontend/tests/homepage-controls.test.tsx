@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { act, createRef } from "react";
 import {
+  createMemoryHistory,
+  createRootRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
+import {
   SettingsDialog,
   type SettingsDialogHandle,
 } from "@/src/components/settings/dialog";
@@ -8,10 +14,14 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { CapturePreview } from "@/src/components/panels/capture-preview";
 import { ConnectionPanel } from "@/src/components/panels/connection";
+import { MacroRunPanel } from "@/src/components/panels/macro-runner";
+import { ManualControl } from "@/src/components/panels/manual-control";
+import { CaptureDeviceSettings } from "@/src/components/settings/capture-device-settings";
 import { CaptureProvider } from "@/src/hooks/use-capture";
 import { SocketProvider } from "@/src/hooks/use-socket";
 import type { BluetoothStatus } from "@/src/lib/bluetooth";
 import { DEFAULT_CONTROLLER_COLOURS } from "@/src/lib/controller-colours";
+import type { AdapterInputStatus, ServerFrame } from "@/src/lib/types";
 import { socket } from "@/src/lib/ws";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -43,6 +53,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
   Reflect.deleteProperty(navigator, "mediaDevices");
+  localStorage.removeItem("ounce-bt.audio-input");
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -51,7 +62,7 @@ function button(label: string): HTMLButtonElement {
   const match = Array.from(document.querySelectorAll("button")).find(
     (element) =>
       element.getAttribute("aria-label") === label ||
-      element.textContent === label,
+      element.textContent?.trim() === label,
   );
   if (!match) throw new Error(`Missing button: ${label}`);
   return match;
@@ -66,14 +77,274 @@ async function chooseOption(label: string, name: string) {
   await act(async () => option.click());
 }
 
-it("starts capture from the player and disables Stop after releasing the stream", async () => {
+it("keeps adapter settings scoped to the card and supports range selection", async () => {
+  const makeAdapter = (
+    id: string,
+    transport: string,
+    controller_id: number | null,
+  ) => ({
+    id,
+    transport,
+    controller_id,
+    preset: "xbox",
+    macro_mode: false,
+    local_address: null,
+    error: null,
+  });
+  const primary = makeAdapter("primary", "usb:0", 1);
+  let secondary = makeAdapter("adapter-2", "usb:1", null);
+  const inventory = () => ({
+    adapters: [
+      primary,
+      secondary,
+      makeAdapter("adapter-3", "usb:2", null),
+      makeAdapter("adapter-4", "usb:3", null),
+    ],
+    controllers_available: true,
+    controllers: [
+      { id: 1, guid: "first", name: "First Pad" },
+      { id: 2, guid: "second", name: "Second Pad" },
+    ],
+  });
+  const fetchRequest = vi.fn(async (path: string) => {
+    if (path === "/api/adapters") return Response.json(inventory());
+    if (path === "/api/adapters/adapter-2/controller") {
+      secondary = { ...secondary, controller_id: 2 };
+      return Response.json(inventory());
+    }
+    if (path.endsWith("/colours")) {
+      return Response.json({
+        controller_colours: {
+          ...DEFAULT_CONTROLLER_COLOURS,
+          body: path.includes("adapter-2") ? "#1122AA" : "#AA2211",
+        },
+        colours_reconnect_required: false,
+      });
+    }
+    if (path === "/api/presets")
+      return Response.json({ presets: [], active: "xbox" });
+    if (path === "/api/config")
+      return Response.json({ vibration_enabled: true });
+    return Response.json({}, { status: 404 });
+  });
+  vi.stubGlobal("fetch", fetchRequest);
+  vi.spyOn(socket, "start").mockImplementation(() => {});
+  const send = vi.spyOn(socket, "send").mockReturnValue(true);
+  let receive: ((frame: ServerFrame) => void) | undefined;
+  vi.spyOn(socket, "onFrame").mockImplementation((handler) => {
+    receive = handler;
+    return () => {};
+  });
+  await act(async () => {
+    root.render(
+      <SocketProvider>
+        <ConnectionPanel onEditPreset={() => {}} />
+      </SocketProvider>,
+    );
+  });
+  const cards = container.querySelectorAll("article");
+  expect(cards).toHaveLength(4);
+  expect(
+    cards[1].querySelector('[data-region="body"]')?.getAttribute("fill"),
+  ).toBe("#1122AA");
+  expect(
+    container.querySelector('[aria-label="Select controller"]'),
+  ).toBeNull();
+
+  const selectCard = button("Send manual and macro input through usb:1");
+  await act(async () => selectCard.click());
+  expect(send).toHaveBeenCalledWith({
+    type: "select_adapter",
+    adapter_id: "adapter-2",
+  });
+  await act(async () =>
+    receive?.({
+      type: "status",
+      mode: "manual",
+      macro: null,
+      adapter_id: "adapter-2",
+    }),
+  );
+  expect(selectCard.getAttribute("aria-pressed")).toBe("true");
+
+  await act(async () =>
+    cards[1]
+      .querySelector<HTMLButtonElement>('[aria-label="Controller settings"]')
+      ?.click(),
+  );
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+    "usb:1",
+  );
+  await chooseOption("Select controller", "Second Pad");
+  expect(fetchRequest).toHaveBeenCalledWith(
+    "/api/adapters/adapter-2/controller",
+    expect.objectContaining({ body: JSON.stringify({ controller_id: 2 }) }),
+  );
+  expect(cards[1].querySelector("h3")?.textContent).toBe("Second Pad");
+  expect(send).toHaveBeenCalledTimes(1);
+
+  const firstCard = button("Send manual and macro input through usb:0");
+  const lastCard = button("Send manual and macro input through usb:3");
+  const manual: AdapterInputStatus = { mode: "manual", macro: null };
+  await act(async () =>
+    lastCard.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true })),
+  );
+  expect(send).toHaveBeenLastCalledWith({
+    type: "select_adapters",
+    adapter_ids: ["adapter-2", "adapter-3", "adapter-4"],
+  });
+  await act(async () =>
+    receive?.({
+      type: "status",
+      ...manual,
+      adapter_id: "adapter-2",
+      adapter_statuses: { "adapter-2": manual, "adapter-3": manual, "adapter-4": manual },
+    }),
+  );
+  expect(selectCard.getAttribute("aria-pressed")).toBe("true");
+  expect(lastCard.getAttribute("aria-pressed")).toBe("true");
+  expect(firstCard.getAttribute("aria-pressed")).toBe("false");
+
+  await act(async () =>
+    firstCard.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, ctrlKey: true, shiftKey: true }),
+    ),
+  );
+  expect(send).toHaveBeenLastCalledWith({
+    type: "select_adapters",
+    adapter_ids: ["primary", "adapter-2", "adapter-3", "adapter-4"],
+  });
+
+  await act(async () =>
+    lastCard.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })),
+  );
+  expect(send).toHaveBeenLastCalledWith({
+    type: "select_adapters",
+    adapter_ids: ["primary", "adapter-2", "adapter-3"],
+  });
+  await act(async () =>
+    selectCard.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })),
+  );
+  expect(send).toHaveBeenLastCalledWith({
+    type: "select_adapters",
+    adapter_ids: ["primary", "adapter-3"],
+  });
+
+  await act(async () => firstCard.click());
+  expect(send).toHaveBeenLastCalledWith({ type: "select_adapter", adapter_id: "primary" });
+  const commands = send.mock.calls.length;
+  await act(async () =>
+    firstCard.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })),
+  );
+  expect(send).toHaveBeenCalledTimes(commands);
+});
+
+it("offers controls based on the state of every selected adapter", async () => {
+  vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+  vi.spyOn(socket, "start").mockImplementation(() => {});
+  vi.spyOn(socket, "getState").mockReturnValue("open");
+  const send = vi.spyOn(socket, "send").mockReturnValue(true);
+  let receive: ((frame: ServerFrame) => void) | undefined;
+  vi.spyOn(socket, "onFrame").mockImplementation((handler) => {
+    receive = handler;
+    return () => {};
+  });
+  const routeTree = createRootRoute({
+    component: () => (
+      <SocketProvider>
+        <ManualControl />
+        <MacroRunPanel
+          names={["first", "second"]}
+          listError={null}
+          onRetry={() => {}}
+          selected={null}
+          onSelect={() => {}}
+        />
+      </SocketProvider>
+    ),
+  });
+  const router = createRouter({ routeTree, history: createMemoryHistory() });
+  await act(async () => {
+    await router.load();
+    root.render(<RouterProvider router={router} />);
+  });
+
+  const running: AdapterInputStatus = {
+    mode: "macro",
+    macro: { name: "first", state: "running" },
+  };
+  const paused: AdapterInputStatus = {
+    mode: "macro",
+    macro: { name: "second", state: "paused" },
+  };
+  const showStatus = async (secondary: AdapterInputStatus) => {
+    await act(async () =>
+      receive?.({
+        type: "status",
+        ...running,
+        adapter_id: "primary",
+        adapter_statuses: { primary: running, "adapter-2": secondary },
+      }),
+    );
+  };
+
+  await showStatus({ mode: "manual", macro: null });
+  expect(button("Home").disabled).toBe(false);
+  expect(button("Run").disabled).toBe(false);
+  expect(button("Pause").disabled).toBe(false);
+  await act(async () =>
+    button("Home").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+  );
+  expect(send).toHaveBeenLastCalledWith({
+    type: "state",
+    buttons: ["HOME"],
+    left: [0, 0],
+    right: [0, 0],
+  });
+
+  await showStatus(paused);
+  expect(button("Home").disabled).toBe(true);
+  expect(button("Home").getAttribute("aria-pressed")).toBe("false");
+  expect(button("Run").disabled).toBe(true);
+  expect(button("Pause").disabled).toBe(false);
+  await act(async () => button("Resume").click());
+  expect(send).toHaveBeenLastCalledWith({ type: "macro", op: "resume" });
+  await act(async () => button("Stop").click());
+  expect(send).toHaveBeenLastCalledWith({ type: "macro", op: "cancel" });
+});
+
+it.each([
+  { audioId: "", native: false },
+  { audioId: "capture-audio", native: true },
+])("starts and stops capture with native monitoring set to $native", async ({ audioId, native }) => {
+  localStorage.setItem("ounce-bt.audio-input", audioId);
   const stopTrack = vi.fn();
   const track = Object.assign(new EventTarget(), {
     stop: stopTrack,
     readyState: "live",
   });
-  const stream = { getTracks: () => [track], getVideoTracks: () => [track] };
+  const audioTrack = { label: "Capture card audio", stop: vi.fn() };
+  const stream = {
+    getTracks: () => [track, audioTrack],
+    getVideoTracks: () => [track],
+    getAudioTracks: () => [audioTrack],
+  };
   const getUserMedia = vi.fn().mockResolvedValue(stream);
+  const api = {
+    start_capture_audio: vi.fn().mockResolvedValue(1),
+    set_capture_volume: vi.fn().mockResolvedValue(undefined),
+    stop_capture_audio: vi.fn().mockResolvedValue(undefined),
+  };
+  if (native) {
+    vi.stubGlobal("pywebview", { api });
+    vi.stubGlobal("MediaStream", class {
+      readonly tracks: unknown[];
+
+      constructor(tracks: unknown[]) {
+        this.tracks = tracks;
+      }
+    });
+  }
   Object.defineProperty(navigator, "mediaDevices", {
     configurable: true,
     value: {
@@ -99,13 +370,35 @@ it("starts capture from the player and disables Stop after releasing the stream"
   await act(async () => button("Start capture input").click());
   expect(getUserMedia).toHaveBeenCalledWith({
     video: { deviceId: { exact: "capture-card" } },
-    audio: true,
+    audio: {
+      ...(audioId ? { deviceId: { exact: audioId } } : {}),
+      echoCancellation: { exact: false },
+      noiseSuppression: { exact: false },
+      autoGainControl: { exact: false },
+    },
   });
-  expect(container.querySelector("video")?.srcObject).toBe(stream);
+  const video = container.querySelector("video");
+  if (!video) throw new Error("Missing capture video");
+  if (native) {
+    expect(api.start_capture_audio).toHaveBeenCalledWith("Capture card audio");
+    expect(video.srcObject).toEqual({ tracks: [track] });
+    expect(audioTrack.stop).toHaveBeenCalledOnce();
+    Object.defineProperty(video, "paused", { value: false, configurable: true });
+    video.volume = 0.5;
+    await act(async () => { video.dispatchEvent(new Event("volumechange")); });
+    expect(api.set_capture_volume).toHaveBeenLastCalledWith(1, 0.5);
+    video.muted = true;
+    await act(async () => { video.dispatchEvent(new Event("volumechange")); });
+    expect(api.set_capture_volume).toHaveBeenLastCalledWith(1, 0);
+  } else {
+    expect(video.srcObject).toBe(stream);
+  }
   expect(button("Stop capture input").disabled).toBe(false);
 
   await act(async () => button("Stop capture input").click());
   expect(stopTrack).toHaveBeenCalledOnce();
+  expect(audioTrack.stop).toHaveBeenCalledTimes(native ? 2 : 1);
+  if (native) expect(api.stop_capture_audio).toHaveBeenCalledWith(1);
   expect(container.querySelector("video")?.srcObject).toBeNull();
   expect(button("Stop capture input").disabled).toBe(true);
   expect(button("Start capture input").disabled).toBe(false);
@@ -117,6 +410,33 @@ it("starts capture from the player and disables Stop after releasing the stream"
   });
   expect(button("Stop capture input").disabled).toBe(true);
   expect(container.querySelector("video")?.srcObject).toBeNull();
+});
+
+it("opens the settings camera preview without capturing audio", async () => {
+  localStorage.setItem("ounce-bt.audio-input", "capture-audio");
+  const stop = vi.fn();
+  const getUserMedia = vi.fn().mockResolvedValue({ getTracks: () => [{ stop }] });
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: { getUserMedia },
+  });
+
+  await act(async () => root.render(
+    <CaptureProvider>
+      <CaptureDeviceSettings
+        disabled={false}
+        draftInputId="capture-card"
+        onDraftInputChange={() => {}}
+      />
+    </CaptureProvider>,
+  ));
+  await act(async () => button("Show preview").click());
+  expect(getUserMedia).toHaveBeenCalledWith({
+    video: { deviceId: { exact: "capture-card" } },
+    audio: false,
+  });
+  await act(async () => button("Hide preview").click());
+  expect(stop).toHaveBeenCalledOnce();
 });
 
 it("opens controller settings and sends actions for the card’s saved profile", async () => {
@@ -252,14 +572,23 @@ it("opens controller settings and sends actions for the card’s saved profile",
   expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
     "Controller colours",
   );
+  expect(button("Reset").disabled).toBe(true);
+  await act(async () => button("Reset to default").click());
   await act(async () => button("Reset").click());
+  expect(
+    document
+      .querySelector('[role="dialog"] [data-region="body"]')
+      ?.getAttribute("fill"),
+  ).toBe("#FF3344");
+  expect(button("Save").disabled).toBe(true);
+  await act(async () => button("Reset to default").click());
   expect(cardBodyColour()).toBe("#FF3344");
   await act(async () => button("Close").click());
   await act(async () => button("Discard changes").click());
   expect(cardBodyColour()).toBe("#FF3344");
 
   await act(async () => button("Edit controller colours").click());
-  await act(async () => button("Reset").click());
+  await act(async () => button("Reset to default").click());
   await act(async () => button("Save").click());
   expect(cardBodyColour()).toBe(DEFAULT_CONTROLLER_COLOURS.body);
   expect(document.body.textContent).toContain(

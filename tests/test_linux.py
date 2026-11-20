@@ -104,17 +104,22 @@ def test_linux_starts_without_realtek_files_and_reports_transport_failure(
     )
     monkeypatch.setattr(
         application,
-        "prepare_bluetooth",
+        "stage_adapter_firmware",
         Mock(side_effect=AssertionError("Firmware patched")),
     )
     config = Config(web_host=None if headless else "127.0.0.1", input_specs=[])
+    monkeypatch.setattr(Config, "save", lambda self: None)
     opened = []
+    open_attempted = asyncio.Event()
 
     async def open_transport(spec):
         opened.append(spec)
+        open_attempted.set()
         raise PermissionError("Operation not permitted")
 
-    async def serve(app, host, port, stop, **kwargs):
+    async def serve(app, host, port, stop, *, on_started):
+        on_started()
+        await asyncio.wait_for(open_attempted.wait(), 3)
         with TestClient(app) as client:
             response = client.get("/api/startup").json()
             assert response["kind"] == "bluetooth_error"

@@ -7,7 +7,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/src/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/src/components/ui/tabs";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/src/components/ui/tabs";
 import { Button } from "@/src/components/ui/button";
 import { useSelector } from "@tanstack/react-store";
 import {
@@ -17,7 +22,14 @@ import {
   setTheme,
 } from "@/src/stores/general-settings";
 import { GearSixIcon } from "@phosphor-icons/react";
-import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
+import {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type Ref,
+} from "react";
 import { Effect } from "effect";
 import { useCaptureControls, useCaptureInput } from "@/src/hooks/use-capture";
 
@@ -73,7 +85,9 @@ export function SettingsDialog({ ref }: { ref?: Ref<SettingsDialogHandle> }) {
     if (debugTogglePending.current) return;
     debugTogglePending.current = true;
     try {
-      const result = await Effect.runPromise(patchConfig({ debug_enabled: !debugEnabled }));
+      const result = await Effect.runPromise(
+        patchConfig({ debug_enabled: !debugEnabled }),
+      );
       setDebugEnabled(result.config.debug_enabled === true);
       if (result.config.debug_enabled !== true) {
         setCurrentTab("credits");
@@ -104,7 +118,8 @@ export function SettingsDialog({ ref }: { ref?: Ref<SettingsDialogHandle> }) {
         if (requestId === presetRequestId.current) setPresets(presets);
       })
       .catch((error: unknown) => {
-        if (requestId === presetRequestId.current) setPresetsError(errorMessage(error));
+        if (requestId === presetRequestId.current)
+          setPresetsError(errorMessage(error));
       })
       .finally(() => {
         if (requestId === presetRequestId.current) setPresetsLoading(false);
@@ -119,13 +134,19 @@ export function SettingsDialog({ ref }: { ref?: Ref<SettingsDialogHandle> }) {
     (settings) => settings.hideManualControl,
   );
   const theme = useSelector(generalSettingsStore, (settings) => settings.theme);
-  const [draftControlsOnlyHomepage, setDraftControlsOnlyHomepage] = useState(controlsOnlyHomepage);
-  const { selectedAudioInputId, selectedCameraInputId, selectInputs } = useCaptureInput();
-  const [draftAudioInputId, setDraftAudioInputId] = useState(selectedAudioInputId);
-  const [draftCaptureInputId, setDraftCaptureInputId] = useState(selectedCameraInputId);
+  const [draftControlsOnlyHomepage, setDraftControlsOnlyHomepage] =
+    useState(controlsOnlyHomepage);
+  const { selectedAudioInputId, selectedCameraInputId, selectInputs } =
+    useCaptureInput();
+  const [draftAudioInputId, setDraftAudioInputId] =
+    useState(selectedAudioInputId);
+  const [draftCaptureInputId, setDraftCaptureInputId] = useState(
+    selectedCameraInputId,
+  );
   const { stop, starting } = useCaptureControls();
   const hasUnsavedInputChanges =
-    draftAudioInputId !== selectedAudioInputId || draftCaptureInputId !== selectedCameraInputId;
+    draftAudioInputId !== selectedAudioInputId ||
+    draftCaptureInputId !== selectedCameraInputId;
 
   function openSettings() {
     setOpen(true);
@@ -198,7 +219,9 @@ export function SettingsDialog({ ref }: { ref?: Ref<SettingsDialogHandle> }) {
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
 
-            <DialogDescription>{SETTINGS_DESCRIPTIONS[currentTab]}</DialogDescription>
+            <DialogDescription>
+              {SETTINGS_DESCRIPTIONS[currentTab]}
+            </DialogDescription>
           </DialogHeader>
           <Tabs
             value={currentTab}
@@ -223,7 +246,9 @@ export function SettingsDialog({ ref }: { ref?: Ref<SettingsDialogHandle> }) {
               value="general"
             >
               <div className="flex flex-col gap-4">
-                <h2 className="text-lg font-semibold text-foreground">Input Settings</h2>
+                <h2 className="text-lg font-semibold text-foreground">
+                  Input Settings
+                </h2>
                 <AudioInputSettings
                   key={String(draftControlsOnlyHomepage)}
                   disabled={draftControlsOnlyHomepage}
@@ -255,9 +280,15 @@ export function SettingsDialog({ ref }: { ref?: Ref<SettingsDialogHandle> }) {
               <Separator />
               <div className="flex w-full max-w-180 items-center justify-between gap-4">
                 <div className="flex flex-col gap-1">
-                  <Label htmlFor="controls-only-homepage">Controls-only homepage (WIP)</Label>
-                  <p id="controls-only-description" className="text-sm text-muted-foreground">
-                    Focus on macros and manual control without the capture card preview.
+                  <Label htmlFor="controls-only-homepage">
+                    Controls-only homepage
+                  </Label>
+                  <p
+                    id="controls-only-description"
+                    className="text-sm text-muted-foreground"
+                  >
+                    Focus on macros and manual control without the capture card
+                    preview.
                   </p>
                 </div>
                 <Checkbox
@@ -270,8 +301,13 @@ export function SettingsDialog({ ref }: { ref?: Ref<SettingsDialogHandle> }) {
               </div>
               <div className="flex w-full max-w-180 items-center justify-between gap-4">
                 <div className="flex flex-col gap-1">
-                  <Label htmlFor="hide-manual-control">Hide manual control</Label>
-                  <p id="hide-manual-control-description" className="text-sm text-muted-foreground">
+                  <Label htmlFor="hide-manual-control">
+                    Hide manual control
+                  </Label>
+                  <p
+                    id="hide-manual-control-description"
+                    className="text-sm text-muted-foreground"
+                  >
                     Show only macros on the controls-only homepage.
                   </p>
                 </div>
@@ -296,9 +332,16 @@ export function SettingsDialog({ ref }: { ref?: Ref<SettingsDialogHandle> }) {
                   value={[theme]}
                   onValueChange={(values) => {
                     const selected = values.find(
-                      (value) => value === "light" || value === "dark" || value === "system",
+                      (value) =>
+                        value === "light" ||
+                        value === "dark" ||
+                        value === "system",
                     );
-                    if (selected === "light" || selected === "dark" || selected === "system")
+                    if (
+                      selected === "light" ||
+                      selected === "dark" ||
+                      selected === "system"
+                    )
                       setTheme(selected);
                   }}
                   className="inline-flex rounded-md border border-input bg-background p-1"
@@ -339,7 +382,9 @@ export function SettingsDialog({ ref }: { ref?: Ref<SettingsDialogHandle> }) {
                   key={debugSession}
                   active={open && currentTab === "debug"}
                   onStateChange={setDebugState}
-                  onHideDebug={() => requestNavigation(() => void toggleDebug())}
+                  onHideDebug={() =>
+                    requestNavigation(() => void toggleDebug())
+                  }
                 />
               </TabsContent>
             )}

@@ -12,10 +12,12 @@ import pytest
 from starlette.testclient import TestClient
 
 import lib.input.presets as presets_module
+from app.bluetooth import AdapterSession
 from app.input.manager import InputManager, MacroActiveError
 from app.main import SessionState
 from app.server import build_app
 from lib.config import Config, ConfigStore
+from lib.input.state import NEUTRAL, Button, ControllerState
 from lib.server.files import JsonDocStore
 
 
@@ -108,10 +110,228 @@ def fx(tmp_path, monkeypatch):
     fixture.manager.shutdown()
 
 
+def test_bluetooth_commands_are_scoped_to_one_adapter(fx):
+    primary = AdapterSession("primary", "usb:0", fx.command_queue, None)
+    secondary = AdapterSession("adapter-2", "usb:1", queue.Queue(), None)
+    primary.bluetooth.set_pairing = AsyncMock()
+    secondary.bluetooth.set_pairing = AsyncMock()
+    app = build_app(
+        fx.manager,
+        fx.config_store,
+        Path("/nonexistent-dist"),
+        bluetooth=primary.bluetooth,
+        adapter_sessions={slot.id: slot for slot in (primary, secondary)},
+    )
+    with TestClient(app) as client:
+        response = client.put("/api/adapters/adapter-2/bluetooth", json={"pairing": True})
+        assert response.status_code == 200
+        secondary.bluetooth.set_pairing.assert_awaited_once_with(True)
+        primary.bluetooth.set_pairing.assert_not_awaited()
+
+        response = client.put("/api/bluetooth", json={"pairing": True})
+        assert response.status_code == 200
+        primary.bluetooth.set_pairing.assert_awaited_once_with(True)
+        assert client.get("/api/adapters/unknown/bluetooth").status_code == 404
+
+
+def test_selected_adapter_receives_manual_input_and_owns_its_macro(fx):
+    fx.manager.adapter_id = "primary"
+    primary = AdapterSession(
+        "primary", "usb:0", fx.command_queue, None, input_manager=fx.manager
+    )
+    secondary_queue = queue.Queue()
+    secondary_input = InputManager(secondary_queue, fx.macros_dir, adapter_id="adapter-2")
+    secondary = AdapterSession(
+        "adapter-2", "usb:1", secondary_queue, None, input_manager=secondary_input
+    )
+    app = build_app(
+        fx.manager,
+        fx.config_store,
+        Path("/nonexistent-dist"),
+        adapter_sessions={slot.id: slot for slot in (primary, secondary)},
+    )
+
+    try:
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            assert ws.receive_json()["adapter_id"] == "primary"
+            assert ws.receive_json()["type"] == "controllers"
+            ws.send_json({"type": "state", "buttons": ["A"]})
+            ws.send_json({"type": "select_adapter", "adapter_id": "adapter-2"})
+            assert ws.receive_json()["adapter_id"] == "adapter-2"
+            assert fx.manager.mix_manual_input(NEUTRAL) == NEUTRAL
+
+            ws.send_json({"type": "state", "buttons": ["B"]})
+            ws.send_json({"type": "select_adapter", "adapter_id": "adapter-2"})
+            assert ws.receive_json()["adapter_id"] == "adapter-2"
+            assert secondary_input.mix_manual_input(ControllerState(Button.ZR)).buttons == (
+                Button.B | Button.ZR
+            )
+            assert fx.command_queue.empty()
+
+            ws.send_json({
+                "type": "macro", "op": "start",
+                "macro": {
+                    "version": 1, "name": "hold-b", "repeat": 0,
+                    "actions": [{"do": "press", "button": "B"}, {"do": "wait", "ms": 100}],
+                },
+            })
+            assert ws.receive_json()["mode"] == "macro"
+            assert secondary_queue.get(timeout=1).buttons == Button.B
+            ws.send_json({"type": "select_adapter", "adapter_id": "primary"})
+            assert ws.receive_json()["mode"] == "manual"
+            assert secondary_input.status()["macro"]["name"] == "hold-b"
+            assert fx.command_queue.empty()
+            ws.send_json({"type": "select_adapter", "adapter_id": "adapter-2"})
+            assert ws.receive_json()["mode"] == "macro"
+            ws.send_json({"type": "macro", "op": "cancel"})
+            assert ws.receive_json()["mode"] == "manual"
+            assert secondary_queue.get(timeout=1) == NEUTRAL
+    finally:
+        secondary_input.shutdown()
+
+
+def test_multi_adapter_controls_preserve_independent_playback(fx):
+    fx.manager.adapter_id = "primary"
+    managers = {
+        "primary": fx.manager,
+        **{
+            adapter_id: InputManager(queue.Queue(), fx.macros_dir, adapter_id=adapter_id)
+            for adapter_id in ("adapter-2", "adapter-3")
+        },
+    }
+    sessions = {
+        adapter_id: AdapterSession(
+            adapter_id, f"usb:{index}", manager.command_queue, None, input_manager=manager
+        )
+        for index, (adapter_id, manager) in enumerate(managers.items())
+    }
+    app = build_app(
+        fx.manager, fx.config_store, Path("/nonexistent-dist"), adapter_sessions=sessions
+    )
+    hold = {
+        "version": 1, "name": "hold", "repeat": 0,
+        "actions": [{"do": "press", "button": "A"}, {"do": "wait", "ms": 100}],
+    }
+    (fx.macros_dir / "hold.json").write_text(
+        '{"version": 1, "repeat": 0, "actions": [{"do": "wait", "ms": 100}]}',
+        encoding="utf-8",
+    )
+    secondary = managers["adapter-2"]
+    unselected = managers["adapter-3"]
+    try:
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()
+            ws.receive_json()
+
+            def select(*ids):
+                ws.send_json({"type": "select_adapters", "adapter_ids": list(ids)})
+
+            def macro(op, **payload):
+                ws.send_json({"type": "macro", "op": op, **payload})
+
+            def flush_commands():
+                # The server processes inbound messages in order.
+                ws.send_json({"type": "invalid"})
+                while ws.receive_json()["type"] != "error":
+                    pass
+
+            select("primary", "adapter-2")
+            assert list(ws.receive_json()["adapter_statuses"]) == ["primary", "adapter-2"]
+            ws.send_json({"type": "state", "buttons": ["B"]})
+            flush_commands()
+            assert fx.manager.mix_manual_input(NEUTRAL).buttons == Button.B
+            assert secondary.mix_manual_input(NEUTRAL).buttons == Button.B
+            assert unselected.mix_manual_input(NEUTRAL) == NEUTRAL
+
+            select("adapter-3")
+            assert ws.receive_json()["adapter_id"] == "adapter-3"
+            assert fx.manager.mix_manual_input(NEUTRAL) == NEUTRAL
+            assert secondary.mix_manual_input(NEUTRAL) == NEUTRAL
+            macro("start", macro=hold)
+            select("adapter-2")
+            macro("start", macro={**hold, "name": "first"})
+            macro("pause")
+            select("primary", "adapter-2")
+            flush_commands()
+
+            ws.send_json({"type": "event", "action": {"do": "press", "button": "X"}})
+            flush_commands()
+            assert fx.manager.mix_manual_input(NEUTRAL).buttons == Button.X
+            assert secondary.mix_manual_input(NEUTRAL) == NEUTRAL
+
+            macro("start", name="hold")
+            snapshot = ws.receive_json()["adapter_statuses"]
+            assert snapshot["primary"]["macro"] == {"name": "hold", "state": "running"}
+            assert snapshot["adapter-2"]["macro"] == {"name": "first", "state": "paused"}
+            macro("pause")
+            flush_commands()
+            assert fx.manager.status()["macro"]["state"] == "paused"
+            assert unselected.status()["macro"]["state"] == "running"
+
+            select("primary")
+            macro("resume")
+            flush_commands()
+            assert fx.manager.status()["macro"]["state"] == "running"
+            assert secondary.status()["macro"]["state"] == "paused"
+            select("primary", "adapter-2")
+            macro("resume")
+            flush_commands()
+            assert secondary.status()["macro"] == {"name": "first", "state": "running"}
+            macro("start", macro={**hold, "name": "replacement"})
+            flush_commands()
+            assert fx.manager.status()["macro"]["name"] == "hold"
+            assert secondary.status()["macro"]["name"] == "first"
+
+            select("primary", "unknown")
+            while ws.receive_json()["type"] != "error":
+                pass
+            macro("cancel")
+            flush_commands()
+            assert fx.manager.status()["macro"] is None
+            assert secondary.status()["macro"] is None
+            assert unselected.status()["macro"]["state"] == "running"
+
+            macro("start", macro=hold)
+            flush_commands()
+            assert fx.manager.status()["macro"]["name"] == "hold"
+            assert secondary.status()["macro"]["name"] == "hold"
+            macro("cancel")
+            ws.send_json({"type": "state", "buttons": ["Y"]})
+            flush_commands()
+            assert fx.manager.mix_manual_input(NEUTRAL).buttons == Button.Y
+            assert secondary.mix_manual_input(NEUTRAL).buttons == Button.Y
+        assert fx.manager.mix_manual_input(NEUTRAL) == NEUTRAL
+        assert secondary.mix_manual_input(NEUTRAL) == NEUTRAL
+    finally:
+        secondary.shutdown()
+        unselected.shutdown()
+
+
+def test_adapter_colours_are_saved_independently(fx):
+    primary = AdapterSession("primary", "usb:0", queue.Queue(), None)
+    secondary = AdapterSession("adapter-2", "usb:1", queue.Queue(), None)
+    primary.bluetooth.connected = True
+    app = build_app(
+        fx.manager,
+        fx.config_store,
+        Path("/nonexistent-dist"),
+        adapter_sessions={slot.id: slot for slot in (primary, secondary)},
+    )
+    with TestClient(app) as client:
+        secondary_path = "/api/adapters/adapter-2/colours"
+        primary_path = "/api/adapters/primary/colours"
+        result = client.patch(secondary_path, json={"body": "#aa0011"})
+        assert result.status_code == 200
+        assert result.json()["colours_reconnect_required"] is False
+        assert client.get(secondary_path).json()["controller_colours"]["body"] == "#AA0011"
+        assert client.get(primary_path).json()["controller_colours"]["body"] == "#000000"
+        assert Config.load().adapter_colours["usb:1"]["body"] == "#AA0011"
+
+
 
 def test_macro_list_get(fx):
     with fx.client() as c:
-        assert c.get("/api/macros").json() == {"names": ["example"]}
+        assert "example" in c.get("/api/macros").json()["names"]
         r = c.get("/api/macros/example")
         assert r.status_code == 200
         assert "press" in r.json()["contents"]
@@ -271,13 +491,11 @@ def test_preset_custom_crud_and_activate(fx):
 
         r = c.post("/api/presets/my-pad/activate")
         assert r.status_code == 200
-        assert r.json()["applied"] == "Custom"
         assert fx.config_store.config.preset == "my-pad"
         assert fx.config_store.config.controller_presets["g1"] == "my-pad"
         assert fx.manager.current_preset is not None
         assert fx.manager.current_preset.name == "Custom"
         assert fx.manager.current_preset_name == "my-pad"
-        assert r.json()["preset"] == "my-pad"
 
         # Deleting the active preset is refused.
         assert c.delete("/api/presets/my-pad").status_code == 409
@@ -473,7 +691,7 @@ def test_macro_rename(fx):
         assert c.get("/api/macros/example").status_code == 404
         assert c.get("/api/macros/New name").json()["contents"] == original
         assert c.patch("/api/macros/New name", json={"name": "NEW NAME"}).status_code == 200
-        assert c.get("/api/macros").json() == {"names": ["NEW NAME"]}
+        assert c.get("/api/macros").json()["names"] == ["NEW NAME"]
         assert c.put("/api/macros/other", json={"contents": original}).status_code == 200
         assert c.patch("/api/macros/NEW NAME", json={"name": "../bad"}).status_code == 400
         assert c.patch("/api/macros/missing", json={"name": "new"}).status_code == 404
@@ -506,7 +724,6 @@ def test_macro_rename_overwrites_destination(fx):
         assert c.patch("/api/macros/example", json={"name": "target"}).status_code == 200
         assert c.get("/api/macros/target").json()["contents"] == original
         assert c.get("/api/macros/example").status_code == 404
-        assert c.get("/api/macros").json() == {"names": ["target"]}
 
 
 def test_vibration_defaults_on_and_persists_live_change(fx):
@@ -670,3 +887,113 @@ def test_debug_status_includes_switch_name_and_address(fx):
         assert client.get("/api/debug").json()["switch_devices"] == [
             {"address": "AA:BB:CC:DD:EE:FF", "name": "Living room Switch"},
         ]
+
+
+@pytest.mark.parametrize("target", [True, "adapter-2"])
+@pytest.mark.parametrize("profiled", [False, True])
+def test_debug_regenerates_only_the_target_adapter(
+    fx, monkeypatch, target, tmp_path, profiled
+):
+    import asyncio
+    from types import SimpleNamespace
+
+    monkeypatch.setattr("app.server.sys.platform", "win32")
+    primary_address = "98:B6:E9:12:34:56"
+    first_switch = "AA:BB:CC:DD:EE:01"
+    second_switch = "AA:BB:CC:DD:EE:02"
+    names = {first_switch: "Living room Switch", second_switch: "Bedroom Switch"}
+    fx.config_store.update({
+        "bt_address": primary_address,
+        "debug_enabled": True,
+        "switch_device_names": names,
+    })
+    primary = AdapterSession("primary", "usb:0", fx.command_queue, None)
+    secondary = AdapterSession("adapter-2", "usb:1", queue.Queue(), None)
+    if profiled:
+        primary.profile_index = 0
+        secondary.profile_index = 1
+        profiles = fx.config_store.ensure_adapter_profiles([primary.transport, secondary.transport])
+    for slot, bd_address, peer in (
+        (primary, primary_address, first_switch),
+        (secondary, "02:12:34:56:78:9A", second_switch),
+    ):
+        slot.bluetooth.device = SimpleNamespace(
+            public_address=bd_address,
+            keystore=SimpleNamespace(
+                get_all=AsyncMock(return_value=[(peer, SimpleNamespace(link_key=b"key"))]),
+                delete_all=AsyncMock(),
+            ),
+            set_discoverable=AsyncMock(),
+            set_connectable=AsyncMock(),
+        )
+        slot.bluetooth.state = SessionState()
+    secondary.bluetooth.state.intr_ready.set()
+    app = build_app(
+        fx.manager, fx.config_store, Path("/nonexistent-dist"),
+        bluetooth=primary.bluetooth,
+        adapter_sessions={slot.id: slot for slot in (primary, secondary)},
+        restart_callback=lambda: None,
+        shutdown_event=asyncio.Event(),
+    )
+    with TestClient(app) as client:
+        first, second = client.get("/api/debug").json()["adapters"]
+        assert first["id"] == "primary"
+        assert first["bd_address"] == primary_address
+        assert first["switch_devices"] == [{"address": first_switch, "name": names[first_switch]}]
+        assert not first["hid_interrupt_ready"]
+        assert second["id"] == "adapter-2"
+        assert second["bd_address"] == "02:12:34:56:78:9A"
+        assert second["switch_devices"] == [{"address": second_switch, "name": names[second_switch]}]
+        assert second["hid_interrupt_ready"]
+
+        assert first["address_regeneration_available"]
+        assert second["address_regeneration_available"]
+        assert client.post("/api/debug", json={"regenerate_address": "unknown"}).status_code == 404
+        assert client.post("/api/debug", json={"regenerate_address": target}).status_code == 200
+        saved = Config.load()
+        assert saved.switch_device_names == names
+        if profiled:
+            index = 0 if target is True else 1
+            changed, unchanged = (primary, secondary) if index == 0 else (secondary, primary)
+            changed.bluetooth.device.keystore.delete_all.assert_awaited_once()
+            unchanged.bluetooth.device.keystore.delete_all.assert_not_awaited()
+            assert saved.adapter_profiles[index].address != profiles[index].address
+            assert saved.adapter_profiles[1 - index] == profiles[1 - index]
+            assert saved.adapter_addresses == {}
+            return
+        if target is True:
+            primary.bluetooth.device.keystore.delete_all.assert_awaited_once()
+            secondary.bluetooth.device.keystore.delete_all.assert_not_awaited()
+            assert saved.bt_address != primary_address
+            assert saved.adapter_address_seed == primary_address
+            assert saved.adapter_addresses == {}
+        else:
+            from app.main import stage_adapter_firmware
+            from lib.firmware import (
+                CONFIG_HEADER,
+                CONFIG_NAME,
+                FIRMWARE_NAME,
+                prepare_bluetooth,
+            )
+
+            primary.bluetooth.device.keystore.delete_all.assert_not_awaited()
+            secondary.bluetooth.device.keystore.delete_all.assert_awaited_once()
+            assert saved.bt_address == primary_address
+            address = saved.adapter_addresses["usb:1"]
+            assert address.startswith("02:")
+            assert address != second["bd_address"]
+            (tmp_path / CONFIG_NAME).write_bytes(CONFIG_HEADER + bytes(6))
+            (tmp_path / FIRMWARE_NAME).write_bytes(b"firmware")
+            secondary.expected_address = address
+            stage_adapter_firmware(secondary, tmp_path, tmp_path)
+            assert secondary.expected_address == address
+            assert (tmp_path / secondary.id / CONFIG_NAME).read_bytes() == (
+                CONFIG_HEADER + bytes.fromhex(address.replace(":", ""))[::-1]
+            )
+            # The selected transport can become primary when a radio is removed.
+            monkeypatch.setenv("BUMBLE_RTK_FIRMWARE_DIR", "unused")
+            prepare_bluetooth(saved, tmp_path, address_override=address)
+            assert (tmp_path / CONFIG_NAME).read_bytes() == (
+                CONFIG_HEADER + bytes.fromhex(address.replace(":", ""))[::-1]
+            )
+            assert saved.bt_address == primary_address

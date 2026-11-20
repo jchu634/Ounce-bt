@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/src/components/ui/button";
+import { captureAudioConstraints } from "@/src/lib/webcam";
 import {
   Select,
   SelectContent,
@@ -67,7 +68,7 @@ export function AudioInputSettings({
     try {
       const acquiredStream = await navigator.mediaDevices.getUserMedia({
         video: false,
-        audio: selectedId ? { deviceId: { exact: selectedId } } : true,
+        audio: captureAudioConstraints(selectedId),
       });
       if (!activeRef.current || disabled) {
         acquiredStream.getTracks().forEach((track) => track.stop());

@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "@/src/components/ui/toast";
 import {
   BluetoothDisconnectingError,
+  BluetoothPageTimeoutError,
   requestStatus,
   type BluetoothStatus,
 } from "@/src/lib/bluetooth";
 
-export function useSwitchConnection() {
+export function useSwitchConnection(sessionId?: string) {
   const [status, setStatus] = useState<BluetoothStatus | null>(null);
   const [selected, setSelected] = useState("");
   const [busy, setBusy] = useState(false);
@@ -32,7 +33,7 @@ export function useSwitchConnection() {
     let timer: ReturnType<typeof setTimeout>;
     async function refresh() {
       try {
-        const next = await requestStatus();
+        const next = await requestStatus(undefined, sessionId);
         if (!disposed) {
           acceptStatus(next);
           setStatusError(null);
@@ -51,7 +52,7 @@ export function useSwitchConnection() {
       disposed = true;
       clearTimeout(timer);
     };
-  }, []);
+  }, [sessionId]);
 
   async function update(
     method: "PUT" | "POST" | "DELETE",
@@ -60,21 +61,30 @@ export function useSwitchConnection() {
     setBusy(true);
     try {
       acceptStatus(
-        await requestStatus({
-          method,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        }),
+        await requestStatus(
+          {
+            method,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          },
+          sessionId,
+        ),
       );
     } catch (cause) {
       const disconnecting = cause instanceof BluetoothDisconnectingError;
+      const pageTimeout = cause instanceof BluetoothPageTimeoutError;
       toast.add({
         type: disconnecting ? "warning" : "error",
         priority: "high",
-        title: disconnecting ? "Please wait before reconnecting" : "Connection error",
-        description: disconnecting
-          ? cause.message
-          : `${cause instanceof Error ? cause.message : "Bluetooth operation failed"} Try connecting again. If the issue persists, restart the app.`,
+        title: disconnecting
+          ? "Please wait before reconnecting"
+          : pageTimeout
+            ? "Switch did not respond"
+            : "Connection error",
+        description:
+          disconnecting || pageTimeout
+            ? cause.message
+            : `${cause instanceof Error ? cause.message : "Bluetooth operation failed"} Try connecting again. If the issue persists, restart the app.`,
         timeout: 5000,
       });
     } finally {
@@ -93,11 +103,14 @@ export function useSwitchConnection() {
 
   async function rename(address: string, name: string): Promise<void> {
     acceptStatus(
-      await requestStatus({
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address, name }),
-      }),
+      await requestStatus(
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ address, name }),
+        },
+        sessionId,
+      ),
     );
   }
 

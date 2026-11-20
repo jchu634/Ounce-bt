@@ -1,6 +1,7 @@
 import asyncio
 import queue
 import sys
+from threading import Event
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -85,13 +86,78 @@ def test_browser_mode_does_not_require_token(tmp_path):
 def test_usb_driver_failure_is_reported_at_startup(tmp_path):
     app = app_for(tmp_path)
     with TestClient(app) as client:
-        app.state.transport_pending = True
-        assert client.get("/api/startup").json()["kind"] == "checking"
+        app.state.startup_phase = "starting_adapters"
+        assert client.get("/api/startup").json() == {
+            "kind": "checking",
+            "phase": "starting_adapters",
+            "ws_auth_required": True,
+        }
         app.state.usb_driver_error = True
         assert client.get("/api/startup").json() == {
             "kind": "usb_driver_error",
             "ws_auth_required": True,
         }
+
+
+def test_web_server_serves_startup_while_adapter_discovery_is_blocked(
+    tmp_path, monkeypatch
+):
+    import httpx2
+
+    import app.main as application
+
+    async def scenario():
+        desktop_ready = Event()
+        finish_discovery = Event()
+        discovery_started = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        servers = []
+        server_class = application.uvicorn.Server
+
+        def make_server(config):
+            config.port = 0
+            server = server_class(config)
+            servers.append(server)
+            return server
+
+        def discover():
+            loop.call_soon_threadsafe(discovery_started.set)
+            finish_discovery.wait(5)
+            return []
+
+        monkeypatch.setattr(application.uvicorn, "Server", make_server)
+        monkeypatch.setattr(application, "discover_winusb_adapters", discover)
+        monkeypatch.setattr(application, "application_dir", lambda: tmp_path)
+        monkeypatch.setattr(application, "setup_logging", lambda _: None)
+        frontend = tmp_path / "frontend" / "dist"
+        frontend.mkdir(parents=True)
+        (frontend / "index.html").write_text("<title>Ounce-bt</title>", encoding="utf-8")
+        config = Config(input_specs=[])
+        args = SimpleNamespace(nolog=False, auto_adapters=True)
+        task = asyncio.create_task(application.main(config, args, ready=desktop_ready))
+        try:
+            await asyncio.wait_for(discovery_started.wait(), 3)
+            assert desktop_ready.is_set()
+            port = servers[0].servers[0].sockets[0].getsockname()[1]
+            async with httpx2.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+                response = await client.get("/")
+                assert response.text == "<title>Ounce-bt</title>"
+                response = await client.get("/api/startup")
+                assert response.json() == {
+                    "kind": "checking",
+                    "phase": "discovering_adapters",
+                    "ws_auth_required": True,
+                }
+                response = await client.post("/api/application/close", json={})
+                assert response.json() == {"closing": True}
+                await asyncio.wait_for(asyncio.shield(task), 3)
+        finally:
+            finish_discovery.set()
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
 
 
 def test_bridge_only_exposes_token_to_local_application():
@@ -157,7 +223,7 @@ def test_bridge_save_refuses_external_pages():
 
 
 @pytest.mark.parametrize("platform", [sys.platform, "win32"])
-def test_window_close_cancels_backend(monkeypatch, platform):
+def test_window_close_requests_graceful_backend_shutdown(monkeypatch, platform):
     monkeypatch.setattr("app.desktop.sys", SimpleNamespace(platform=platform))
     import webview
 
@@ -181,10 +247,9 @@ def test_window_close_cancels_backend(monkeypatch, platform):
     ):
         assert len(ws_token) == 43
         ready.set()
-        try:
-            await asyncio.Future()
-        finally:
-            cleaned.append(True)
+        await asyncio.wait_for(shutdown_event.wait(), timeout=3)
+        await asyncio.sleep(0)
+        cleaned.append(True)
 
     run_application(Config(), None, backend)
     assert cleaned == [True]
@@ -223,7 +288,9 @@ def test_backend_failure_prevents_window_open(monkeypatch):
     create.assert_not_called()
 
 
-def test_web_server_closes_active_websockets_before_cancellation(tmp_path, monkeypatch):
+@pytest.mark.parametrize("cancel", [False, True])
+def test_web_server_closes_active_websockets(tmp_path, monkeypatch, capsys, cancel):
+    import httpx2
     from websockets.asyncio.client import connect
     from websockets.exceptions import ConnectionClosed
 
@@ -240,7 +307,9 @@ def test_web_server_closes_active_websockets_before_cancellation(tmp_path, monke
 
         monkeypatch.setattr(application.uvicorn, "Server", make_server)
         app = app_for(tmp_path)
-        task = asyncio.create_task(application.serve_web(app, "127.0.0.1", 0))
+        stop = asyncio.Event()
+        app.state.shutdown_event = stop
+        task = asyncio.create_task(application.serve_web(app, "127.0.0.1", 0, stop))
         try:
 
             async def started():
@@ -255,29 +324,39 @@ def test_web_server_closes_active_websockets_before_cancellation(tmp_path, monke
             ) as ws:
                 await ws.recv()
                 await ws.recv()
-                task.cancel()
-                with pytest.raises(asyncio.CancelledError):
+                if cancel:
+                    task.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await asyncio.wait_for(task, 3)
+                else:
+                    async with httpx2.AsyncClient() as client:
+                        response = await client.post(
+                            f"http://127.0.0.1:{port}/api/application/close", json={}
+                        )
+                        assert response.json() == {"closing": True}
                     await asyncio.wait_for(task, 3)
                 with pytest.raises(ConnectionClosed):
                     await ws.recv()
             assert not servers[0].server_state.connections
+            assert not servers[0].server_state.tasks
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(scenario())
+    server_log = capsys.readouterr().err
+    assert "Finished server process" in server_log
+    assert "Exception in ASGI application" not in server_log
 
 
-def test_browser_restart_cancels_backend_before_return():
+def test_browser_restart_allows_backend_to_finish():
     cleaned = []
 
     async def backend(config, args, *, shutdown_event, restart_callback):
-        try:
-            restart_callback()
-            shutdown_event.set()
-            await asyncio.Future()
-        finally:
-            cleaned.append(True)
+        restart_callback()
+        shutdown_event.set()
+        await asyncio.sleep(0)
+        cleaned.append(True)
 
     assert (
         run_application(

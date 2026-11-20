@@ -6,10 +6,13 @@ import {
   SpinnerGapIcon,
   TrashIcon,
 } from "@phosphor-icons/react";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState, type MouseEvent } from "react";
 import type { PresetInfo } from "@/src/lib/types";
 import { ControllerColoursDialog } from "@/src/components/settings/controller-colours-dialog";
-import { ControllerMappingDialog } from "@/src/components/settings/controller-mapping-dialog";
+import {
+  ControllerMappingDialog,
+  type MappingSettings,
+} from "@/src/components/settings/controller-mapping-dialog";
 import { Button } from "@/src/components/ui/button";
 import {
   Dialog,
@@ -30,7 +33,15 @@ import {
 } from "@/src/components/ui/select";
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/src/components/ui/tooltip";
 import { useControllers } from "@/src/hooks/use-controllers";
+import { useSocket } from "@/src/hooks/use-socket";
+import {
+  requestAdapters,
+  type Adapter,
+  type AdapterChange,
+  type AdapterInventory,
+} from "@/src/lib/adapters";
 import { connectionDetail, deviceName, type BluetoothStatus } from "@/src/lib/bluetooth";
 import { errorMessage } from "@/src/lib/errors";
 import { useSwitchConnection } from "@/src/lib/switch-connection";
@@ -64,9 +75,13 @@ export function ConnectionToggleButton({
 
   return (
     <Button
-      variant={active && status?.address ? "destructive" : "outline"}
+      variant={status?.state === "disconnected" ? "destructive" : "outline"}
       size="icon-sm"
-      className="rounded-lg"
+      className={cn(
+        "rounded-lg",
+        status?.state === "connected" &&
+          "border-transparent bg-green-700 text-white hover:bg-green-800 hover:text-white dark:bg-green-700 dark:hover:bg-green-800",
+      )}
       aria-label={action}
       title={action}
       disabled={disabled || (active ? !status?.address || reconnecting || disconnecting : !address)}
@@ -128,48 +143,233 @@ function ConnectionStatus({
             : "disconnected";
 
   return (
-    <p
-      className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
-      title={statusDetail}
-    >
-      <span className="shrink-0">{statusLabel}</span>
-      <span
-        aria-hidden
-        className={cn(
-          "size-1.5 shrink-0 rounded-full bg-current",
-          statusTone === "connected" && "bg-emerald-500",
-          statusTone === "pending" && "bg-amber-500",
-          statusTone === "error" && "bg-destructive",
-        )}
-      />
-      {status?.address && !statusError && (
-        <span className="min-w-0 truncate font-mono">{status.address}</span>
-      )}
+    <p className="flex shrink-0 items-center gap-1 text-sm text-muted-foreground">
+      <span>{statusLabel}</span>
+      <Tooltip>
+        <TooltipTrigger
+          render={<span tabIndex={0} />}
+          aria-label="Bluetooth connection details"
+          className="pointer-events-auto grid size-4 place-items-center rounded-full focus-visible:outline-2 focus-visible:outline-ring"
+        >
+          <span
+            aria-hidden
+            className={cn(
+              "size-1.5 rounded-full bg-current",
+              statusTone === "connected" && "bg-emerald-500",
+              statusTone === "pending" && "bg-amber-500",
+              statusTone === "error" && "bg-destructive",
+            )}
+          />
+        </TooltipTrigger>
+        <TooltipContent>
+          {statusDetail}
+          {status?.state === "disconnecting" && !statusError && status.address && (
+            <span className="font-mono">{status.address}</span>
+          )}
+        </TooltipContent>
+      </Tooltip>
     </p>
   );
 }
 
 export function ConnectionPanel({ onEditPreset }: { onEditPreset: (preset: PresetInfo) => void }) {
-  const connection = useSwitchConnection();
   const controller = useControllers();
+  const { status, adapterStatuses, lastError, send } = useSocket();
+  const selectedAdapters = Object.keys(adapterStatuses);
+  const [inventory, setInventory] = useState<AdapterInventory | null>(null);
+  const [settingsError, setSettingsError] = useState<{ id: string; message: string } | null>(null);
+  const [pending, setPending] = useState<AdapterChange | null>(null);
+  const inventoryVersion = useRef(0);
+  const selectionAnchor = useRef<string | null>(null);
+  const pendingSelection = useRef<string[] | null>(null);
+
+  useEffect(() => {
+    const pending = pendingSelection.current;
+    if (
+      pending &&
+      pending.length === Object.keys(adapterStatuses).length &&
+      pending.every((id) => Object.hasOwn(adapterStatuses, id))
+    ) {
+      pendingSelection.current = null;
+    }
+  }, [adapterStatuses]);
+
+  useEffect(() => {
+    if (lastError?.message === "Unknown adapter") pendingSelection.current = null;
+  }, [lastError]);
+
+  useEffect(() => {
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function refresh() {
+      const version = inventoryVersion.current;
+      try {
+        const next = await requestAdapters();
+        if (!disposed && version === inventoryVersion.current && version % 2 === 0) {
+          setInventory(next);
+        }
+      } catch {
+        // The legacy connection card still works when inventory is unavailable.
+      } finally {
+        if (!disposed) timer = setTimeout(() => void refresh(), 1000);
+      }
+    }
+    void refresh();
+    return () => {
+      disposed = true;
+      clearTimeout(timer);
+    };
+  }, []);
+
+  async function saveSettings(change: AdapterChange) {
+    if (inventoryVersion.current % 2 !== 0) return;
+    inventoryVersion.current++;
+    setPending(change);
+    setSettingsError(null);
+    try {
+      setInventory(await requestAdapters(change));
+    } catch (cause) {
+      setSettingsError({ id: change.adapterId, message: errorMessage(cause) });
+    } finally {
+      inventoryVersion.current++;
+      setPending(null);
+    }
+  }
+
+  function selectAdapter(id: string, modifiers: AdapterSelectionModifiers) {
+    if (!inventory) return;
+    const adapterIds = inventory.adapters.map((adapter) => adapter.id);
+    const current = pendingSelection.current ?? selectedAdapters;
+    const additive = modifiers.ctrlKey || modifiers.metaKey;
+    let next = [id];
+    if (modifiers.shiftKey) {
+      const anchorId = selectionAnchor.current ?? current[0];
+      const index = adapterIds.indexOf(id);
+      const anchor = anchorId ? adapterIds.indexOf(anchorId) : -1;
+      const start = anchor < 0 ? index : anchor;
+      const range = adapterIds.slice(Math.min(start, index), Math.max(start, index) + 1);
+      next = additive
+        ? adapterIds.filter(
+            (adapterId) => current.includes(adapterId) || range.includes(adapterId),
+          )
+        : range;
+    } else {
+      selectionAnchor.current = id;
+      if (additive) {
+        next = current.includes(id)
+          ? current.filter((adapterId) => adapterId !== id)
+          : adapterIds.filter((adapterId) => current.includes(adapterId) || adapterId === id);
+        if (next.length === 0) return;
+      }
+    }
+    const [first, ...rest] = next;
+    if (first === undefined) return;
+    const sent = send(
+      rest.length === 0
+        ? { type: "select_adapter", adapter_id: first }
+        : { type: "select_adapters", adapter_ids: next },
+    );
+    if (sent) pendingSelection.current = next;
+  }
+
+  const legacyMapping: MappingSettings = {
+    available: controller.available,
+    options: controller.controllers.map((pad) => ({ id: pad.guid, name: pad.name })),
+    active: controller.active,
+    controllerGuid: controller.activeInfo?.guid ?? null,
+    preset: controller.preset,
+    error: controller.error,
+    pending: controller.pending,
+    macroMode: status?.mode === "macro",
+    allowUnassign: false,
+    selectController: (id) => {
+      if (id !== null) void controller.update({ kind: "selecting", id });
+    },
+    applyPreset: (preset) => void controller.update({ kind: "applying", preset }),
+  };
 
   return (
     <section aria-label="Connection" className="min-w-0 space-y-2">
       <h2 className="text-lg font-semibold">Connection</h2>
-      <ConnectionCard connection={connection} controller={controller} onEditPreset={onEditPreset} />
+      {inventory?.adapters.length ? (
+        inventory.adapters.map((adapter) => {
+          const pad = inventory.controllers.find((entry) => entry.id === adapter.controller_id);
+          const multiple = inventory.adapters.length > 1;
+          const mapping: MappingSettings = {
+            available: inventory.controllers_available,
+            options: inventory.controllers.map((entry) => ({
+              id: entry.id.toString(),
+              name: inventory.controllers.some(
+                (other) => other.id !== entry.id && other.name === entry.name,
+              )
+                ? `${entry.name} (${entry.id})`
+                : entry.name,
+              disabled: inventory.adapters.some(
+                (slot) => slot.id !== adapter.id && slot.controller_id === entry.id,
+              ),
+            })),
+            active: adapter.controller_id?.toString() ?? null,
+            controllerGuid: pad?.guid ?? null,
+            preset: adapter.preset,
+            pending: pending ? (pending.kind === "assign" ? "selecting" : "applying") : null,
+            error: settingsError?.id === adapter.id ? settingsError.message : null,
+            macroMode: adapter.macro_mode,
+            allowUnassign: true,
+            selectController: (id) =>
+              void saveSettings({
+                kind: "assign",
+                adapterId: adapter.id,
+                controllerId: id === null ? null : Number(id),
+              }),
+            applyPreset: (preset) =>
+              void saveSettings({ kind: "preset", adapterId: adapter.id, preset }),
+          };
+          return (
+            <ConnectionCard
+              key={adapter.id}
+              adapter={adapter}
+              controllerName={pad?.name}
+              mapping={mapping}
+              onEditPreset={onEditPreset}
+              inputTarget={
+                multiple
+                  ? {
+                      selected: selectedAdapters.includes(adapter.id),
+                      select: (modifiers) => selectAdapter(adapter.id, modifiers),
+                    }
+                  : undefined
+              }
+            />
+          );
+        })
+      ) : (
+        <ConnectionCard
+          key="primary"
+          controllerName={controller.activeInfo?.name}
+          mapping={legacyMapping}
+          onEditPreset={onEditPreset}
+        />
+      )}
     </section>
   );
 }
 
+type AdapterSelectionModifiers = Pick<MouseEvent, "shiftKey" | "ctrlKey" | "metaKey">;
+
 function ConnectionCard({
-  connection,
-  controller,
+  adapter,
+  controllerName = "No controller selected",
+  mapping,
   onEditPreset,
+  inputTarget,
 }: {
-  connection: SwitchConnectionState;
-  controller: ReturnType<typeof useControllers>;
+  adapter?: Adapter;
+  controllerName?: string;
+  mapping: MappingSettings;
   onEditPreset: (preset: PresetInfo) => void;
+  inputTarget?: { selected: boolean; select: (modifiers: AdapterSelectionModifiers) => void };
 }) {
+  const connection = useSwitchConnection(adapter?.id === "primary" ? undefined : adapter?.id);
   const {
     status,
     statusError,
@@ -182,7 +382,6 @@ function ConnectionCard({
     rename,
   } = connection;
   const id = useId();
-  const controllerName = controller.activeInfo?.name ?? "No controller selected";
   const [deleting, setDeleting] = useState<{ address: string; name: string } | null>(null);
   const [renaming, setRenaming] = useState<{ address: string; name: string } | null>(null);
   const [savingName, setSavingName] = useState(false);
@@ -207,11 +406,44 @@ function ConnectionCard({
   return (
     <article
       aria-labelledby={`${id}-controller`}
-      className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-2 rounded-xl border border-border bg-card p-2.5 text-card-foreground"
+      className={cn(
+        "relative isolate grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-2 rounded-xl border border-border bg-card p-2.5 text-card-foreground",
+        inputTarget?.selected && "border-primary ring-1 ring-primary",
+      )}
     >
-      <ControllerColoursDialog />
-
-      <div className="min-w-0 space-y-1.5">
+      {inputTarget && (
+        <button
+          type="button"
+          aria-label={`Send manual and macro input through ${adapter?.transport}`}
+          aria-pressed={inputTarget.selected}
+          title="Shift to select a range. Ctrl+Shift to add a range. Ctrl to toggle."
+          onClick={inputTarget.select}
+          onKeyDown={(event) => {
+            if (
+              (event.key === "Enter" || event.key === " ") &&
+              (event.shiftKey || event.ctrlKey || event.metaKey)
+            ) {
+              event.preventDefault();
+              if (!event.repeat) inputTarget.select(event);
+            }
+          }}
+          className="absolute inset-0 z-0 cursor-pointer rounded-xl outline-offset-2 focus-visible:outline-2 focus-visible:outline-ring"
+        />
+      )}
+      <div className="relative z-10 self-center">
+        <ControllerColoursDialog adapterId={adapter?.id} />
+        {!!status?.player_number && (
+          <p className="pointer-events-none text-center text-xs text-muted-foreground">
+            Player {status.player_number}
+          </p>
+        )}
+      </div>
+      <div
+        className={cn(
+          "relative z-10 min-w-0 space-y-1.5",
+          inputTarget && "pointer-events-none [&_button]:pointer-events-auto",
+        )}
+      >
         <div className="flex min-w-0 items-center gap-2">
           <h3
             id={`${id}-controller`}
@@ -222,18 +454,40 @@ function ConnectionCard({
           </h3>
           <ConnectionStatus status={status} statusError={statusError} />
           <div className="ms-auto shrink-0">
-            <ControllerMappingDialog controller={controller} onEditPreset={onEditPreset} />
+            <ControllerMappingDialog
+              controller={mapping}
+              usbAdapter={
+                adapter
+                  ? { transport: adapter.transport, address: adapter.local_address }
+                  : undefined
+              }
+              onEditPreset={onEditPreset}
+            />
           </div>
         </div>
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          <ConnectionToggleButton
-            status={status}
-            address={address}
-            disabled={disabled}
-            busy={busy}
-            onReconnect={() => void update("POST", { address })}
-            onDisconnect={() => void update("POST", { action: "disconnect" })}
-          />
+          <div className="flex shrink-0 items-center gap-1.5">
+            <ConnectionToggleButton
+              status={status}
+              address={address}
+              disabled={disabled}
+              busy={busy}
+              onReconnect={() => void update("POST", { address })}
+              onDisconnect={() => void update("POST", { action: "disconnect" })}
+            />
+            <Button
+              variant="outline"
+              size="icon-sm"
+              className="rounded-lg"
+              aria-label={pairingAction}
+              aria-pressed={pairing}
+              title={pairingAction}
+              disabled={disabled || (!pairing && active)}
+              onClick={() => void update("PUT", { pairing: !pairing })}
+            >
+              <BluetoothIcon weight={pairing ? "bold" : "regular"} />
+            </Button>
+          </div>
           <div className="min-w-24 flex-1">
             <Select
               value={address || null}
@@ -271,17 +525,6 @@ function ConnectionCard({
             }}
           >
             <PencilSimpleIcon />
-          </Button>
-          <Button
-            variant={pairing ? "secondary" : "default"}
-            size="icon-sm"
-            className="rounded-lg"
-            aria-label={pairingAction}
-            title={pairingAction}
-            disabled={disabled || (!pairing && active)}
-            onClick={() => void update("PUT", { pairing: !pairing })}
-          >
-            <BluetoothIcon weight={pairing ? "bold" : "regular"} />
           </Button>
           <div className="flex shrink-0 items-center gap-1.5">
             <Dialog
@@ -339,6 +582,7 @@ function ConnectionCard({
           </p>
         )}
         {statusError && <p className="text-xs text-destructive">{statusError}</p>}
+        {adapter?.error && <p className="text-xs text-destructive">{adapter.error}</p>}
       </div>
 
       <Dialog

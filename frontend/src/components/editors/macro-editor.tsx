@@ -106,7 +106,7 @@ export const MacroEditor = forwardRef<MacroEditorHandle, MacroEditorProps>(
     const [selectionPromptOpen, setSelectionPromptOpen] = useState(false);
     const editorHandle = useRef<JsonEditorHandle | null>(null);
     const pendingSelection = useRef<(() => void) | null>(null);
-    const { macroActive, isPaused, startInline, pause, resume, cancel } =
+    const { activeMacros, canStart, canPause, canResume, startInline, pause, resume, cancel } =
       useMacroRunner();
 
     useEffect(() => {
@@ -555,28 +555,25 @@ export const MacroEditor = forwardRef<MacroEditorHandle, MacroEditorProps>(
                 size="sm"
                 variant="outline"
                 onClick={run}
-                disabled={editorMode === "blocks" && !blockValid}
+                disabled={!canStart || (editorMode === "blocks" && !blockValid)}
               >
                 <PlayIcon size={14} weight="fill" /> Run
               </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={isPaused ? resume : pause}
-                disabled={!macroActive}
-              >
-                {isPaused ? (
-                  <PlayIcon size={14} weight="fill" />
-                ) : (
-                  <PauseIcon size={14} weight="fill" />
-                )}
-                {isPaused ? "Resume" : "Pause"}
-              </Button>
+              {(canPause || !canResume) && (
+                <Button size="sm" variant="outline" onClick={pause} disabled={!canPause}>
+                  <PauseIcon size={14} weight="fill" /> Pause
+                </Button>
+              )}
+              {canResume && (
+                <Button size="sm" variant="outline" onClick={resume}>
+                  <PlayIcon size={14} weight="fill" /> Resume
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="destructive"
                 onClick={cancel}
-                disabled={!macroActive}
+                disabled={activeMacros.length === 0}
               >
                 <StopIcon size={14} weight="fill" /> Stop
               </Button>

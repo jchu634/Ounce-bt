@@ -17,6 +17,46 @@ from lib.firmware import (
 )
 
 
+def test_adapter_profiles_survive_replacement_and_keep_unused_slots(tmp_path, monkeypatch):
+    monkeypatch.setattr("lib.config.config_path", lambda: tmp_path / "config.json")
+    config = Config(
+        bt_address="98:B6:E9:01:02:03",
+        adapter_addresses={"usb:2": "02:00:00:00:00:02"},
+        controller_guid="old-controller",
+        adapter_presets={"usb:2": "playstation"},
+    )
+    store = ConfigStore(config)
+    first, second = store.ensure_adapter_profiles(["usb:1", "usb:2"])
+    assert first.address == config.bt_address
+    assert first.controller_guid == "old-controller"
+    assert second.address == "02:00:00:00:00:02"
+    assert second.preset == "playstation"
+    store.update_adapter_profile(1, controller_guid="second-controller")
+
+    reloaded = ConfigStore(Config.load())
+    assert reloaded.ensure_adapter_profiles(["usb:9"]) == [first]
+    assert len(reloaded.config.adapter_profiles) == 2
+    profiles = reloaded.ensure_adapter_profiles(["usb:2", "usb:9", "usb:4"])
+    assert profiles[0] == first
+    assert profiles[1].address == second.address
+    assert profiles[1].controller_guid == "second-controller"
+    assert profiles[2].controller_guid == ""
+    assert len({profile.address for profile in profiles}) == 3
+    assert Config.load().adapter_profiles == profiles
+
+    (tmp_path / FIRMWARE_NAME).write_bytes(b"firmware")
+    original = CONFIG_HEADER + bytes(6)
+    (tmp_path / CONFIG_NAME).write_bytes(original)
+    for index, profile in enumerate(profiles):
+        session = application.AdapterSession(
+            f"slot-{index}", "usb:9", queue.Queue(), None, expected_address=profile.address
+        )
+        application.stage_adapter_firmware(session, tmp_path, tmp_path)
+        expected = CONFIG_HEADER + bytes.fromhex(profile.address.replace(":", ""))[::-1]
+        assert (session.firmware_dir / CONFIG_NAME).read_bytes() == expected
+    assert (tmp_path / CONFIG_NAME).read_bytes() == original
+
+
 def test_generated_address_is_persisted_and_binary_matches(tmp_path, monkeypatch):
     monkeypatch.setattr("lib.config.config_path", lambda: tmp_path / "config.json")
     monkeypatch.setenv("BUMBLE_RTK_FIRMWARE_DIR", "unused")
@@ -143,7 +183,13 @@ def test_missing_firmware_never_opens_transport(
     monkeypatch.setattr("sys.argv", ["main.py"])
     served = []
 
-    async def serve(app, host, port, stop, **kwargs):
+    async def serve(app, host, port, stop, *, on_started):
+        async def wait_for_firmware_status():
+            while app.state.startup_phase is not None:
+                await asyncio.sleep(0.01)
+
+        on_started()
+        await asyncio.wait_for(wait_for_firmware_status(), 3)
         served.append(app.state.missing_firmware)
         stop.set()
 

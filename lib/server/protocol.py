@@ -59,6 +59,11 @@ class MacroResume:
     pass
 
 
+@dataclass(frozen=True, slots=True)
+class SelectAdapter:
+    adapter_ids: tuple[str, ...]
+
+
 InboundMessage = (
     EventMessage
     | StateMessage
@@ -67,6 +72,7 @@ InboundMessage = (
     | MacroCancel
     | MacroPause
     | MacroResume
+    | SelectAdapter
 )
 
 
@@ -89,6 +95,20 @@ def parse_message(raw: str) -> InboundMessage:
         raise ProtocolError("top-level payload must be a JSON object")
 
     msg_type = payload.get("type")
+    if msg_type == "select_adapter":
+        adapter_id = payload.get("adapter_id")
+        if not isinstance(adapter_id, str) or not adapter_id:
+            raise ProtocolError("select_adapter requires an adapter_id")
+        return SelectAdapter((adapter_id,))
+    if msg_type == "select_adapters":
+        adapter_ids = payload.get("adapter_ids")
+        if (
+            not isinstance(adapter_ids, list)
+            or not adapter_ids
+            or not all(isinstance(value, str) and value for value in adapter_ids)
+        ):
+            raise ProtocolError("select_adapters requires a non-empty list of adapter IDs")
+        return SelectAdapter(tuple(dict.fromkeys(adapter_ids)))
     if msg_type == "event":
         action = payload.get("action")
         if not isinstance(action, dict):

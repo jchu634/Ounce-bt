@@ -29,16 +29,26 @@ def _address_offset(contents: bytes) -> int:
     raise ValueError(f"{CONFIG_NAME} has no six-byte Bluetooth address entry")
 
 
-def prepare_bluetooth(config: Config, root: Path) -> None:
+def prepare_bluetooth(
+    config: Config, root: Path, *, address_override: str | None = None
+) -> None:
     """Keep the saved identity and Realtek address override in sync."""
-    path = root / CONFIG_NAME
-    contents = path.read_bytes()
-    generated = not config.bt_address or not config.bt_address.strip()
-    address = (
+    generated = not address_override and (not config.bt_address or not config.bt_address.strip())
+    address = address_override or (
         "98:B6:E9:" + ":".join(f"{b:02X}" for b in secrets.token_bytes(3))
         if generated
         else config.bt_address
     )
+    patch_address(root / CONFIG_NAME, root / CONFIG_NAME, address)
+    if generated:
+        config.bt_address = address
+        config.save()
+    # Bumble otherwise searches its own cache rather than the application root.
+    os.environ["BUMBLE_RTK_FIRMWARE_DIR"] = str(root)
+
+
+def patch_address(source: Path, path: Path, address: str) -> None:
+    contents = source.read_bytes()
     parts = address.split(":")
     if len(parts) != 6 or any(len(part) != 2 for part in parts):
         raise ValueError("bt_address must contain six colon-separated hex bytes")
@@ -48,15 +58,10 @@ def prepare_bluetooth(config: Config, root: Path) -> None:
     else:
         address_offset = _address_offset(contents)
         updated = contents[:address_offset] + mac[::-1] + contents[address_offset + 6 :]
-    if updated != contents:
+    if source != path or updated != contents:
         temporary = path.with_suffix(".bin.tmp")
         temporary.write_bytes(updated)
         temporary.replace(path)
-    if generated:
-        config.bt_address = address
-        config.save()
-    # Bumble otherwise searches its own cache rather than the application root.
-    os.environ["BUMBLE_RTK_FIRMWARE_DIR"] = str(root)
 
 
 def missing_firmware(root: Path) -> str | None:

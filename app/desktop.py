@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import secrets
 import sys
@@ -13,6 +14,8 @@ import webview
 
 from lib.config import application_dir
 from lib.server.files import validate_name
+
+logger = logging.getLogger("switch_pair")
 
 
 class DesktopBridge:
@@ -49,17 +52,30 @@ class DesktopBridge:
         return True
 
 
-async def _run_backend_until_stopped(backend, config, args, stop, **kwargs):
-    task = asyncio.create_task(backend(config, args, shutdown_event=stop, **kwargs))
-    stopped = asyncio.create_task(stop.wait())
-    try:
-        await asyncio.wait({task, stopped}, return_when=asyncio.FIRST_COMPLETED)
-        if task.done():
-            await task
-    finally:
-        task.cancel()
-        stopped.cancel()
-        await asyncio.gather(task, stopped, return_exceptions=True)
+class WindowsDesktopBridge(DesktopBridge):
+    def __init__(self, token, origin):
+        super().__init__(token, origin)
+        from app.audio_monitor import AudioMonitor
+
+        self._audio = AudioMonitor()
+
+    def start_capture_audio(self, label):
+        self._check_origin()
+        from pygame import error as pygame_error
+
+        try:
+            return self._audio.start(label)
+        except (OSError, pygame_error, RuntimeError) as error:
+            logger.warning("Native capture audio unavailable: %s", error)
+            return None
+
+    def set_capture_volume(self, session, volume):
+        self._check_origin()
+        self._audio.set_volume(session, volume)
+
+    def stop_capture_audio(self, session):
+        self._check_origin()
+        self._audio.stop(session)
 
 
 def run_application(config, args, backend):
@@ -76,11 +92,7 @@ def run_application(config, args, backend):
     if not config.webview_enabled:
         if config.ws_auth_required:
             raise ValueError("Browser mode requires ws_auth_required=false")
-        asyncio.run(
-            _run_backend_until_stopped(
-                restartable_backend, config, args, asyncio.Event()
-            )
-        )
+        asyncio.run(restartable_backend(config, args, shutdown_event=asyncio.Event()))
         return restart_requested.is_set()
     if config.web_host not in ("127.0.0.1", "localhost", "::1"):
         raise ValueError("The desktop web server must bind to localhost")
@@ -90,7 +102,8 @@ def run_application(config, args, backend):
     launch_nonce = secrets.token_hex(16)
     host = f"[{config.web_host}]" if ":" in config.web_host else config.web_host
     url = f"http://{host}:{config.web_port}/?launch={launch_nonce}"
-    bridge = DesktopBridge(token, ("http", f"{host}:{config.web_port}"))
+    bridge_class = WindowsDesktopBridge if sys.platform == "win32" else DesktopBridge
+    bridge = bridge_class(token, ("http", f"{host}:{config.web_port}"))
     ready = threading.Event()
     finished = threading.Event()
     closed = threading.Event()
@@ -99,8 +112,8 @@ def run_application(config, args, backend):
     stop = asyncio.Event()
 
     async def run_backend():
-        await _run_backend_until_stopped(
-            restartable_backend, config, args, stop, ws_token=token, ready=ready
+        await restartable_backend(
+            config, args, shutdown_event=stop, ws_token=token, ready=ready
         )
 
     def worker():
@@ -137,7 +150,7 @@ def run_application(config, args, backend):
         if finished.is_set():
             return
         window = webview.create_window(
-            "Ounce-bt", url, js_api=bridge, width=1280, height=800, min_size=(400, 500)
+            "Ounce-bt", url, js_api=bridge, width=1550, height=800, min_size=(400, 500)
         )
         bridge._window = window
         window.events.closed += request_stop
@@ -161,8 +174,12 @@ def run_application(config, args, backend):
             options["icon"] = str(application_dir() / "frontend/public/icon-512.png")
         webview.start(monitor_backend, private_mode=False, **options)
     finally:
-        request_stop()
-        thread.join()
+        try:
+            if isinstance(bridge, WindowsDesktopBridge):
+                bridge._audio.close()
+        finally:
+            request_stop()
+            thread.join()
     if failures:
         raise failures[0]
 

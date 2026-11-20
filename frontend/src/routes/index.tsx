@@ -25,13 +25,13 @@ function PreviewPage() {
   const settings = useRef<SettingsDialogHandle>(null);
 
   return (
-    <div className="flex h-full w-full flex-col gap-6 bg-background p-4">
+    <div className="flex w-full flex-col gap-6 bg-background p-4 lg:h-dvh lg:overflow-hidden">
       <SettingsDialog ref={settings} />
-      <div className="flex w-full flex-col items-start gap-4 lg:flex-row">
-        <div className="flex w-full min-w-0 items-center justify-center lg:sticky lg:top-4 lg:h-[calc(100dvh-6rem)] lg:flex-1">
+      <div className="flex w-full flex-col items-start gap-4 lg:min-h-0 lg:flex-1 lg:flex-row">
+        <div className="flex w-full min-w-0 items-center justify-center lg:h-full lg:flex-1">
           <CapturePreview />
         </div>
-        <div className="flex w-full min-w-0 flex-col space-y-4 lg:w-1/3 lg:shrink-0">
+        <div className="app-scrollbar flex w-full min-w-0 flex-col space-y-4 lg:h-full lg:w-1/3 lg:shrink-0 lg:overflow-y-auto lg:overscroll-contain lg:px-1 lg:py-1 [&>*]:shrink-0">
           <ConnectionPanel onEditPreset={(preset) => settings.current?.openPreset(preset)} />
           <MacroRunPanel
             names={macroList.kind === "loaded" ? macroList.names : []}

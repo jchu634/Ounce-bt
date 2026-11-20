@@ -1,5 +1,8 @@
 {
+  "adapter_colours": {},
+  "adapter_presets": {},
   "bt_address": "98:B6:E9:19:13:08",
+  "bumble_logging": false,
   "controller_colours": {
     "body": "#000000",
     "buttons": "#828282",
@@ -8,6 +11,8 @@
   },
   "controller_guid": "",
   "controller_presets": {},
+  "controller_vibration": {},
+  "debug_enabled": false,
   "device_config": "pro_controller.json",
   "firmware_dir": null,
   "input_specs": [

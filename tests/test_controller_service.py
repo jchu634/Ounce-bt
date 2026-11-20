@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import queue
+from concurrent.futures import Future
+from unittest.mock import Mock
 
 import pygame
+import pytest
 from pygame import event
 
 from app.input.controller_service import ControllerInfo, ControllerService
@@ -12,6 +15,7 @@ from lib.input.presets import (
     detect_controller_preset,
     resolve_controller_preset,
 )
+from lib.input.state import NEUTRAL, Button, ControllerState
 
 
 def test_controller_type_detection_uses_name_and_sdl_vendor_guid():
@@ -73,6 +77,90 @@ def test_select_resolves_and_reports_controller_preset(monkeypatch):
     assert reported == [PresetSelection("playstation", preset)]
 
 
+def test_identical_controllers_keep_independent_routes_after_hotplug(monkeypatch):
+    service = ControllerService(queue.Queue())
+    first = ControllerInfo("same-guid", 0, "Pad", 4, 10, 1, instance_id=10)
+    second = ControllerInfo("same-guid", 1, "Pad", 4, 10, 1, instance_id=11)
+    service._controllers = [first, second]
+    route = service.add_route("adapter-2")
+
+    class Capture:
+        def __init__(self, output, *, instance_id, **kwargs):
+            self.output = output
+            self.instance_id = instance_id
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def join(self, timeout=None):
+            pass
+
+        def is_alive(self):
+            return False
+
+    monkeypatch.setattr("app.input.controller_service.PygameInputThread", Capture)
+    service._assign("primary", 10)
+    service._assign("adapter-2", 11)
+    with pytest.raises(ValueError, match="already assigned"):
+        service._assign("adapter-2", 10)
+    state = ControllerState(Button.A)
+    route.capture.output.put(state)
+    assert route.input_queue.get_nowait() == state
+    assert service._queue.get_nowait() == NEUTRAL
+
+    def refresh():
+        service._controllers = [
+            ControllerInfo("same-guid", 0, "Pad", 4, 10, 1, instance_id=11)
+        ]
+        return True
+
+    monkeypatch.setattr(event, "pump", lambda: None)
+    monkeypatch.setattr(
+        event, "get", lambda: [event.Event(pygame.JOYDEVICEREMOVED, instance_id=10)]
+    )
+    monkeypatch.setattr(service, "_refresh_controllers", refresh)
+    service._pump_and_handle_hotplug()
+
+    assert service.active_guid is None
+    assert route.capture.instance_id == 11
+    assert route.controller.index == 0
+    service._assign("adapter-2", None)
+    assert route.input_queue.get_nowait() == NEUTRAL
+
+
+def test_profile_controller_restore_requires_an_available_unambiguous_match(monkeypatch):
+    saved = Mock()
+    service = ControllerService(
+        queue.Queue(),
+        saved_assignments={"primary": "missing", "adapter-2": "shared"},
+        on_assignment=saved,
+    )
+    route = service.add_route("adapter-2")
+    first = ControllerInfo("shared", 0, "Pad", 4, 10, 1, instance_id=10)
+    second = ControllerInfo("shared", 1, "Pad", 4, 10, 1, instance_id=11)
+    service._controllers = [first, second]
+    monkeypatch.setattr("app.input.controller_service.PygameInputThread", Mock())
+
+    service._restore_assignments()
+    assert service.active_guid is None
+    assert route.controller is None
+
+    service._controllers = [second]
+    service._restore_assignments()
+    assert route.controller == second
+    saved.assert_not_called()
+
+    assigned = Future()
+    service._handle("assign", ("adapter-2", None), assigned)
+    assert assigned.result() is None
+    saved.assert_called_once_with("adapter-2", "")
+    service._restore_assignments()
+    assert route.controller is None
+
+
 def test_poll_without_hotplug_does_not_reprobe_active_joystick(monkeypatch):
     """Routine polling must not invalidate the active capture joystick."""
     service = ControllerService(queue.Queue())
@@ -126,7 +214,8 @@ def test_service_initializes_event_queue_without_capture():
         display.quit()
 
 
-def test_hotplug_connect_disconnect_reconnect(monkeypatch):
+@pytest.mark.parametrize("multiple_adapters", [False, True])
+def test_hotplug_connect_disconnect_reconnect(monkeypatch, multiple_adapters):
     from app.input.pygame_source import PygameInputThread
     from lib.input.state import NEUTRAL
 
@@ -134,7 +223,12 @@ def test_hotplug_connect_disconnect_reconnect(monkeypatch):
     service = ControllerService(
         queue.Queue(), on_change=lambda devices, active: notifications.append((devices, active))
     )
-    controller = ControllerInfo("guid-1", 0, "Pad", 4, 10, 1)
+    if multiple_adapters:
+        service.add_route("adapter-2")
+    controller = ControllerInfo(
+        "0300b7e67e0500000920000000006803", 0,
+        "Nintendo Switch Pro Controller", 6, 20, 0, instance_id=1,
+    )
     connected = []
     pending = []
     captures = []
@@ -178,6 +272,14 @@ def test_hotplug_connect_disconnect_reconnect(monkeypatch):
             assert service._queue.get_nowait() == NEUTRAL
         assert len(captures) == 2
         assert all(not capture.is_alive() for capture in captures)
+
+        service._assign("primary", None)
+        connected.append(controller)
+        pending.append(event.Event(pygame.JOYDEVICEADDED, device_index=0))
+        service._pump_and_handle_hotplug()
+        assert service._controllers == [controller]
+        assert service._active_guid is None
+        assert service._capture is None
     finally:
         service._shutdown_captures()
 

@@ -8,7 +8,7 @@ import { useSocket } from "@/src/hooks/use-socket";
 import type { MacroDoc } from "@/src/lib/types";
 
 export function useMacroRunner() {
-  const { status, send } = useSocket();
+  const { adapterStatuses, send } = useSocket();
 
   const startByName = useCallback(
     (name: string) => send({ type: "macro", op: "start", name }),
@@ -24,14 +24,14 @@ export function useMacroRunner() {
   const resume = useCallback(() => send({ type: "macro", op: "resume" }), [send]);
   const cancel = useCallback(() => send({ type: "macro", op: "cancel" }), [send]);
 
-  const mode = status?.mode ?? "manual";
-  const macro = status?.macro ?? null;
+  const statuses = Object.values(adapterStatuses);
+  const activeMacros = statuses.flatMap(({ macro }) => (macro ? [macro] : []));
 
   return {
-    mode,
-    macro,
-    macroActive: macro !== null && mode === "macro",
-    isPaused: macro?.state === "paused",
+    activeMacros,
+    canStart: statuses.some(({ mode }) => mode === "manual"),
+    canPause: activeMacros.some(({ state }) => state === "running"),
+    canResume: activeMacros.some(({ state }) => state === "paused"),
     startByName,
     startInline,
     pause,

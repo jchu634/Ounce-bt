@@ -1,4 +1,5 @@
 import { Data, Effect } from "effect";
+import type { Adapter } from "./adapters";
 import type {
   ConfigSnapshot,
   ControllerInfo,
@@ -133,18 +134,25 @@ export const renameMacro = (name: string, newName: string) =>
     body: JSON.stringify({ name: newName }),
   });
 
+export type BluetoothDiagnostics = {
+  bd_address: string | null;
+  bluetooth: { available: boolean; state: string; pairing: boolean };
+  acl_connected: boolean;
+  hid_control_ready: boolean;
+  hid_interrupt_ready: boolean;
+  switch_devices: { address: string; name: string }[];
+};
+
 export const getDebugStatus = () =>
   requestJson<
-    {
-      bd_address: string | null;
-      bluetooth: { state: string; pairing: boolean };
-      acl_connected: boolean;
-      hid_control_ready: boolean;
-      hid_interrupt_ready: boolean;
-      switch_devices: { address: string; name: string }[];
+    BluetoothDiagnostics & {
+      adapters: (Adapter & BluetoothDiagnostics & {
+        controller_name: string | null;
+        address_regeneration_available: boolean;
+      })[];
       address_regeneration_available: boolean;
       restart_available: boolean;
-    } & Record<string, unknown>
+    }
   >("/api/debug");
 
 export type DebugChanges = {
@@ -155,7 +163,7 @@ export type DebugChanges = {
   tick_rate_hz: number;
 };
 
-export const saveDebugAndRestart = (changes: DebugChanges, regenerateAddress: boolean) =>
+export const saveDebugAndRestart = (changes: DebugChanges, regenerateAddress: string | false) =>
   requestJson<{ restarting: boolean }>("/api/debug", {
     method: "POST",
     body: JSON.stringify({ changes, regenerate_address: regenerateAddress }),
