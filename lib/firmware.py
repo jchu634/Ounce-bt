@@ -29,10 +29,12 @@ def _address_offset(contents: bytes) -> int:
     raise ValueError(f"{CONFIG_NAME} has no six-byte Bluetooth address entry")
 
 
-def prepare_bluetooth(config: Config, root: Path) -> None:
+def prepare_bluetooth(
+    config: Config, root: Path, *, address_override: str | None = None
+) -> None:
     """Keep the saved identity and Realtek address override in sync."""
-    generated = not config.bt_address or not config.bt_address.strip()
-    address = (
+    generated = not address_override and (not config.bt_address or not config.bt_address.strip())
+    address = address_override or (
         "98:B6:E9:" + ":".join(f"{b:02X}" for b in secrets.token_bytes(3))
         if generated
         else config.bt_address

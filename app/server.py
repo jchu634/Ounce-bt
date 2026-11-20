@@ -296,42 +296,48 @@ async def bluetooth_control(request: Request) -> Response:
 
 
 async def adapters_get(request: Request) -> Response:
-    sessions: dict[str, AdapterSession] = request.app.state.adapter_sessions
-    primary = sessions.get("primary")
     try:
-        controllers = (
-            await asyncio.to_thread(primary.controller.status)
-            if primary and primary.controller
-            else {}
-        )
+        return JSONResponse(await adapter_inventory(request.app.state.adapter_sessions))
     except RuntimeError as error:
         return _error(str(error), status=503)
-    assignments = controllers.get("assignments", {})
-    return JSONResponse(
-        {
-            "adapters": [
-                {
-                    "id": session.id,
-                    "transport": session.transport,
-                    "local_address": session.local_address,
-                    "controller_id": assignments.get(session.id),
-                    "error": session.error,
-                "preset": (
-                    session.controller.preset_name if isinstance(session.controller, ControllerRoute)
-                    else session.input_manager.current_preset_name if session.input_manager else None
-                ),
-                "macro_mode": bool(session.input_manager and session.input_manager.status()["mode"] == "macro"),
-                }
-                for session in sessions.values()
-            ],
-            "controllers": [
-            {"id": pad["instance_id"], "name": pad["name"], "guid": pad["guid"]}
-                for pad in controllers.get("controllers", [])
-                if pad["instance_id"] is not None
-            ],
-        "controllers_available": controllers.get("available", False),
-        }
+
+
+async def adapter_inventory(sessions: dict[str, AdapterSession]) -> dict:
+    primary = sessions.get("primary")
+    controllers = (
+        await asyncio.to_thread(primary.controller.status)
+        if primary and primary.controller
+        else {}
     )
+    assignments = controllers.get("assignments", {})
+    return {
+        "adapters": [
+            {
+                "id": session.id,
+                "transport": session.transport,
+                "local_address": session.local_address,
+                "controller_id": assignments.get(session.id),
+                "error": session.error,
+                "preset": (
+                    session.controller.preset_name
+                    if isinstance(session.controller, ControllerRoute)
+                    else session.input_manager.current_preset_name
+                    if session.input_manager
+                    else None
+                ),
+                "macro_mode": bool(
+                    session.input_manager and session.input_manager.status()["mode"] == "macro"
+                ),
+            }
+            for session in sessions.values()
+        ],
+        "controllers": [
+            {"id": pad["instance_id"], "name": pad["name"], "guid": pad["guid"]}
+            for pad in controllers.get("controllers", [])
+            if pad.get("instance_id") is not None
+        ],
+        "controllers_available": controllers.get("available", False),
+    }
 
 
 async def adapter_assign(request: Request) -> Response:
@@ -673,46 +679,83 @@ def validate_debug_changes(body):
     for key in ("macro_rate_hz", "tick_rate_hz"):
         if key in body and (type(body[key]) is not int or not 1 <= body[key] <= 1000):
             raise ValueError(f"{key} must be an integer between 1 and 1000")
-    if "bt_address" in body:
+    if {"bt_address", "adapter_address_seed", "adapter_addresses"} & body.keys():
         raise ValueError("Use Regenerate BD address to change the Bluetooth identity")
 
 
-async def debug_status(request: Request) -> Response:
-    service = request.app.state.bluetooth
+async def _bluetooth_debug_status(
+    service: BluetoothService, names: dict[str, str], *, include_unbonded_names: bool = False
+) -> dict:
     state = service.state
     bluetooth = await service.status()
-    names = request.app.state.config_store.config.switch_device_names
-    addresses = set(bluetooth["peers"]) | set(names)
+    addresses = set(bluetooth["peers"])
+    if include_unbonded_names:
+        addresses.update(names)
     if bluetooth["address"]:
         addresses.add(bluetooth["address"])
+    return {
+        "bd_address": str(service.device.public_address) if service.device else None,
+        "bluetooth": bluetooth,
+        "switch_devices": [
+            {
+                "address": address,
+                "name": names.get(address.upper())
+                or (
+                    f"Switch Device {bluetooth['peers'].index(address) + 1}"
+                    if address in bluetooth["peers"]
+                    else "Switch Device"
+                ),
+            }
+            for address in sorted(addresses)
+        ],
+        "acl_connected": service.connection is not None,
+        "hid_control_ready": bool(state and state.ctrl_ready.is_set()),
+        "hid_interrupt_ready": bool(state and state.intr_ready.is_set()),
+        "session_stopped": bool(state and state.session_stop.is_set()),
+    }
+
+
+async def debug_status(request: Request) -> Response:
+    state = request.app.state
+    config = state.config_store.config
+    sessions = state.adapter_sessions
+    names = config.switch_device_names
+    primary = await _bluetooth_debug_status(
+        state.bluetooth, names, include_unbonded_names=len(sessions) <= 1
+    )
+    try:
+        inventory = await adapter_inventory(sessions)
+    except RuntimeError as error:
+        return _error(str(error), status=503)
+    controller_names = {pad["id"]: pad["name"] for pad in inventory["controllers"]}
+    adapters = []
+    for adapter in inventory["adapters"]:
+        session = sessions[adapter["id"]]
+        diagnostics = (
+            primary
+            if session.primary
+            else await _bluetooth_debug_status(session.bluetooth, names)
+        )
+        adapters.append(
+            {
+                **adapter,
+                **diagnostics,
+                "controller_name": controller_names.get(adapter["controller_id"]),
+                "address_regeneration_available": sys.platform == "win32"
+                and session.bluetooth.device is not None,
+                "input": session.input_manager.status() if session.input_manager else None,
+            }
+        )
     return JSONResponse(
         {
-            "bd_address": str(service.device.public_address)
-            if service.device
-            else None,
-            "bluetooth": bluetooth,
-            "switch_devices": [
-                {
-                    "address": address,
-                    "name": names.get(address.upper())
-                    or (
-                        f"Switch Device {bluetooth['peers'].index(address) + 1}"
-                        if address in bluetooth["peers"]
-                        else "Switch Device"
-                    ),
-                }
-                for address in sorted(addresses)
-            ],
-            "acl_connected": service.connection is not None,
-            "hid_control_ready": bool(state and state.ctrl_ready.is_set()),
-            "hid_interrupt_ready": bool(state and state.intr_ready.is_set()),
-            "session_stopped": bool(state and state.session_stop.is_set()),
-            "input": request.app.state.manager.status(),
-            "controllers": request.app.state.manager.controllers_payload(),
-            "ws_auth_required": request.app.state.ws_token is not None,
+            **primary,
+            "adapters": adapters,
+            "input": state.manager.status(),
+            "controllers": await asyncio.to_thread(state.manager.controllers_payload),
+            "ws_auth_required": state.ws_token is not None,
             "address_regeneration_available": sys.platform == "win32"
-            and service.device is not None,
-            "restart_available": request.app.state.restart_callback is not None,
+            and state.bluetooth.device is not None,
+            "restart_available": state.restart_callback is not None,
         }
     )
 
@@ -734,16 +777,12 @@ async def debug_apply(request: Request) -> Response:
             raise ValueError("Unknown debug setting")
         validate_debug_changes(changes)
         regenerate = body.get("regenerate_address", False)
-        if not isinstance(regenerate, bool):
-            raise TypeError("regenerate_address must be a boolean")
+        if not isinstance(regenerate, (bool, str)) or regenerate == "":
+            raise TypeError("regenerate_address must be a boolean or adapter ID")
         if changes.get("ws_auth_required") and not store.config.webview_enabled:
             raise ValueError("WebSocket authentication requires desktop mode")
-        if regenerate:
-            if sys.platform != "win32":
-                raise ValueError("This platform uses the adapter's hardware address")
-            changes["bt_address"] = "98:B6:E9:" + ":".join(
-                f"{b:02X}" for b in secrets.token_bytes(3)
-            )
+        if regenerate and sys.platform != "win32":
+            raise ValueError("This platform uses the adapter's hardware address")
     except (ValueError, TypeError) as error:
         return _error(str(error))
     if (
@@ -752,11 +791,47 @@ async def debug_apply(request: Request) -> Response:
     ):
         return _error("Application restart is unavailable", status=409)
     if regenerate:
+        state = request.app.state
+        sessions = state.adapter_sessions
+        adapter_id = "primary" if regenerate is True else regenerate
+        session = sessions.get(adapter_id)
+        if session is None and adapter_id != "primary":
+            return _error("Unknown adapter", status=404)
+        service = session.bluetooth if session else state.bluetooth
+        config = store.config
+        transport = session.transport.casefold() if session else config.transport_spec.casefold()
+        use_primary_address = adapter_id == "primary" and transport not in config.adapter_addresses
+        used_addresses = {
+            slot.local_address.upper()
+            for slot in sessions.values()
+            if slot.local_address
+        }
+        used_addresses.add(config.bt_address.upper())
+        used_addresses.update(value.upper() for value in config.adapter_addresses.values())
+        if current_address := getattr(service.device, "public_address", None):
+            used_addresses.add(str(current_address).split("/")[0].upper())
+        prefix = bytes([0x98, 0xB6, 0xE9]) if use_primary_address else bytes([2])
+        while True:
+            octets = prefix + secrets.token_bytes(6 - len(prefix))
+            address = ":".join(f"{byte:02X}" for byte in octets)
+            if address not in used_addresses:
+                break
         try:
-            await request.app.state.bluetooth.forget_all()
+            await service.forget_all()
         except (OSError, RuntimeError, TimeoutError) as error:
             return _error(f"Could not clear saved Switch devices: {error}", status=503)
-        changes["switch_device_names"] = {}
+        if use_primary_address:
+            changes["bt_address"] = address
+            # Keep the secondary adapters' derived addresses stable.
+            if not config.adapter_address_seed:
+                changes["adapter_address_seed"] = config.bt_address
+        else:
+            changes["adapter_addresses"] = {
+                **config.adapter_addresses,
+                transport: address,
+            }
+        if len(sessions) <= 1 and adapter_id == "primary":
+            changes["switch_device_names"] = {}
     store.update(changes)
 
     async def restart():

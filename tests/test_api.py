@@ -773,3 +773,100 @@ def test_debug_status_includes_switch_name_and_address(fx):
         assert client.get("/api/debug").json()["switch_devices"] == [
             {"address": "AA:BB:CC:DD:EE:FF", "name": "Living room Switch"},
         ]
+
+
+@pytest.mark.parametrize("target", [True, "adapter-2"])
+def test_debug_regenerates_only_the_target_adapter(
+    fx, monkeypatch, target, tmp_path
+):
+    import asyncio
+    from types import SimpleNamespace
+
+    monkeypatch.setattr("app.server.sys.platform", "win32")
+    primary_address = "98:B6:E9:12:34:56"
+    first_switch = "AA:BB:CC:DD:EE:01"
+    second_switch = "AA:BB:CC:DD:EE:02"
+    names = {first_switch: "Living room Switch", second_switch: "Bedroom Switch"}
+    fx.config_store.update({
+        "bt_address": primary_address,
+        "debug_enabled": True,
+        "switch_device_names": names,
+    })
+    primary = AdapterSession("primary", "usb:0", fx.command_queue, None)
+    secondary = AdapterSession("adapter-2", "usb:1", queue.Queue(), None)
+    for slot, bd_address, peer in (
+        (primary, primary_address, first_switch),
+        (secondary, "02:12:34:56:78:9A", second_switch),
+    ):
+        slot.bluetooth.device = SimpleNamespace(
+            public_address=bd_address,
+            keystore=SimpleNamespace(
+                get_all=AsyncMock(return_value=[(peer, SimpleNamespace(link_key=b"key"))]),
+                delete_all=AsyncMock(),
+            ),
+            set_discoverable=AsyncMock(),
+            set_connectable=AsyncMock(),
+        )
+        slot.bluetooth.state = SessionState()
+    secondary.bluetooth.state.intr_ready.set()
+    app = build_app(
+        fx.manager, fx.config_store, Path("/nonexistent-dist"),
+        bluetooth=primary.bluetooth,
+        adapter_sessions={slot.id: slot for slot in (primary, secondary)},
+        restart_callback=lambda: None,
+        shutdown_event=asyncio.Event(),
+    )
+    with TestClient(app) as client:
+        first, second = client.get("/api/debug").json()["adapters"]
+        assert first["id"] == "primary"
+        assert first["bd_address"] == primary_address
+        assert first["switch_devices"] == [{"address": first_switch, "name": names[first_switch]}]
+        assert not first["hid_interrupt_ready"]
+        assert second["id"] == "adapter-2"
+        assert second["bd_address"] == "02:12:34:56:78:9A"
+        assert second["switch_devices"] == [{"address": second_switch, "name": names[second_switch]}]
+        assert second["hid_interrupt_ready"]
+
+        assert first["address_regeneration_available"]
+        assert second["address_regeneration_available"]
+        assert client.post("/api/debug", json={"regenerate_address": "unknown"}).status_code == 404
+        assert client.post("/api/debug", json={"regenerate_address": target}).status_code == 200
+        saved = Config.load()
+        assert saved.switch_device_names == names
+        if target is True:
+            primary.bluetooth.device.keystore.delete_all.assert_awaited_once()
+            secondary.bluetooth.device.keystore.delete_all.assert_not_awaited()
+            assert saved.bt_address != primary_address
+            assert saved.adapter_address_seed == primary_address
+            assert saved.adapter_addresses == {}
+        else:
+            from app.main import stage_adapter_firmware
+            from lib.firmware import (
+                CONFIG_HEADER,
+                CONFIG_NAME,
+                FIRMWARE_NAME,
+                prepare_bluetooth,
+            )
+
+            primary.bluetooth.device.keystore.delete_all.assert_not_awaited()
+            secondary.bluetooth.device.keystore.delete_all.assert_awaited_once()
+            assert saved.bt_address == primary_address
+            address = saved.adapter_addresses["usb:1"]
+            assert address.startswith("02:")
+            assert address != second["bd_address"]
+            (tmp_path / CONFIG_NAME).write_bytes(CONFIG_HEADER + bytes(6))
+            (tmp_path / FIRMWARE_NAME).write_bytes(b"firmware")
+            stage_adapter_firmware(
+                secondary, primary_address, tmp_path, tmp_path, address_override=address
+            )
+            assert secondary.expected_address == address
+            assert (tmp_path / secondary.id / CONFIG_NAME).read_bytes() == (
+                CONFIG_HEADER + bytes.fromhex(address.replace(":", ""))[::-1]
+            )
+            # The selected transport can become primary when a radio is removed.
+            monkeypatch.setenv("BUMBLE_RTK_FIRMWARE_DIR", "unused")
+            prepare_bluetooth(saved, tmp_path, address_override=address)
+            assert (tmp_path / CONFIG_NAME).read_bytes() == (
+                CONFIG_HEADER + bytes.fromhex(address.replace(":", ""))[::-1]
+            )
+            assert saved.bt_address == primary_address

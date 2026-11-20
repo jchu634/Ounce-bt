@@ -119,6 +119,8 @@ class Config:
     webview_enabled: bool = True
     ws_auth_required: bool = True
     bt_address: str = ""
+    adapter_address_seed: str = ""
+    adapter_addresses: dict[str, str] = field(default_factory=dict)
     transport_spec: str = "usb:0"
     firmware_dir: str | None = None
     device_config: str = "pro_controller.json"
@@ -150,6 +152,7 @@ class Config:
         self.controller_colours = normalize_controller_colours(self.controller_colours)
         self.adapter_colours = _normalize_adapter_colours(self.adapter_colours)
         self.adapter_presets = _normalize_controller_presets(self.adapter_presets)
+        self.adapter_addresses = _normalize_controller_presets(self.adapter_addresses)
         self.switch_device_names = normalize_device_names(self.switch_device_names)
 
     @property

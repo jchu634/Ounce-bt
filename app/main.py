@@ -598,8 +598,12 @@ async def main(
             manager.shutdown()
         return
 
+    primary_override = config.adapter_addresses.get(transports[0].casefold())
     if patch_firmware:
-        prepare_bluetooth(config, firmware_root)
+        if primary_override:
+            prepare_bluetooth(config, firmware_root, address_override=primary_override)
+        else:
+            prepare_bluetooth(config, firmware_root)
 
     # Load the configured preset as the initial fallback. Once pygame selects
     # a controller, its saved GUID mapping or detected controller type replaces
@@ -655,7 +659,7 @@ async def main(
         transports[0],
         command_queue,
         controller_service,
-        expected_address=config.bt_address if patch_firmware else None,
+        expected_address=(primary_override or config.bt_address) if patch_firmware else None,
         input_manager=manager,
     )
     sessions = {primary.id: primary}
@@ -719,7 +723,13 @@ async def main(
         try:
             if patch_firmware and not session.primary:
                 stage_adapter_firmware(
-                    session, config.bt_address, firmware_root, firmware_dir
+                    session,
+                    config.adapter_address_seed or config.bt_address,
+                    firmware_root,
+                    firmware_dir,
+                    address_override=config.adapter_addresses.get(
+                        session.transport.casefold()
+                    ),
                 )
             await run_adapter(
                 session,
@@ -792,15 +802,19 @@ async def main(
 
 def stage_adapter_firmware(
     session: AdapterSession,
-    primary_address: str,
+    address_seed: str,
     source: Path,
     workspace: Path,
+    *,
+    address_override: str | None = None,
 ) -> None:
-    # Keeping the selector and installation address preserves the Switch bond.
-    suffix = sha256(f"{primary_address.upper()}/{session.transport}".encode()).digest()[
+    # Keeping the selector and seed preserves the Switch bond.
+    suffix = sha256(f"{address_seed.upper()}/{session.transport}".encode()).digest()[
         :5
     ]
-    session.expected_address = ":".join(f"{byte:02X}" for byte in bytes([2]) + suffix)
+    session.expected_address = address_override or ":".join(
+        f"{byte:02X}" for byte in bytes([2]) + suffix
+    )
     session.firmware_dir = workspace / session.id
     session.firmware_dir.mkdir()
     shutil.copyfile(source / FIRMWARE_NAME, session.firmware_dir / FIRMWARE_NAME)

@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import { Effect } from "effect";
 import Credits from "@/src/components/settings/credits";
 import { DebugSettings } from "@/src/components/settings/debug-settings";
-import { saveDebugAndRestart } from "@/src/lib/api";
+import { getDebugStatus, saveDebugAndRestart } from "@/src/lib/api";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 vi.mock("@/src/lib/api", () => ({
@@ -17,10 +17,11 @@ vi.mock("@/src/lib/api", () => ({
       macro_rate_hz: 120,
       tick_rate_hz: 132,
     }),
-  getDebugStatus: () =>
+  getDebugStatus: vi.fn(() =>
     Effect.succeed({
       bd_address: "98:B6:E9:12:34:56",
-      bluetooth: { state: "disconnected", pairing: false },
+      adapters: [],
+      bluetooth: { available: true, state: "disconnected", pairing: false },
       acl_connected: false,
       hid_control_ready: false,
       hid_interrupt_ready: false,
@@ -28,6 +29,7 @@ vi.mock("@/src/lib/api", () => ({
       restart_available: true,
       address_regeneration_available: true,
     }),
+  ),
   saveDebugAndRestart: vi.fn(() => Effect.succeed({ restarting: true })),
 }));
 const container = document.createElement("div");
@@ -46,6 +48,51 @@ async function clickText(text: string) {
   await act(async () => button.click());
 }
 describe("debug settings", () => {
+  it("shows the selected adapter and sends its ID when regenerating", async () => {
+    const status = await Effect.runPromise(getDebugStatus());
+    const adapter = {
+      bd_address: "98:B6:E9:12:34:56",
+      bluetooth: { available: true, state: "connected", pairing: false },
+      acl_connected: true,
+      hid_control_ready: true,
+      hid_interrupt_ready: true,
+      switch_devices: status.switch_devices,
+      local_address: "98:B6:E9:12:34:56",
+      controller_id: 1,
+      controller_name: "Nintendo Switch Pro Controller",
+      preset: "switch_pro",
+      error: null,
+      macro_mode: false,
+      address_regeneration_available: true,
+    };
+    vi.mocked(getDebugStatus).mockReturnValueOnce(Effect.succeed({
+      ...status,
+      adapters: [
+        { ...adapter, id: "primary", transport: "usb:0" },
+        { ...adapter, id: "adapter-2", transport: "usb:1", controller_name: "DualSense" },
+      ],
+    }));
+    await act(async () =>
+      root.render(<DebugSettings active onStateChange={() => {}} onHideDebug={() => {}} />),
+    );
+    expect(container.textContent).toContain("Primary adapter");
+    expect(container.textContent).toContain("Adapter 2");
+    expect(container.textContent).toContain("Nintendo Switch Pro Controller");
+    expect(container.textContent).not.toContain("DualSense");
+    await clickText("Regenerate BD address");
+    const dropdown = container.querySelector("select");
+    if (!dropdown) throw new Error("Missing adapter dropdown");
+    await act(async () => {
+      dropdown.value = "adapter-2";
+      dropdown.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(container.textContent).toContain("DualSense");
+    expect(container.textContent).not.toContain("Nintendo Switch Pro Controller");
+    await clickText("Regenerate BD address");
+    await clickText("Save debug settings");
+    await clickText("Save and restart");
+    expect(saveDebugAndRestart).toHaveBeenCalledWith(expect.anything(), "adapter-2");
+  });
   it("toggles only after ten presses on the first plain Ounce-bt text", async () => {
     const toggle = vi.fn();
     await act(async () => root.render(<Credits onToggleDebug={toggle} />));
@@ -151,7 +198,7 @@ describe("debug settings", () => {
     await clickText("Regenerate BD address");
     await clickText("Save debug settings");
     expect(document.body.textContent).toContain(
-      "All saved Switch devices and pairing keys will be deleted",
+      "The pairing keys for Primary adapter will be deleted",
     );
     expect(saveDebugAndRestart).not.toHaveBeenCalled();
     await clickText("Back");
@@ -166,7 +213,7 @@ describe("debug settings", () => {
         macro_rate_hz: 120,
         tick_rate_hz: 132,
       },
-      true,
+      "primary",
     );
   });
 });
