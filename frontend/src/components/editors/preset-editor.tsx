@@ -18,7 +18,6 @@ import {
   GameControllerIcon,
   MagicWandIcon,
   MinusIcon,
-  PlayIcon,
   SpinnerGapIcon,
   SlidersHorizontalIcon,
   CodeIcon,
@@ -121,7 +120,7 @@ import {
   type JsonEditorHandle,
   type JsonMarker,
 } from "@/src/components/editors/json-editor";
-import { activatePreset, getPreset, putPreset } from "@/src/lib/api";
+import { getPreset, putPreset } from "@/src/lib/api";
 import { ApiError } from "@/src/lib/api";
 import {
   BUTTON_NAMES,
@@ -165,9 +164,7 @@ export function PresetEditor({
   const [saveAsName, setSaveAsName] = useState("");
   const [savingAs, setSavingAs] = useState(false);
   const [saveAsError, setSaveAsError] = useState<string | null>(null);
-  const [activating, setActivating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [markers, setMarkers] = useState<JsonMarker[]>([]);
   const [advanced, setAdvanced] = useState(false);
   const [navigationPromptOpen, setNavigationPromptOpen] = useState(false);
@@ -341,19 +338,6 @@ export function PresetEditor({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [dirty, saving, loading, saveAsOpen, save]);
 
-  const activate = useCallback(async () => {
-    if (name === null) return;
-    if (dirty) {
-      const saved = await save();
-      if (saved !== "saved") return;
-    }
-    setActivating(true);
-    await Effect.runPromise(activatePreset(name))
-      .then(() => setNotice(`Preset '${name}' applied.`))
-      .catch((error: unknown) => setError(errorMessage(error)));
-    setActivating(false);
-  }, [name, dirty, save]);
-
   const format = useCallback(() => {
     try {
       const pretty = `${JSON.stringify(JSON.parse(value), null, 2)}\n`;
@@ -493,19 +477,6 @@ export function PresetEditor({
           </Button>
           <Button
             size="sm"
-            variant="outline"
-            onClick={() => void activate()}
-            disabled={activating}
-          >
-            {activating ? (
-              <SpinnerGapIcon size={14} className="animate-spin" />
-            ) : (
-              <PlayIcon size={14} weight="fill" />
-            )}
-            Activate
-          </Button>
-          <Button
-            size="sm"
             onClick={() => void save()}
             disabled={saving || !dirty}
           >
@@ -531,12 +502,6 @@ export function PresetEditor({
           </Button>
         </div>
       )}
-      {notice !== null && (
-        <p className="rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-sm">
-          {notice}
-        </p>
-      )}
-
       {loading ? (
         <div className="flex h-64 items-center justify-center gap-2 rounded-xl border border-border text-sm text-muted-foreground">
           <SpinnerGapIcon size={16} className="animate-spin" /> Loading…

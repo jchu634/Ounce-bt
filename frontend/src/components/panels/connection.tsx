@@ -1,11 +1,15 @@
 import {
+  BluetoothIcon,
   PencilSimpleIcon,
   PlugsConnectedIcon,
   PlugsIcon,
   SpinnerGapIcon,
   TrashIcon,
 } from "@phosphor-icons/react";
-import { useState } from "react";
+import { useId, useState } from "react";
+import type { PresetInfo } from "@/src/lib/types";
+import { ControllerColoursDialog } from "@/src/components/settings/controller-colours-dialog";
+import { ControllerMappingDialog } from "@/src/components/settings/controller-mapping-dialog";
 import { Button } from "@/src/components/ui/button";
 import {
   Dialog,
@@ -24,65 +28,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/src/components/ui/select";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/src/components/ui/tooltip";
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
-import { connectionDetail, deviceName, type BluetoothStatus } from "@/src/lib/bluetooth";
+import { useControllers } from "@/src/hooks/use-controllers";
+import { connectionDetail, deviceName } from "@/src/lib/bluetooth";
 import { errorMessage } from "@/src/lib/errors";
 import { useSwitchConnection } from "@/src/lib/switch-connection";
 import { cn } from "cn";
 
-type ConnectionToggleButtonProps = {
-  status: BluetoothStatus | null;
-  address: string;
-  disabled: boolean;
-  busy: boolean;
-  onReconnect: () => void;
-  onDisconnect: () => void;
-  className?: string;
-};
-
-export function ConnectionToggleButton({
-  status,
-  address,
-  disabled,
-  busy,
-  onReconnect,
-  onDisconnect,
-  className,
-}: ConnectionToggleButtonProps) {
-  const active = status?.state !== "disconnected";
-  const reconnecting = status?.state === "reconnecting";
-  const buttonDisabled = active
-    ? disabled || !status?.address || reconnecting
-    : disabled || !address;
-
-  return (
-    <Button
-      variant={active ? "destructive" : "tertiary"}
-      disabled={buttonDisabled}
-      onClick={active ? onDisconnect : onReconnect}
-      className={className}
-    >
-      {busy ? (
-        <SpinnerGapIcon className="hidden animate-spin 2xl:block" />
-      ) : active ? (
-        <PlugsIcon weight="fill" className="hidden 2xl:block" />
-      ) : (
-        <PlugsConnectedIcon weight="fill" className="hidden 2xl:block" />
-      )}
-      {busy ? "Connecting…" : active ? "Disconnect Controller" : "Reconnect Controller"}
-    </Button>
-  );
-}
-
 type SwitchConnectionState = ReturnType<typeof useSwitchConnection>;
 
-type SwitchConnectionProps = {
-  connection: SwitchConnectionState;
-};
-
-export function ConnectionStatus({
+function ConnectionStatus({
   status,
   statusError,
 }: Pick<SwitchConnectionState, "status" | "statusError">) {
@@ -120,32 +76,68 @@ export function ConnectionStatus({
             : "disconnected";
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        aria-label={`Switch connection: ${statusLabel}`}
+    <p
+      className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
+      title={statusDetail}
+    >
+      <span className="shrink-0">{statusLabel}</span>
+      <span
+        aria-hidden
         className={cn(
-          "inline-flex items-center rounded-full border font-medium",
-          statusTone === "connected" &&
-            "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-          statusTone === "pending" &&
-            "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400",
-          statusTone === "error" && "border-destructive/40 bg-destructive/10 text-destructive",
-          statusTone === "disconnected" && "border-border bg-muted text-muted-foreground",
-          statusTone === "loading" && "border-border bg-muted text-muted-foreground",
+          "size-1.5 shrink-0 rounded-full bg-current",
+          statusTone === "connected" && "bg-emerald-500",
+          statusTone === "pending" && "bg-amber-500",
+          statusTone === "error" && "bg-destructive",
         )}
-      >
-        <div className="size-1.5 rounded-full bg-current" />
-      </TooltipTrigger>
-      <TooltipContent>{statusDetail}</TooltipContent>
-    </Tooltip>
+      />
+      {status?.address && !statusError && (
+        <span className="min-w-0 truncate font-mono">{status.address}</span>
+      )}
+    </p>
   );
 }
 
-export function SwitchConnection({ connection }: SwitchConnectionProps) {
-  const { status, selected: address, setSelected, disabled, active, update, rename } = connection;
+export function ConnectionPanel({ onEditPreset }: { onEditPreset: (preset: PresetInfo) => void }) {
+  const connection = useSwitchConnection();
+  const controller = useControllers();
+
+  return (
+    <section aria-label="Connection" className="min-w-0 space-y-2">
+      <h2 className="text-lg font-semibold">Connection</h2>
+      <ConnectionCard connection={connection} controller={controller} onEditPreset={onEditPreset} />
+    </section>
+  );
+}
+
+function ConnectionCard({
+  connection,
+  controller,
+  onEditPreset,
+}: {
+  connection: SwitchConnectionState;
+  controller: ReturnType<typeof useControllers>;
+  onEditPreset: (preset: PresetInfo) => void;
+}) {
+  const {
+    status,
+    statusError,
+    selected: address,
+    setSelected,
+    disabled,
+    busy,
+    active,
+    update,
+    rename,
+  } = connection;
+  const id = useId();
+  const controllerName = controller.activeInfo?.name ?? "No controller selected";
+  const [deleting, setDeleting] = useState<{ address: string; name: string } | null>(null);
   const [renaming, setRenaming] = useState<{ address: string; name: string } | null>(null);
   const [savingName, setSavingName] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
+  const pairing = status?.pairing ?? false;
+  const connectionAction = active ? "Disconnect controller" : "Reconnect controller";
+  const pairingAction = pairing ? "Stop pairing" : "Start pairing";
 
   async function saveName() {
     if (!renaming || savingName || !renaming.name.trim()) return;
@@ -162,39 +154,76 @@ export function SwitchConnection({ connection }: SwitchConnectionProps) {
   }
 
   return (
-    <section aria-label="Connection">
-      <div className="flex items-end gap-2">
-        <div className="flex min-w-0 flex-1 items-center gap-1">
-          <Tooltip>
-            <TooltipTrigger
-              render={<div className="min-w-0 flex-1" tabIndex={address ? 0 : undefined} />}
+    <article
+      aria-labelledby={`${id}-controller`}
+      className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-2 rounded-xl border border-border bg-card p-2.5 text-card-foreground"
+    >
+      <ControllerColoursDialog />
+
+      <div className="min-w-0 space-y-1.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <h3
+            id={`${id}-controller`}
+            className="max-w-3/5 min-w-0 truncate text-sm font-medium"
+            title={controllerName}
+          >
+            {controllerName}
+          </h3>
+          <ConnectionStatus status={status} statusError={statusError} />
+          <div className="ms-auto shrink-0">
+            <ControllerMappingDialog controller={controller} onEditPreset={onEditPreset} />
+          </div>
+        </div>
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <Button
+            variant={active && status?.address ? "destructive" : "outline"}
+            size="icon-sm"
+            className="rounded-lg"
+            aria-label={connectionAction}
+            title={connectionAction}
+            disabled={
+              disabled || (active ? !status?.address || status.state === "reconnecting" : !address)
+            }
+            onClick={() => void update("POST", active ? { action: "disconnect" } : { address })}
+          >
+            {busy || status?.state === "reconnecting" ? (
+              <SpinnerGapIcon className="animate-spin" />
+            ) : active && status?.address ? (
+              <PlugsIcon weight="fill" />
+            ) : (
+              <PlugsConnectedIcon weight="fill" />
+            )}
+          </Button>
+          <div className="min-w-24 flex-1">
+            <Select
+              value={address || null}
+              disabled={disabled || active || !address}
+              onValueChange={(value) => setSelected(value ?? "")}
             >
-              <Select
-                value={address}
-                disabled={disabled || active || !address}
-                onValueChange={(value) => setSelected(value ?? "")}
+              <SelectTrigger
+                size="sm"
+                className="w-full min-w-0"
+                aria-label="Saved Switch profile"
+                title={address ? `${deviceName(status, address)} (${address})` : undefined}
               >
-                <SelectTrigger className="w-full min-w-0" aria-label="Switch device">
-                  <SelectValue placeholder="No saved devices">
-                    {deviceName(status, address)}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent align="start">
-                  {status?.peers.map((peer) => (
-                    <SelectItem key={peer} value={peer} title={peer}>
-                      {deviceName(status, peer)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </TooltipTrigger>
-            <TooltipContent>{address || "No saved devices"}</TooltipContent>
-          </Tooltip>
+                <SelectValue placeholder="No saved profiles" className="min-w-0">
+                  {address ? <span className="truncate">{deviceName(status, address)}</span> : null}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent align="start">
+                {status?.peers.map((peer) => (
+                  <SelectItem key={peer} value={peer} title={peer}>
+                    <span className="truncate">{deviceName(status, peer)}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <Button
             variant="ghost"
-            size="icon"
-            aria-label="Rename Switch device"
-            title="Rename Switch device"
+            size="icon-sm"
+            aria-label="Rename Switch profile"
+            title="Rename Switch profile"
             disabled={disabled || !address}
             onClick={() => {
               setRenaming({ address, name: deviceName(status, address) });
@@ -203,46 +232,73 @@ export function SwitchConnection({ connection }: SwitchConnectionProps) {
           >
             <PencilSimpleIcon />
           </Button>
-        </div>
-        <Button
-          variant="default"
-          disabled={disabled || (!status?.pairing && active)}
-          onClick={() => void update("PUT", { pairing: !status?.pairing })}
-        >
-          {status?.pairing ? "Stop pairing" : "Start pairing"}
-        </Button>
-        <Dialog>
-          <DialogTrigger
-            render={
-              <Button
-                variant="destructive"
-                size="icon"
-                aria-label="Delete controller config"
-                disabled={disabled || !address || status?.state === "reconnecting"}
-              />
-            }
+          <Button
+            variant={pairing ? "secondary" : "default"}
+            size="icon-sm"
+            className="rounded-lg"
+            aria-label={pairingAction}
+            title={pairingAction}
+            disabled={disabled || (!pairing && active)}
+            onClick={() => void update("PUT", { pairing: !pairing })}
           >
-            <TrashIcon weight="fill" />
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Delete controller config?</DialogTitle>
-              <DialogDescription>
-                This disconnects the {address} config and removes it. You will need to pair again to
-                reconnect.
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
-              <DialogClose
-                render={<Button variant="destructive" />}
-                onClick={() => void update("DELETE", { address })}
+            <BluetoothIcon weight={pairing ? "bold" : "regular"} />
+          </Button>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <Dialog
+              onOpenChange={(open) => {
+                if (open) setDeleting({ address, name: deviceName(status, address) });
+              }}
+            >
+              <DialogTrigger
+                render={
+                  <Button
+                    variant="outline"
+                    size="icon-sm"
+                    className="rounded-lg text-destructive hover:text-destructive"
+                    aria-label="Delete Switch profile"
+                    title="Delete Switch profile"
+                    disabled={disabled || !address || status?.state === "reconnecting"}
+                  />
+                }
               >
-                Delete config
-              </DialogClose>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+                <TrashIcon weight="fill" />
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Delete Switch profile?</DialogTitle>
+                  <DialogDescription>
+                    Removing {deleting?.name} forgets its Bluetooth pairing. You will need to pair
+                    again to reconnect.
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogFooter>
+                  <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+                  <DialogClose
+                    render={
+                      <Button
+                        variant="destructive"
+                        disabled={
+                          disabled || !deleting || !status?.peers.includes(deleting.address)
+                        }
+                      />
+                    }
+                    onClick={() => {
+                      if (deleting) void update("DELETE", { address: deleting.address });
+                    }}
+                  >
+                    Delete profile
+                  </DialogClose>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </div>
+        {pairing && (
+          <p className="text-xs text-muted-foreground">
+            On the Switch, open Controllers → Change Grip/Order.
+          </p>
+        )}
+        {statusError && <p className="text-xs text-destructive">{statusError}</p>}
       </div>
 
       <Dialog
@@ -253,7 +309,7 @@ export function SwitchConnection({ connection }: SwitchConnectionProps) {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Rename Switch device</DialogTitle>
+            <DialogTitle>Rename Switch profile</DialogTitle>
             <DialogDescription>{renaming?.address}</DialogDescription>
           </DialogHeader>
           <form
@@ -264,22 +320,22 @@ export function SwitchConnection({ connection }: SwitchConnectionProps) {
             className="space-y-4"
           >
             <div className="space-y-2">
-              <Label htmlFor="switch-device-name">Device name</Label>
+              <Label htmlFor={`${id}-name`}>Profile name</Label>
               <Input
-                id="switch-device-name"
+                id={`${id}-name`}
                 value={renaming?.name ?? ""}
                 autoFocus
                 required
                 maxLength={64}
                 disabled={savingName}
-                aria-describedby={renameError ? "rename-device-error" : undefined}
+                aria-describedby={renameError ? `${id}-rename-error` : undefined}
                 onChange={(event) => {
                   const name = event.target.value;
                   setRenaming((current) => current && { ...current, name });
                 }}
               />
               {renameError && (
-                <p id="rename-device-error" role="alert" className="text-sm text-destructive">
+                <p id={`${id}-rename-error`} role="alert" className="text-sm text-destructive">
                   {renameError}
                 </p>
               )}
@@ -300,12 +356,6 @@ export function SwitchConnection({ connection }: SwitchConnectionProps) {
           </form>
         </DialogContent>
       </Dialog>
-
-      {status?.pairing && (
-        <p className="mt-2 text-sm text-muted-foreground">
-          On the Switch, open Controllers → Change Grip/Order.
-        </p>
-      )}
-    </section>
+    </article>
   );
 }

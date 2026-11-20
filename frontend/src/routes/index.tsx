@@ -1,15 +1,10 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { SettingsDialog, type SettingsDialogHandle } from "@/src/components/settings/dialog";
 import { createFileRoute, Navigate, useRouter } from "@tanstack/react-router";
 import { CapturePreview } from "@/src/components/panels/capture-preview";
 import { MacroRunPanel } from "@/src/components/panels/macro-runner";
 import { ManualControl } from "@/src/components/panels/manual-control";
-import {
-  ConnectionStatus,
-  ConnectionToggleButton,
-  SwitchConnection,
-} from "@/src/components/panels/connection";
-import { useSwitchConnection } from "@/src/lib/switch-connection";
-import { SettingsDialog } from "@/src/components/settings/dialog";
+import { ConnectionPanel } from "@/src/components/panels/connection";
 import { useSelector } from "@tanstack/react-store";
 import { loadMacroList } from "@/src/lib/load-macro-list";
 import { generalSettingsStore } from "@/src/stores/general-settings";
@@ -27,47 +22,17 @@ function PreviewPage() {
   const macroList = Route.useLoaderData();
   const router = useRouter();
   const [selectedMacro, setSelectedMacro] = useState<string | null>(null);
-  const switchConnection = useSwitchConnection();
+  const settings = useRef<SettingsDialogHandle>(null);
 
   return (
-    <div className="flex h-full w-full flex-col gap-6 bg-background px-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <SettingsDialog />
-      </div>
-
+    <div className="flex h-full w-full flex-col gap-6 bg-background p-4">
+      <SettingsDialog ref={settings} />
       <div className="flex w-full flex-col items-start gap-4 lg:flex-row">
         <div className="flex w-full min-w-0 items-center justify-center lg:sticky lg:top-4 lg:h-[calc(100dvh-6rem)] lg:flex-1">
           <CapturePreview />
         </div>
-
-        <div className="flex w-full min-w-0 flex-col space-y-4 lg:w-1/3 lg:shrink-0 lg:pt-8">
-          <div className="flex items-center gap-4">
-            <h2 className="text-lg font-semibold">Connection</h2>
-            <ConnectionStatus
-              status={switchConnection.status}
-              statusError={switchConnection.statusError}
-            />
-          </div>
-          <SwitchConnection connection={switchConnection} />
-          <div className="flex gap-2">
-            <ConnectionToggleButton
-              status={switchConnection.status}
-              address={switchConnection.selected}
-              disabled={switchConnection.disabled}
-              busy={switchConnection.busy}
-              onReconnect={() =>
-                void switchConnection.update("POST", {
-                  address: switchConnection.selected,
-                })
-              }
-              onDisconnect={() =>
-                void switchConnection.update("POST", {
-                  action: "disconnect",
-                })
-              }
-              className="h-10 shrink-0 text-sm 2xl:text-lg"
-            />
-          </div>
+        <div className="flex w-full min-w-0 flex-col space-y-4 lg:w-1/3 lg:shrink-0">
+          <ConnectionPanel onEditPreset={(preset) => settings.current?.openPreset(preset)} />
           <MacroRunPanel
             names={macroList.kind === "loaded" ? macroList.names : []}
             listError={macroList.kind === "error" ? macroList.message : null}

@@ -16,9 +16,8 @@ import {
   setHideManualControl,
   setTheme,
 } from "@/src/stores/general-settings";
-import { cn } from "cn";
 import { GearSixIcon } from "@phosphor-icons/react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { Effect } from "effect";
 import { useCaptureControls, useCaptureInput } from "@/src/hooks/use-capture";
 
@@ -31,7 +30,6 @@ import { AudioInputSettings } from "@/src/components/settings/audio-input-settin
 import type { PresetEditorHandle } from "@/src/components/editors/preset-editor";
 import { ControllerSettings } from "@/src/components/settings/controller-settings";
 import { CaptureDeviceSettings } from "@/src/components/settings/capture-device-settings";
-import { AppearanceSettings } from "@/src/components/settings/appearance-settings";
 import Credits from "@/src/components/settings/credits";
 
 import { listPresets } from "@/src/lib/api";
@@ -40,15 +38,17 @@ import type { PresetInfo } from "@/src/lib/types";
 
 const SETTINGS_DESCRIPTIONS: Record<string, string> = {
   general: "General settings.",
-  controller: "Choose a controller and manage its mapping presets.",
-  appearance: "Choose how your controller appears on the Switch.",
+  controller: "Manage mapping presets and vibration.",
   credits: "Acknowledgements and Licenses",
 };
 
-export function SettingsDialog({ className }: { className?: string }) {
+export type SettingsDialogHandle = { openPreset: (preset: PresetInfo) => void };
+
+export function SettingsDialog({ ref }: { ref?: Ref<SettingsDialogHandle> }) {
   const [open, setOpen] = useState(false);
   const [discardPromptOpen, setDiscardPromptOpen] = useState(false);
   const [currentTab, setCurrentTab] = useState("general");
+  const [requestedPreset, setRequestedPreset] = useState<PresetInfo>();
   const [presets, setPresets] = useState<PresetInfo[]>([]);
   const [presetsLoading, setPresetsLoading] = useState(false);
   const [presetsError, setPresetsError] = useState<string | null>(null);
@@ -79,8 +79,6 @@ export function SettingsDialog({ className }: { className?: string }) {
     (settings) => settings.hideManualControl,
   );
   const theme = useSelector(generalSettingsStore, (settings) => settings.theme);
-  const [appearanceState, setAppearanceState] = useState({ dirty: false, saving: false });
-  const [appearanceSession, setAppearanceSession] = useState(0);
   const [draftControlsOnlyHomepage, setDraftControlsOnlyHomepage] = useState(controlsOnlyHomepage);
   const { selectedAudioInputId, selectedCameraInputId, selectInputs } = useCaptureInput();
   const [draftAudioInputId, setDraftAudioInputId] = useState(selectedAudioInputId);
@@ -88,6 +86,22 @@ export function SettingsDialog({ className }: { className?: string }) {
   const { stop, starting } = useCaptureControls();
   const hasUnsavedInputChanges =
     draftAudioInputId !== selectedAudioInputId || draftCaptureInputId !== selectedCameraInputId;
+
+  function openSettings() {
+    setOpen(true);
+    setDraftControlsOnlyHomepage(controlsOnlyHomepage);
+    setDraftAudioInputId(selectedAudioInputId);
+    setDraftCaptureInputId(selectedCameraInputId);
+  }
+
+  useImperativeHandle(ref, () => ({
+    openPreset(preset) {
+      setRequestedPreset(preset);
+      setCurrentTab("controller");
+      refreshPresets();
+      openSettings();
+    },
+  }));
 
   function closeSettings() {
     setOpen(false);
@@ -98,12 +112,8 @@ export function SettingsDialog({ className }: { className?: string }) {
   }
 
   function requestNavigation(navigate: () => void, closing = false) {
-    if (appearanceState.saving) return;
     const continueNavigation = () => {
-      if (
-        (currentTab === "appearance" && appearanceState.dirty) ||
-        (closing && (hasUnsavedInputChanges || appearanceState.dirty))
-      ) {
+      if (closing && hasUnsavedInputChanges) {
         pendingDiscard.current = navigate;
         setDiscardPromptOpen(true);
         return;
@@ -123,13 +133,9 @@ export function SettingsDialog({ className }: { className?: string }) {
         open={open}
         onOpenChange={(nextOpen) => {
           if (nextOpen) {
-            setOpen(true);
-            setAppearanceState({ dirty: false, saving: false });
-            setAppearanceSession((session) => session + 1);
+            openSettings();
+            setRequestedPreset(undefined);
             if (currentTab === "controller") refreshPresets();
-            setDraftControlsOnlyHomepage(controlsOnlyHomepage);
-            setDraftAudioInputId(selectedAudioInputId);
-            setDraftCaptureInputId(selectedCameraInputId);
             return;
           }
 
@@ -138,12 +144,7 @@ export function SettingsDialog({ className }: { className?: string }) {
       >
         <DialogTrigger
           render={
-            <Button
-              className={cn(
-                "fixed top-5 right-4 z-40 bg-muted-foreground dark:text-gray-900 dark:hover:bg-red-800 dark:hover:text-white",
-                className,
-              )}
-            />
+            <Button className="self-end bg-muted-foreground dark:text-gray-900 dark:hover:bg-red-800 dark:hover:text-white" />
           }
         >
           General Settings
@@ -170,7 +171,6 @@ export function SettingsDialog({ className }: { className?: string }) {
             <TabsList className="shrink-0 max-sm:w-full max-sm:flex-row">
               <TabsTrigger value="general">General</TabsTrigger>
               <TabsTrigger value="controller">Controller</TabsTrigger>
-              <TabsTrigger value="appearance">Appearance</TabsTrigger>
               <TabsTrigger value="credits">Credits</TabsTrigger>
             </TabsList>
             <TabsContent
@@ -269,19 +269,13 @@ export function SettingsDialog({ className }: { className?: string }) {
               value="controller"
             >
               <ControllerSettings
+                initialPreset={requestedPreset}
                 ref={controllerSettings}
                 presets={presets}
                 loading={presetsLoading}
                 listError={presetsError}
                 onRefresh={refreshPresets}
               />
-            </TabsContent>
-            <TabsContent
-              className="app-scrollbar min-h-0 min-w-0 overflow-y-auto p-2"
-              value="appearance"
-              keepMounted
-            >
-              <AppearanceSettings key={appearanceSession} onStateChange={setAppearanceState} />
             </TabsContent>
             <TabsContent
               className="app-scrollbar min-h-0 min-w-0 overflow-y-auto p-2"
@@ -325,8 +319,6 @@ export function SettingsDialog({ className }: { className?: string }) {
                 const navigate = pendingDiscard.current;
                 pendingDiscard.current = null;
                 setDiscardPromptOpen(false);
-                setAppearanceState({ dirty: false, saving: false });
-                setAppearanceSession((session) => session + 1);
                 navigate?.();
               }}
             >
