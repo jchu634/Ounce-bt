@@ -2,10 +2,21 @@
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
+from pathlib import Path
+from queue import Queue
 
 from bumble.core import ConnectionError as BluetoothConnectionError
-from bumble.hci import HCI_CONNECTION_ALREADY_EXISTS_ERROR, Address
+from bumble.hci import (
+    HCI_CONNECTION_ALREADY_EXISTS_ERROR,
+    HCI_PAGE_TIMEOUT_ERROR,
+    Address,
+)
 from bumble.l2cap import ClassicChannelSpec
+
+from app.input.controller_service import ControllerRoute, ControllerService, LatestInput
+from app.input.manager import InputManager
+from lib.input.state import ControllerState
 
 logger = logging.getLogger("switch_pair")
 
@@ -14,12 +25,17 @@ class BluetoothDisconnectingError(ValueError):
     """A new connection must wait for the previous one to close."""
 
 
+class BluetoothPageTimeoutError(ConnectionError):
+    """The Switch did not respond to a Classic connection attempt."""
+
+
 class BluetoothService:
     def __init__(self):
         self.device = None
         self.state = None
         self.connection = None
         self.connected = False
+        self.player_number: int | None = None
         self.pairing = False
         self.reconnecting = False
         self.reconnect_address = None
@@ -89,6 +105,7 @@ class BluetoothService:
             ]
         return {
             "available": self.device is not None,
+            "player_number": self.player_number if self.connected else None,
             "pairing": self.pairing,
             "state": "disconnecting"
             if self.disconnecting
@@ -190,9 +207,7 @@ class BluetoothService:
                 await self.device.set_connectable(False)
                 self.pairing = False
                 async with asyncio.timeout(30):
-                    connection = await self.device.connect_classic(
-                        Address(address, Address.PUBLIC_DEVICE_ADDRESS), timeout=15
-                    )
+                    connection = await self._connect_peer(address)
                     await connection.authenticate()
                     await connection.encrypt()
                     for psm in (0x11, 0x13):
@@ -230,3 +245,40 @@ class BluetoothService:
             finally:
                 self.reconnecting = False
                 self.reconnect_address = None
+
+    async def _connect_peer(self, address):
+        peer = Address(address, Address.PUBLIC_DEVICE_ADDRESS)
+        for attempt in range(3):
+            try:
+                return await self.device.connect_classic(peer, timeout=15)
+            except BluetoothConnectionError as error:
+                if error.error_namespace != "hci" or error.error_code != HCI_PAGE_TIMEOUT_ERROR:
+                    raise
+                if attempt == 2:
+                    raise BluetoothPageTimeoutError(
+                        "The Switch did not respond after three attempts. Wake the console "
+                        "and open Controllers → Change Grip/Order, then try reconnecting."
+                    ) from error
+                logger.warning(
+                    "Switch page timeout: adapter=%s peer=%s attempt=%s; retrying",
+                    getattr(self.device, "public_address", "unknown"), address, attempt + 1,
+                )
+                await asyncio.sleep(0.35)
+
+
+@dataclass
+class AdapterSession:
+    id: str
+    transport: str
+    input_queue: Queue[ControllerState] | LatestInput
+    controller: ControllerService | ControllerRoute | None
+    bluetooth: BluetoothService = field(default_factory=BluetoothService)
+    expected_address: str | None = None
+    firmware_dir: Path | None = None
+    local_address: str | None = None
+    error: str | None = None
+    input_manager: InputManager | None = None
+
+    @property
+    def primary(self) -> bool:
+        return self.id == "primary"

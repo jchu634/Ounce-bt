@@ -126,8 +126,8 @@ export function StartupGate({ children }: { children: ReactNode }) {
             <>
               <DialogTitle>Bluetooth adapter could not start</DialogTitle>
               <DialogDescription>
-                Bumble could not open the USB Bluetooth adapter at usb:0. Configure the adapter to
-                use the WinUSB driver, then restart Ounce-bt. Error: LIBUSB_ERROR_NOT_SUPPORTED.
+                Bumble could not open the USB Bluetooth adapter. Configure the adapter to use the
+                WinUSB driver, then restart Ounce-bt. Error: LIBUSB_ERROR_NOT_SUPPORTED.
               </DialogDescription>
             </>
           )}

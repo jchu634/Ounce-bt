@@ -51,6 +51,7 @@ export type StatusFrame = {
   type: "status";
   mode: "manual" | "macro";
   macro: MacroStatus | null;
+  adapter_id?: string;
 };
 
 export type ControllerInfo = {
@@ -79,6 +80,7 @@ export type ErrorFrame = {
 export type ServerFrame = StatusFrame | ControllersFrame | ErrorFrame;
 
 export type WsInbound =
+  | { type: "select_adapter"; adapter_id: string }
   | {
       type: "state";
       buttons: ButtonName[];

@@ -113,10 +113,12 @@ class PygameInputThread(threading.Thread):
         preset: PresetConfig | None = None,
         pump: bool = True,
         start_paused: bool = False,
+        instance_id: int | None = None,
     ):
         super().__init__(name="pygame-input", daemon=True)
         self._queue = command_queue
         self._device_index = device_index
+        self._instance_id = instance_id
         self._period = 1.0 / rate_hz
         self._deadzone = deadzone
         self._trigger_threshold = trigger_threshold
@@ -223,6 +225,11 @@ class PygameInputThread(threading.Thread):
                 )
                 return
             stick = joystick.Joystick(self._device_index)
+            if self._instance_id is not None and stick.get_instance_id() != self._instance_id:
+                # The index changed after enumeration. The hotplug event will
+                # reopen the capture using the new index.
+                stick = None
+                return
             stick.init()
             logger.info(
                 f"Pygame input following '{stick.get_name()}' "

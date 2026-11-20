@@ -6,15 +6,68 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from bumble.core import ConnectionError as BluetoothConnectionError
 from bumble.core import PhysicalTransport
-from bumble.hci import Address
+from bumble.hci import Address, HCI_ErrorCode, HCI_StatusReturnParameters
 from bumble.keys import JsonKeyStore, MemoryKeyStore, PairingKeys
 
 import app.main as application
-from app.bluetooth import BluetoothDisconnectingError, BluetoothService
+from app.bluetooth import (
+    BluetoothDisconnectingError,
+    BluetoothPageTimeoutError,
+    BluetoothService,
+)
 from app.main import SessionState, make_l2cap_handler, run_until_disconnected
+from lib.bluetooth_transport import WindowsUsbHost
 from lib.config import Config
 
 ADDRESS = "12:34:56:78:90:AB"
+
+
+def test_adapter_reopens_after_status_only_capability_response(monkeypatch):
+    async def scenario():
+        async def incomplete_power_on():
+            response = HCI_StatusReturnParameters(status=HCI_ErrorCode.SUCCESS)
+            return response.supported_commands
+
+        run_once = AsyncMock(side_effect=[application.IncompleteHciResponse(), None])
+        with pytest.raises(application.IncompleteHciResponse, match="supported Bluetooth commands"):
+            await application.power_on_adapter(SimpleNamespace(power_on=incomplete_power_on))
+        monkeypatch.setattr(application, "run_adapter_once", run_once)
+        monkeypatch.setattr(application.asyncio, "sleep", AsyncMock())
+        await application.run_adapter(SimpleNamespace(transport="usb:0"), None, None, None, None, None)
+        assert run_once.await_count == 2
+
+    asyncio.run(scenario())
+
+
+def test_windows_usb_host_ignores_stale_hci_completions():
+    async def scenario():
+        host = WindowsUsbHost()
+        host.pending_command = SimpleNamespace(op_code=0x1002)
+        host.pending_response = asyncio.get_running_loop().create_future()
+        stale_reset = SimpleNamespace(command_opcode=0x0C03)
+        expected = SimpleNamespace(command_opcode=0x1002)
+        host.on_command_processed(stale_reset)
+        assert not host.pending_response.done()
+        host.on_command_processed(expected)
+        host.on_command_processed(expected)
+        assert await host.pending_response is expected
+
+    asyncio.run(scenario())
+
+
+def test_adapter_reopens_when_power_on_times_out(monkeypatch):
+    async def scenario():
+        device = SimpleNamespace(power_on=AsyncMock(side_effect=[TimeoutError(), None]))
+        async def run_once(*args):
+            await application.power_on_adapter(device)
+
+        monkeypatch.setattr(application, "run_adapter_once", run_once)
+        monkeypatch.setattr(application.asyncio, "sleep", AsyncMock())
+        await application.run_adapter(SimpleNamespace(transport="usb:0"), None, None, None, None, None)
+        assert device.power_on.await_count == 2
+        assert "TimeoutError" in application.bluetooth_startup_error("usb:0", TimeoutError())
+
+    asyncio.run(scenario())
 
 
 def test_old_channel_callbacks_cannot_stop_a_new_session():
@@ -94,7 +147,8 @@ def test_startup_pairing_requires_ui_action_unless_headless(
             application, "open_transport", AsyncMock(return_value=transport())
         )
         monkeypatch.setattr(
-            application.Device, "from_config_file_with_hci", Mock(return_value=device)
+            application.WindowsUsbDevice if realtek else application.Device,
+            "from_config_file_with_hci", Mock(return_value=device)
         )
         monkeypatch.setattr(
             application.Config,
@@ -107,7 +161,7 @@ def test_startup_pairing_requires_ui_action_unless_headless(
                 web_port=None if headless else 9127,
             ),
         )
-        monkeypatch.setattr("sys.argv", ["main.py"])
+        monkeypatch.setattr("sys.argv", ["main.py", "--no-auto-adapters"])
         task = asyncio.create_task(application.main())
         try:
             await asyncio.wait_for(powered.wait(), 2)
@@ -281,7 +335,7 @@ def test_reconnect_and_pairing_rejected_until_disconnect_and_session_cleanup_fin
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("error_code", [0x0B, 0x04])
+@pytest.mark.parametrize("error_code", [0x0B, 0x08])
 def test_adapter_connection_conflict_asks_user_to_wait_without_retry(error_code):
     async def scenario():
         service, device, _ = await setup_service()
@@ -302,6 +356,37 @@ def test_adapter_connection_conflict_asks_user_to_wait_without_retry(error_code)
         device.connect_classic.assert_awaited_once()
         assert not service.reconnecting
         assert (await service.status())["state"] == "disconnected"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("recovers", [True, False])
+def test_reconnect_retries_page_timeouts_then_reports_if_switch_is_unreachable(monkeypatch, recovers):
+    async def scenario():
+        service, device, connection = await setup_service()
+        error = BluetoothConnectionError(0x04, PhysicalTransport.BR_EDR, ADDRESS, "hci")
+        attempts = 0
+
+        async def connect(*args, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            if not recovers or attempts < 2:
+                raise error
+            service._on_connection(connection)
+            return connection
+
+        device.connect_classic.side_effect = connect
+        monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+        if recovers:
+            await service.reconnect(ADDRESS)
+            assert attempts == 2
+            connection.authenticate.assert_awaited_once()
+        else:
+            with pytest.raises(BluetoothPageTimeoutError, match="Wake the console"):
+                await service.reconnect(ADDRESS)
+            assert attempts == 3
+            assert (await service.status())["state"] == "disconnected"
+        assert not service.reconnecting
 
     asyncio.run(scenario())
 

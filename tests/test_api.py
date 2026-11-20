@@ -12,10 +12,12 @@ import pytest
 from starlette.testclient import TestClient
 
 import lib.input.presets as presets_module
+from app.bluetooth import AdapterSession
 from app.input.manager import InputManager, MacroActiveError
 from app.main import SessionState
 from app.server import build_app
 from lib.config import Config, ConfigStore
+from lib.input.state import NEUTRAL, Button, ControllerState
 from lib.server.files import JsonDocStore
 
 
@@ -106,6 +108,107 @@ def fx(tmp_path, monkeypatch):
     fixture = Fixture(tmp_path, monkeypatch)
     yield fixture
     fixture.manager.shutdown()
+
+
+def test_bluetooth_commands_are_scoped_to_one_adapter(fx):
+    primary = AdapterSession("primary", "usb:0", fx.command_queue, None)
+    secondary = AdapterSession("adapter-2", "usb:1", queue.Queue(), None)
+    primary.bluetooth.set_pairing = AsyncMock()
+    secondary.bluetooth.set_pairing = AsyncMock()
+    app = build_app(
+        fx.manager,
+        fx.config_store,
+        Path("/nonexistent-dist"),
+        bluetooth=primary.bluetooth,
+        adapter_sessions={slot.id: slot for slot in (primary, secondary)},
+    )
+    with TestClient(app) as client:
+        response = client.put("/api/adapters/adapter-2/bluetooth", json={"pairing": True})
+        assert response.status_code == 200
+        secondary.bluetooth.set_pairing.assert_awaited_once_with(True)
+        primary.bluetooth.set_pairing.assert_not_awaited()
+
+        response = client.put("/api/bluetooth", json={"pairing": True})
+        assert response.status_code == 200
+        primary.bluetooth.set_pairing.assert_awaited_once_with(True)
+        assert client.get("/api/adapters/unknown/bluetooth").status_code == 404
+
+
+def test_selected_adapter_receives_manual_input_and_owns_its_macro(fx):
+    fx.manager.adapter_id = "primary"
+    primary = AdapterSession(
+        "primary", "usb:0", fx.command_queue, None, input_manager=fx.manager
+    )
+    secondary_queue = queue.Queue()
+    secondary_input = InputManager(secondary_queue, fx.macros_dir, adapter_id="adapter-2")
+    secondary = AdapterSession(
+        "adapter-2", "usb:1", secondary_queue, None, input_manager=secondary_input
+    )
+    app = build_app(
+        fx.manager,
+        fx.config_store,
+        Path("/nonexistent-dist"),
+        adapter_sessions={slot.id: slot for slot in (primary, secondary)},
+    )
+
+    try:
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            assert ws.receive_json()["adapter_id"] == "primary"
+            assert ws.receive_json()["type"] == "controllers"
+            ws.send_json({"type": "state", "buttons": ["A"]})
+            ws.send_json({"type": "select_adapter", "adapter_id": "adapter-2"})
+            assert ws.receive_json()["adapter_id"] == "adapter-2"
+            assert fx.manager.mix_manual_input(NEUTRAL) == NEUTRAL
+
+            ws.send_json({"type": "state", "buttons": ["B"]})
+            ws.send_json({"type": "select_adapter", "adapter_id": "adapter-2"})
+            assert ws.receive_json()["adapter_id"] == "adapter-2"
+            assert secondary_input.mix_manual_input(ControllerState(Button.ZR)).buttons == (
+                Button.B | Button.ZR
+            )
+            assert fx.command_queue.empty()
+
+            ws.send_json({
+                "type": "macro", "op": "start",
+                "macro": {
+                    "version": 1, "name": "hold-b", "repeat": 0,
+                    "actions": [{"do": "press", "button": "B"}, {"do": "wait", "ms": 100}],
+                },
+            })
+            assert ws.receive_json()["mode"] == "macro"
+            assert secondary_queue.get(timeout=1).buttons == Button.B
+            ws.send_json({"type": "select_adapter", "adapter_id": "primary"})
+            assert ws.receive_json()["mode"] == "manual"
+            assert secondary_input.status()["macro"]["name"] == "hold-b"
+            assert fx.command_queue.empty()
+            ws.send_json({"type": "select_adapter", "adapter_id": "adapter-2"})
+            assert ws.receive_json()["mode"] == "macro"
+            ws.send_json({"type": "macro", "op": "cancel"})
+            assert ws.receive_json()["mode"] == "manual"
+            assert secondary_queue.get(timeout=1) == NEUTRAL
+    finally:
+        secondary_input.shutdown()
+
+
+def test_adapter_colours_are_saved_independently(fx):
+    primary = AdapterSession("primary", "usb:0", queue.Queue(), None)
+    secondary = AdapterSession("adapter-2", "usb:1", queue.Queue(), None)
+    primary.bluetooth.connected = True
+    app = build_app(
+        fx.manager,
+        fx.config_store,
+        Path("/nonexistent-dist"),
+        adapter_sessions={slot.id: slot for slot in (primary, secondary)},
+    )
+    with TestClient(app) as client:
+        secondary_path = "/api/adapters/adapter-2/colours"
+        primary_path = "/api/adapters/primary/colours"
+        result = client.patch(secondary_path, json={"body": "#aa0011"})
+        assert result.status_code == 200
+        assert result.json()["colours_reconnect_required"] is False
+        assert client.get(secondary_path).json()["controller_colours"]["body"] == "#AA0011"
+        assert client.get(primary_path).json()["controller_colours"]["body"] == "#000000"
+        assert Config.load().adapter_colours["usb:1"]["body"] == "#AA0011"
 
 
 

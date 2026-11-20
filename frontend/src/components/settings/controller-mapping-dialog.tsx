@@ -16,19 +16,33 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/src/components/ui/select";
-import type { useControllers } from "@/src/hooks/use-controllers";
-import { useMacroRunner } from "@/src/hooks/use-macro-runner";
 import { listPresets } from "@/src/lib/api";
 import { errorMessage } from "@/src/lib/errors";
 import type { PresetInfo } from "@/src/lib/types";
 import { VibrationSetting } from "./vibration-setting";
 
+export type MappingSettings = {
+  available: boolean;
+  options: { id: string; name: string; disabled?: boolean }[];
+  active: string | null;
+  controllerGuid: string | null;
+  preset: string | null;
+  pending: "selecting" | "applying" | null;
+  error: string | null;
+  macroMode: boolean;
+  allowUnassign: boolean;
+  selectController: (id: string | null) => void;
+  applyPreset: (preset: string) => void;
+};
+
 export function ControllerMappingDialog({
   controller,
   onEditPreset,
+  usbAdapter,
 }: {
-  controller: ReturnType<typeof useControllers>;
+  controller: MappingSettings;
   onEditPreset: (preset: PresetInfo) => void;
+  usbAdapter?: { transport: string; address: string | null };
 }) {
   const [open, setOpen] = useState(false);
 
@@ -51,6 +65,17 @@ export function ControllerMappingDialog({
         <DialogHeader className="pr-8">
           <DialogTitle>Controller settings</DialogTitle>
         </DialogHeader>
+        {usbAdapter && (
+          <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-x-2 gap-y-1 text-sm">
+            <p className="font-medium">USB adapter</p>
+            <p className="font-mono break-all">{usbAdapter.transport}</p>
+            {usbAdapter.address && (
+              <p className="col-start-2 font-mono text-xs text-muted-foreground">
+                {usbAdapter.address}
+              </p>
+            )}
+          </div>
+        )}
         {open && (
           <MappingControls
             controller={controller}
@@ -69,11 +94,24 @@ function MappingControls({
   controller,
   onEditPreset,
 }: {
-  controller: ReturnType<typeof useControllers>;
+  controller: MappingSettings;
   onEditPreset: (preset: PresetInfo) => void;
 }) {
-  const { available, controllers, active, activeInfo, preset, pending, error, update } = controller;
-  const { macroActive } = useMacroRunner();
+  const {
+    available,
+    options,
+    active,
+    controllerGuid,
+    preset,
+    pending,
+    error,
+    macroMode,
+    allowUnassign,
+    selectController,
+    applyPreset,
+  } = controller;
+  const activeName = options.find((option) => option.id === active)?.name;
+  const selection = active ?? (allowUnassign ? "unassigned" : null);
   const [presets, setPresets] = useState<Effect.Success<ReturnType<typeof listPresets>> | null>(
     null,
   );
@@ -108,20 +146,22 @@ function MappingControls({
         <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1">
           <p className="text-sm font-medium">Controller</p>
           <Select
-            value={active}
-            disabled={!available || controllers.length === 0 || changing || macroActive}
+            value={selection}
+            disabled={!available || options.length === 0 || changing || macroMode}
             onValueChange={(value) => {
-              if (value !== null && value !== active) void update({ kind: "selecting", id: value });
+              if (value !== null && value !== selection)
+                selectController(value === "unassigned" ? null : value);
             }}
           >
             <SelectTrigger className="w-full min-w-0" aria-label="Select controller">
-              <SelectValue placeholder="No controllers detected">
-                {activeInfo ? <span className="truncate">{activeInfo.name}</span> : null}
+              <SelectValue placeholder="No controller selected">
+                {activeName ?? (allowUnassign ? "No controller" : null)}
               </SelectValue>
             </SelectTrigger>
             <SelectContent>
-              {controllers.map((entry) => (
-                <SelectItem key={entry.guid} value={entry.guid}>
+              {allowUnassign && <SelectItem value="unassigned">No controller</SelectItem>}
+              {options.map((entry) => (
+                <SelectItem key={entry.id} value={entry.id} disabled={entry.disabled}>
                   {entry.name}
                 </SelectItem>
               ))}
@@ -138,10 +178,10 @@ function MappingControls({
           <div className="flex min-w-0 items-center gap-1">
             <Select
               value={activePreset?.filename ?? null}
-              disabled={changing || macroActive || !!loadError || !presets?.presets.length}
+              disabled={changing || macroMode || !!loadError || !presets?.presets.length}
               onValueChange={(value) => {
                 if (value !== null && value !== activePreset?.filename) {
-                  void update({ kind: "applying", preset: value });
+                  applyPreset(value);
                 }
               }}
             >
@@ -194,7 +234,7 @@ function MappingControls({
           )}
         </div>
       </div>
-      <VibrationSetting controllerGuid={activeInfo?.guid ?? null} />
+      <VibrationSetting controllerGuid={controllerGuid} />
       {pending && (
         <p role="status">{pending === "applying" ? "Applying preset…" : "Switching controller…"}</p>
       )}
@@ -203,7 +243,7 @@ function MappingControls({
           {error}
         </p>
       )}
-      {macroActive && (
+      {macroMode && (
         <p className="text-xs text-muted-foreground">
           Controller and preset changes are locked while a macro runs.
         </p>

@@ -23,6 +23,7 @@ class ControllerSocket {
   private stateHandlers = new Set<(state: ConnectionState) => void>();
   private lastStatus: StatusFrame | null = null;
   private lastControllers: ControllersFrame | null = null;
+  private selectedAdapter = "primary";
 
   start(): void {
     if (this.started) return;
@@ -44,6 +45,9 @@ class ControllerSocket {
     ws.onopen = () => {
       this.attempts = 0;
       this.setState("open");
+      if (this.selectedAdapter !== "primary") {
+        this.rawSend({ type: "select_adapter", adapter_id: this.selectedAdapter });
+      }
       const pending = this.queue.splice(0, this.queue.length);
       for (const msg of pending) this.rawSend(msg);
     };
@@ -113,6 +117,7 @@ class ControllerSocket {
     if (this.ws?.readyState !== WebSocket.OPEN) return false;
     try {
       this.ws.send(JSON.stringify(msg));
+      if (msg.type === "select_adapter") this.selectedAdapter = msg.adapter_id;
       return true;
     } catch {
       return false;

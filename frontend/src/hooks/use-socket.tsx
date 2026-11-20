@@ -12,6 +12,7 @@ type SocketContextValue = {
 };
 
 const SocketContext = createContext<SocketContextValue | null>(null);
+const send = (message: WsInbound) => socket.send(message);
 
 export function SocketProvider({ children }: { children: ReactNode }) {
   const [connection, setConnection] = useState<ConnectionState>(socket.getState());
@@ -49,7 +50,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         controllers,
         lastError,
         clearError: () => setLastError(null),
-        send: (msg) => socket.send(msg),
+        send,
       }}
     >
       {children}

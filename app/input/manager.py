@@ -6,6 +6,7 @@ import asyncio
 import logging
 import queue
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -34,10 +35,18 @@ class InputManager:
         command_queue: queue.Queue,
         macros_dir: Path,
         macro_rate_hz: int = 120,
+        *,
+        adapter_id: str | None = None,
+        pause_capture: Callable[[], None] | None = None,
+        resume_capture: Callable[[], None] | None = None,
     ):
         self.command_queue = command_queue
         self.macros_dir = Path(macros_dir)
         self.macro_rate_hz = macro_rate_hz
+        self.adapter_id = adapter_id
+        self._manual_state = NEUTRAL
+        self._pause_capture = pause_capture
+        self._resume_capture = resume_capture
         self.mode: Mode = "manual"
         self.pygame_threads: list[PygameInputThread] = []
         self._macro: MacroPlayerThread | None = None
@@ -63,10 +72,11 @@ class InputManager:
             if self._loop is None:
                 self._loop = loop
 
-    def subscribe(self) -> asyncio.Queue:
+    def subscribe(self, q: asyncio.Queue | None = None) -> asyncio.Queue:
         """Get a queue that receives a status dict on every transition.
         The queue is loop-bound; consume it from the same loop."""
-        q: asyncio.Queue = asyncio.Queue()
+        if q is None:
+            q = asyncio.Queue()
         self._subscribers.append(q)
         return q
 
@@ -93,7 +103,13 @@ class InputManager:
                     logger.exception("status broadcast failed")
 
     def _emit_status(self) -> None:
-        self._emit_frame({**self.status(), "type": "status"})
+        self._emit_frame(self.status_payload())
+
+    def status_payload(self) -> dict:
+        payload = {**self.status(), "type": "status"}
+        if self.adapter_id is not None:
+            payload["adapter_id"] = self.adapter_id
+        return payload
 
     def _emit_controllers(self) -> None:
         self._emit_frame(self.controllers_payload())
@@ -204,9 +220,9 @@ class InputManager:
                 raise MacroActiveError(
                     "cannot switch presets while a macro is running"
                 )
-        self.set_preset(preset, source)
         if self._service is not None:
             self._service.set_preset(preset, source)
+        self.set_preset(preset, source)
         logger.info(f"Applied controller preset: {preset.name}")
         self._emit_controllers()
         return preset
@@ -216,6 +232,9 @@ class InputManager:
             if mode == self.mode:
                 return
             if mode == "macro":
+                self._manual_state = NEUTRAL
+                if self._pause_capture:
+                    self._pause_capture()
                 for t in self.pygame_threads:
                     t.pause()
                 self.mode = "macro"
@@ -226,6 +245,8 @@ class InputManager:
                     self._clear_macro()
                 for t in self.pygame_threads:
                     t.resume()
+                if self._resume_capture:
+                    self._resume_capture()
                 self.mode = "manual"
         self._emit_status()
 
@@ -236,16 +257,20 @@ class InputManager:
         validate_macro(macro)
         with self._lock:
             self._cancel_internal()
+            self._manual_state = NEUTRAL
             name = macro.get("name", "<unnamed>")
             thread = MacroPlayerThread(
                 macro,
                 self.command_queue,
                 rate_hz=self.macro_rate_hz,
-                on_finish=self._on_macro_finished,
+                on_finish=lambda: self._on_macro_finished(thread),
+                publish=lambda state: self._publish_macro_state(thread, state),
             )
             self._macro = thread
             self._macro_name = name
             if self.mode != "macro":
+                if self._pause_capture:
+                    self._pause_capture()
                 for t in self.pygame_threads:
                     t.pause()
                 self.mode = "macro"
@@ -265,6 +290,8 @@ class InputManager:
             if self.mode == "macro":
                 for t in self.pygame_threads:
                     t.resume()
+                if self._resume_capture:
+                    self._resume_capture()
                 self.mode = "manual"
         self._emit_status()
 
@@ -286,8 +313,29 @@ class InputManager:
         with self._lock:
             if self.mode == "macro":
                 return False
-        self.command_queue.put_nowait(state)
+            if self.adapter_id is None:
+                self.command_queue.put_nowait(state)
+            else:
+                self._manual_state = state
         return True
+
+    def release_manual_input(self) -> None:
+        with self._lock:
+            if self.mode == "manual":
+                if self.adapter_id is None:
+                    self._drain_and_neutralize()
+                self._manual_state = NEUTRAL
+
+    def mix_manual_input(self, state: ControllerState) -> ControllerState:
+        with self._lock:
+            manual = self._manual_state
+        if manual == NEUTRAL:
+            return state
+        return ControllerState(
+            state.buttons | manual.buttons,
+            manual.left if manual.left != NEUTRAL.left else state.left,
+            manual.right if manual.right != NEUTRAL.right else state.right,
+        )
 
     def shutdown(self) -> None:
         with self._lock:
@@ -327,15 +375,24 @@ class InputManager:
         self._macro = None
         self._macro_name = None
 
-    def _on_macro_finished(self) -> None:
+    def _publish_macro_state(self, thread: MacroPlayerThread, state: ControllerState) -> None:
+        with self._lock:
+            if self._macro is thread:
+                self.command_queue.put(state)
+
+    def _on_macro_finished(self, thread: MacroPlayerThread) -> None:
         """Invoked from the macro thread (natural end or stop). Flip back
         to manual so physical input resumes."""
         with self._lock:
+            if self._macro is not thread:
+                return
             name = self._macro_name
             self._clear_macro()
             if self.mode == "macro":
                 for t in self.pygame_threads:
                     t.resume()
+                if self._resume_capture:
+                    self._resume_capture()
                 self.mode = "manual"
         logger.info(f"Macro '{name}' finished; returning to manual mode")
         self._emit_status()

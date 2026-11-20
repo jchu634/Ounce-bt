@@ -12,6 +12,7 @@ import { CaptureProvider } from "@/src/hooks/use-capture";
 import { SocketProvider } from "@/src/hooks/use-socket";
 import type { BluetoothStatus } from "@/src/lib/bluetooth";
 import { DEFAULT_CONTROLLER_COLOURS } from "@/src/lib/controller-colours";
+import type { ServerFrame } from "@/src/lib/types";
 import { socket } from "@/src/lib/ws";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -65,6 +66,73 @@ async function chooseOption(label: string, name: string) {
   if (!option) throw new Error(`Missing option: ${name}`);
   await act(async () => option.click());
 }
+
+it("keeps per-adapter settings in the dialog and selects input from the card", async () => {
+  const makeAdapter = (id: string, transport: string, controller_id: number | null) => ({
+    id, transport, controller_id, preset: "xbox", macro_mode: false,
+    local_address: null, error: null,
+  });
+  const primary = makeAdapter("primary", "usb:0", 1);
+  let secondary = makeAdapter("adapter-2", "usb:1", null);
+  const inventory = () => ({
+    adapters: [primary, secondary],
+    controllers_available: true,
+    controllers: [
+      { id: 1, guid: "first", name: "First Pad" },
+      { id: 2, guid: "second", name: "Second Pad" },
+    ],
+  });
+  const fetchRequest = vi.fn(async (path: string) => {
+    if (path === "/api/adapters") return Response.json(inventory());
+    if (path === "/api/adapters/adapter-2/controller") {
+      secondary = { ...secondary, controller_id: 2 };
+      return Response.json(inventory());
+    }
+    if (path.endsWith("/colours")) {
+      return Response.json({
+        controller_colours: {
+          ...DEFAULT_CONTROLLER_COLOURS,
+          body: path.includes("adapter-2") ? "#1122AA" : "#AA2211",
+        },
+        colours_reconnect_required: false,
+      });
+    }
+    if (path === "/api/presets") return Response.json({ presets: [], active: "xbox" });
+    if (path === "/api/config") return Response.json({ vibration_enabled: true });
+    return Response.json({}, { status: 404 });
+  });
+  vi.stubGlobal("fetch", fetchRequest);
+  vi.spyOn(socket, "start").mockImplementation(() => {});
+  const send = vi.spyOn(socket, "send").mockReturnValue(true);
+  let receive: ((frame: ServerFrame) => void) | undefined;
+  vi.spyOn(socket, "onFrame").mockImplementation((handler) => {
+    receive = handler;
+    return () => {};
+  });
+  await act(async () => {
+    root.render(<SocketProvider><ConnectionPanel onEditPreset={() => {}} /></SocketProvider>);
+  });
+  const cards = container.querySelectorAll("article");
+  expect(cards).toHaveLength(2);
+  expect(cards[1].querySelector('[data-region="body"]')?.getAttribute("fill")).toBe("#1122AA");
+  expect(container.querySelector('[aria-label="Select controller"]')).toBeNull();
+
+  const selectCard = button("Send manual and macro input through usb:1");
+  await act(async () => selectCard.click());
+  expect(send).toHaveBeenCalledWith({ type: "select_adapter", adapter_id: "adapter-2" });
+  await act(async () => receive?.({ type: "status", mode: "manual", macro: null, adapter_id: "adapter-2" }));
+  expect(selectCard.getAttribute("aria-pressed")).toBe("true");
+
+  await act(async () => cards[1].querySelector<HTMLButtonElement>('[aria-label="Controller settings"]')?.click());
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("usb:1");
+  await chooseOption("Select controller", "Second Pad");
+  expect(fetchRequest).toHaveBeenCalledWith(
+    "/api/adapters/adapter-2/controller",
+    expect.objectContaining({ body: JSON.stringify({ controller_id: 2 }) }),
+  );
+  expect(cards[1].querySelector("h3")?.textContent).toBe("Second Pad");
+  expect(send).toHaveBeenCalledTimes(1);
+});
 
 it("starts capture from the player and disables Stop after releasing the stream", async () => {
   const stopTrack = vi.fn();

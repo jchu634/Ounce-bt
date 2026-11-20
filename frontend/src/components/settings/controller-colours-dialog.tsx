@@ -14,6 +14,7 @@ import {
   DialogTrigger,
 } from "@/src/components/ui/dialog";
 import { getConfig, patchConfig } from "@/src/lib/api";
+import { requestAdapterColours } from "@/src/lib/adapters";
 import {
   COLOUR_FIELDS,
   DEFAULT_CONTROLLER_COLOURS,
@@ -27,7 +28,7 @@ import {
 } from "@/src/lib/controller-colours";
 import { errorMessage } from "@/src/lib/errors";
 
-export function ControllerColoursDialog() {
+export function ControllerColoursDialog({ adapterId }: { adapterId?: string }) {
   const id = useId();
   const [open, setOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
@@ -51,10 +52,12 @@ export function ControllerColoursDialog() {
 
   useEffect(() => {
     let disposed = false;
-    void Effect.runPromise(getConfig())
-      .then((config) => {
-        if (!disposed)
-          setSaved(parseControllerColours(config.controller_colours));
+    const load = adapterId
+      ? requestAdapterColours(adapterId).then((result) => result.colours)
+      : Effect.runPromise(getConfig()).then((config) => config.controller_colours);
+    void load
+      .then((palette) => {
+        if (!disposed) setSaved(parseControllerColours(palette));
       })
       .catch((cause: unknown) => {
         if (!disposed) setError(errorMessage(cause));
@@ -62,7 +65,7 @@ export function ControllerColoursDialog() {
     return () => {
       disposed = true;
     };
-  }, [loadAttempt]);
+  }, [adapterId, loadAttempt]);
 
   useEffect(() => {
     try {
@@ -91,19 +94,21 @@ export function ControllerColoursDialog() {
     setError(null);
     try {
       const submitted = { ...draft };
-      for (const { key } of COLOUR_FIELDS)
-        submitted[key] = expandHexColour(submitted[key]);
-      const result = await Effect.runPromise(
-        patchConfig({ controller_colours: submitted }),
-      );
-      const palette = parseControllerColours(result.config.controller_colours);
-      setRecent((history) =>
-        recordSavedControllerColours(history, saved, palette),
-      );
+      for (const { key } of COLOUR_FIELDS) submitted[key] = expandHexColour(submitted[key]);
+      const result = adapterId
+        ? await requestAdapterColours(adapterId, submitted)
+        : await Effect.runPromise(patchConfig({ controller_colours: submitted })).then(
+            (config) => ({
+              colours: config.config.controller_colours,
+              reconnectRequired: config.colours_reconnect_required,
+            }),
+          );
+      const palette = parseControllerColours(result.colours);
+      setRecent((history) => recordSavedControllerColours(history, saved, palette));
       setSaved(palette);
       setDraft(null);
       setNotice(
-        result.colours_reconnect_required
+        result.reconnectRequired
           ? "Colours saved. Reconnect to apply them on the Switch."
           : "Colours saved.",
       );
@@ -194,7 +199,7 @@ export function ControllerColoursDialog() {
               Retry
             </Button>
           ) : (
-            <p role="status">Loading controller colours…</p>
+            <p role="status">Loading controller coloursâ€¦</p>
           ))}
         {colours && (
           <DialogFooter className="items-center">
@@ -211,7 +216,7 @@ export function ControllerColoursDialog() {
               Reset
             </Button>
             <Button disabled={!dirty || saving} onClick={() => void save()}>
-              {saving ? "Saving…" : "Save"}
+              {saving ? "Savingâ€¦" : "Save"}
             </Button>
           </DialogFooter>
         )}

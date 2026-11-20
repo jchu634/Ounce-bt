@@ -48,10 +48,11 @@ class MacroPlayerThread(threading.Thread):
         command_queue,
         rate_hz: int = 120,
         on_finish: Callable[[], None] | None = None,
+        publish: Callable[[ControllerState], None] | None = None,
     ):
         super().__init__(name="macro-player", daemon=True)
         self._macro = macro
-        self._queue = command_queue
+        self._publish = publish or command_queue.put
         self._period = 1.0 / rate_hz
         self._stop = threading.Event()
         # Set = running, cleared = paused. Pause freezes the macro in its
@@ -99,7 +100,7 @@ class MacroPlayerThread(threading.Thread):
             self._buttons.clear()
             self._left = (0.0, 0.0)
             self._right = (0.0, 0.0)
-            self._queue.put(ControllerState())
+            self._publish(ControllerState())
             logger.info(f"Macro '{name}' finished")
             if self._on_finish is not None:
                 try:
@@ -160,11 +161,11 @@ class MacroPlayerThread(threading.Thread):
             remaining = end - time.perf_counter()
             if remaining <= 0:
                 return
-            self._queue.put(self._snapshot())
+            self._publish(self._snapshot())
             time.sleep(min(self._period, remaining, SLICE_SECONDS))
 
     def _emit(self):
-        self._queue.put(self._snapshot())
+        self._publish(self._snapshot())
 
     def _snapshot(self) -> ControllerState:
         flags = Button(0)

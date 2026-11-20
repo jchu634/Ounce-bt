@@ -8,7 +8,7 @@ import threading
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
-from lib.colours import normalize_controller_colours
+from lib.colours import DEFAULT_CONTROLLER_COLOURS, normalize_controller_colours
 from lib.device_names import normalize_device_names
 
 logger = logging.getLogger("switch_pair")
@@ -26,6 +26,16 @@ def _normalize_controller_presets(value: object) -> dict[str, str]:
         and guid.strip()
         and isinstance(preset, str)
         and preset.strip()
+    }
+
+
+def _normalize_adapter_colours(value: object) -> dict[str, dict[str, str]]:
+    if not isinstance(value, dict):
+        raise TypeError("adapter_colours must be an object")
+    return {
+        transport.casefold(): normalize_controller_colours(colours)
+        for transport, colours in value.items()
+        if isinstance(transport, str) and transport.strip()
     }
 
 
@@ -128,6 +138,8 @@ class Config:
     controller_guid: str = ""
     controller_presets: dict[str, str] = field(default_factory=dict)
     controller_colours: dict[str, str] = field(default_factory=dict)
+    adapter_colours: dict[str, dict[str, str]] = field(default_factory=dict)
+    adapter_presets: dict[str, str] = field(default_factory=dict)
     switch_device_names: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -136,6 +148,8 @@ class Config:
         self.controller_presets = _normalize_controller_presets(self.controller_presets)
         self.controller_vibration = normalize_controller_vibration(self.controller_vibration)
         self.controller_colours = normalize_controller_colours(self.controller_colours)
+        self.adapter_colours = _normalize_adapter_colours(self.adapter_colours)
+        self.adapter_presets = _normalize_controller_presets(self.adapter_presets)
         self.switch_device_names = normalize_device_names(self.switch_device_names)
 
     @property
@@ -144,6 +158,11 @@ class Config:
 
     def allows_controller_vibration(self, guid: str | None) -> bool:
         return self.vibration_enabled and self.controller_vibration.get((guid or "").casefold(), True)
+
+    def colours_for_adapter(self, transport: str, *, primary: bool) -> dict[str, str]:
+        return self.controller_colours if primary else self.adapter_colours.get(
+            transport.casefold(), DEFAULT_CONTROLLER_COLOURS
+        )
 
     def resolve_folder(self, folder: str) -> Path:
         path = Path(folder).expanduser()
@@ -189,6 +208,7 @@ class Config:
         }
         for key, normalize in (
             ("controller_colours", normalize_controller_colours),
+            ("adapter_colours", _normalize_adapter_colours),
             ("controller_vibration", normalize_controller_vibration),
             ("switch_device_names", normalize_device_names),
         ):
@@ -278,10 +298,12 @@ class ConfigStore:
             for k, v in changes.items():
                 if k not in valid:
                     continue
-                if k == "controller_presets":
+                if k in {"controller_presets", "adapter_presets"}:
                     if not isinstance(v, dict):
                         continue
                     v = _normalize_controller_presets(v)
+                elif k == "adapter_colours":
+                    v = _normalize_adapter_colours(v)
                 if getattr(self._config, k) != v:
                     setattr(self._config, k, v)
                     changed[k] = v

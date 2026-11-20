@@ -244,22 +244,35 @@ export function ManualControl() {
     });
   }, [send]);
 
-  const releaseAll = useCallback(() => {
+  const clearHeld = useCallback(() => {
     if (
       heldButtons.current.size === 0 &&
       heldSticks.current.size === 0 &&
       analogSticks.current.left === null &&
       analogSticks.current.right === null
     )
-      return;
+      return false;
     heldButtons.current = new Set();
     heldSticks.current = new Set();
     analogSticks.current = { left: null, right: null };
     setAnalogPositions(analogSticks.current);
     setPressedButtons(new Set());
     setPressedSticks(new Set());
-    sendState();
-  }, [sendState]);
+    return true;
+  }, []);
+
+  const releaseAll = useCallback(() => {
+    if (clearHeld()) sendState();
+  }, [clearHeld, sendState]);
+
+  const adapterId = status?.adapter_id;
+  const previousAdapterId = useRef(adapterId);
+  useEffect(() => {
+    if (previousAdapterId.current !== adapterId) {
+      previousAdapterId.current = adapterId;
+      clearHeld();
+    }
+  }, [adapterId, clearHeld]);
 
   useEffect(() => {
     if (disabled) releaseAll();

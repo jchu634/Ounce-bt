@@ -14,7 +14,7 @@ from typing import Any
 from app.input.pygame_source import PygameInputThread
 from lib.input.presets import PresetConfig, PresetSelection
 from lib.input.rumble import RumbleData
-from lib.input.state import NEUTRAL
+from lib.input.state import NEUTRAL, ControllerState
 
 logger = logging.getLogger("switch_pair")
 
@@ -31,8 +31,8 @@ _JOY_REMOVED = "JOYDEVICEREMOVED"
 class ControllerInfo:
     """One connected physical gamepad.
 
-    ``guid`` is the SDL GUID: stable across replugs (for a given driver),
-    making it the canonical identity for selection and persistence.
+    The GUID selects mapping defaults. The instance ID identifies one
+    attached controller, including when several share that GUID.
     ``index`` is the *current* pygame device index and shifts when devices
     are added or removed.
     """
@@ -43,6 +43,7 @@ class ControllerInfo:
     axes: int
     buttons: int
     hats: int
+    instance_id: int | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -52,6 +53,7 @@ class ControllerInfo:
             "axes": self.axes,
             "buttons": self.buttons,
             "hats": self.hats,
+            "instance_id": self.instance_id,
         }
 
 
@@ -70,6 +72,10 @@ def resolve_controller(
                 return c
         return None
     ident = str(ident).strip().lower()
+    if ident.startswith("instance:"):
+        return next(
+            (c for c in controllers if ident == f"instance:{c.instance_id}"), None
+        )
     for c in controllers:
         if c.guid.lower() == ident:
             return c
@@ -84,6 +90,83 @@ def resolve_controller(
         if c.index == idx:
             return c
     return None
+
+
+class LatestInput:
+    """Keep at most one unread physical input sample."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._state: ControllerState | None = None
+
+    def put(self, state: ControllerState) -> None:
+        with self._lock:
+            self._state = state
+
+    def put_nowait(self, state: ControllerState) -> None:
+        self.put(state)
+
+    def get_nowait(self) -> ControllerState:
+        with self._lock:
+            if self._state is None:
+                raise queue.Empty
+            state, self._state = self._state, None
+            return state
+
+    def empty(self) -> bool:
+        with self._lock:
+            return self._state is None
+
+
+class ControllerRoute:
+    """Input and feedback for an additional adapter."""
+
+    def __init__(self, preset: PresetConfig, preset_name: str):
+        self.input_queue = LatestInput()
+        self.controller: ControllerInfo | None = None
+        self.preset = preset
+        self.preset_name = preset_name
+        self.capture: PygameInputThread | None = None
+        self.paused = False
+        self.preset_override: PresetSelection | None = None
+        self._capture_lock = threading.Lock()
+
+    def pause(self) -> None:
+        with self._capture_lock:
+            self.paused = True
+            if self.capture is not None:
+                self.capture.pause()
+
+    def resume(self) -> None:
+        with self._capture_lock:
+            self.paused = False
+            if self.capture is not None:
+                self.capture.resume()
+
+    def start(self, capture: PygameInputThread) -> None:
+        with self._capture_lock:
+            self.capture = capture
+            if self.paused:
+                capture.pause()
+            capture.start()
+
+    @property
+    def active_guid(self) -> str | None:
+        return self.controller.guid if self.controller else None
+
+    def set_rumble(self, rumble: RumbleData | None) -> None:
+        if (capture := self.capture) is not None:
+            capture.set_rumble(rumble)
+
+    def stop(self) -> None:
+        with self._capture_lock:
+            capture, self.capture = self.capture, None
+        if capture is not None:
+            capture.stop()
+            capture.join()
+        with self._capture_lock:
+            if not self.paused:
+                self.input_queue.put(NEUTRAL)
 
 
 class ControllerService(threading.Thread):
@@ -119,6 +202,8 @@ class ControllerService(threading.Thread):
         self._pyg_ok = False
         self._controllers: list[ControllerInfo] = []
         self._active_guid: str | None = None
+        self._active_controller: ControllerInfo | None = None
+        self._routes: dict[str, ControllerRoute] = {}
         self._capture: PygameInputThread | None = None
         # Mirrors the manager's macro pause state so threads created while
         # a macro runs start paused.
@@ -127,6 +212,16 @@ class ControllerService(threading.Thread):
     @property
     def active_guid(self) -> str | None:
         return self._active_guid
+
+    def add_route(self, session_id: str, preset_name: str = "xbox") -> ControllerRoute:
+        route = ControllerRoute(self._preset or PresetConfig.default(), preset_name)
+        self._routes[session_id] = route
+        return route
+
+    def assign(self, session_id: str, instance_id: int | None) -> None:
+        result = self._request("assign", (session_id, instance_id))
+        if isinstance(result, Exception):
+            raise result
 
     def set_rumble(self, rumble: RumbleData | None) -> None:
         """Publish the latest effect without blocking the Bluetooth loop."""
@@ -180,10 +275,12 @@ class ControllerService(threading.Thread):
             raise TypeError(f"unexpected select result for {ident!r}")
         return result
 
-    def set_preset(self, preset: PresetConfig, source: str | None = None) -> None:
+    def set_preset(
+        self, preset: PresetConfig, source: str | None = None, *, session_id: str = "primary"
+    ) -> None:
         """Swap the mapping preset, restarting the capture on the same
         device (or applying it on next select if none is active)."""
-        result = self._request("set_preset", (preset, source))
+        result = self._request("set_preset", (preset, source, session_id))
         if isinstance(result, Exception):
             raise result
 
@@ -195,6 +292,7 @@ class ControllerService(threading.Thread):
         try:
             return fut.result(timeout=OP_TIMEOUT_SECONDS)
         except concurrent.futures.TimeoutError:
+            fut.cancel()
             raise RuntimeError(
                 f"controller service did not answer '{op}' in time"
             ) from None
@@ -227,12 +325,11 @@ class ControllerService(threading.Thread):
                     if remaining <= 0:
                         break
                     try:
-                        op, payload, fut = self._mailbox.get(
-                            timeout=remaining
-                        )
+                        op, payload, fut = self._mailbox.get(timeout=remaining)
                     except queue.Empty:
                         break
-                    self._handle(op, payload, fut)
+                    if fut.set_running_or_notify_cancel():
+                        self._handle(op, payload, fut)
                 if self._pyg_ok:
                     self._pump_and_handle_hotplug()
         finally:
@@ -245,6 +342,17 @@ class ControllerService(threading.Thread):
                     {
                         "controllers": [c.to_dict() for c in self._controllers],
                         "active": self._active_guid,
+                        "assignments": {
+                            "primary": self._active_controller.instance_id
+                            if self._active_controller
+                            else None,
+                            **{
+                                key: route.controller.instance_id
+                                if route.controller
+                                else None
+                                for key, route in self._routes.items()
+                            },
+                        },
                         "available": self._pyg_ok,
                     }
                 )
@@ -254,8 +362,22 @@ class ControllerService(threading.Thread):
                 except ValueError as e:
                     fut.set_result(e)
             elif op == "set_preset":
-                preset, source = payload
-                fut.set_result(self._do_set_preset(preset, source))
+                preset, source, session_id = payload
+                if session_id == "primary":
+                    if self._captures_paused:
+                        raise ValueError("Cannot change presets while a macro is active")
+                    self._do_set_preset(preset, source)
+                else:
+                    route = self._routes[session_id]
+                    if route.paused:
+                        raise ValueError("Cannot change presets while a macro is active")
+                    route.stop()
+                    route.preset_override = PresetSelection(source or preset.name, preset)
+                    route.preset, route.preset_name = preset, source or preset.name
+                    self._start_route(route, route.controller)
+                fut.set_result(None)
+            elif op == "assign":
+                fut.set_result(self._assign(*payload))
             elif op == "shutdown":
                 self._stop_event.set()
                 fut.set_result(None)
@@ -293,14 +415,16 @@ class ControllerService(threading.Thread):
             probe = None
             try:
                 probe = joystick.Joystick(i)
+                guid = probe.get_guid()
                 infos.append(
                     ControllerInfo(
-                        guid=probe.get_guid(),
+                        guid=guid,
                         index=i,
                         name=probe.get_name(),
                         axes=probe.get_numaxes(),
                         buttons=probe.get_numbuttons(),
                         hats=probe.get_numhats(),
+                        instance_id=probe.get_instance_id(),
                     )
                 )
             except Exception as e:
@@ -339,25 +463,43 @@ class ControllerService(threading.Thread):
         # Creating and closing a second Joystick object for the active SDL
         # device can invalidate the object used by the capture thread. Stop
         # capture while enumeration probes devices, then reopen the selected
-        # controller by its stable GUID.
+        # controller by its runtime instance ID.
         previous_guid = self._active_guid
+        previous_controller = self._active_controller
         self._stop_capture()
+        for route in self._routes.values():
+            route.stop()
         if previous_guid is not None and not self._captures_paused:
             self._queue.put(NEUTRAL)
         changed = self._refresh_controllers()
-        previous = resolve_controller(previous_guid or "", self._controllers)
+        for route in self._routes.values():
+            if route.controller is not None:
+                match = resolve_controller(
+                    f"instance:{route.controller.instance_id}", self._controllers
+                )
+                self._start_route(route, match)
+        previous = resolve_controller(
+            f"instance:{previous_controller.instance_id}"
+            if previous_controller and previous_controller.instance_id is not None
+            else previous_guid or "",
+            self._controllers,
+        )
         if previous is not None:
             try:
-                self._do_select(previous.guid)
+                self._do_select(
+                    f"instance:{previous.instance_id}"
+                    if previous.instance_id is not None
+                    else previous.guid
+                )
             except ValueError:
                 self._active_guid = None
+                self._active_controller = None
         elif previous_guid is not None:
-            logger.warning(
-                f"Active controller ({previous_guid}) was removed"
-            )
+            logger.warning(f"Active controller ({previous_guid}) was removed")
             self._active_guid = None
+            self._active_controller = None
 
-        if self._active_guid is None and self._controllers:
+        if self._active_guid is None and self._controllers and not self._routes:
             try:
                 fallback = self._do_select(self._controllers[0].index)
                 logger.info(f"Fell back to '{fallback.name}'")
@@ -371,17 +513,20 @@ class ControllerService(threading.Thread):
         match = resolve_controller(ident, self._controllers)
         if match is None:
             names = ", ".join(c.name for c in self._controllers) or "none"
-            raise ValueError(
-                f"no controller matches {ident!r} (connected: {names})"
-            )
-        if match.guid == self._active_guid and self._capture is not None:
+            raise ValueError(f"no controller matches {ident!r} (connected: {names})")
+        if any(route.controller == match for route in self._routes.values()):
+            raise ValueError("Controller is already assigned to another adapter")
+        if match == self._active_controller and self._capture is not None:
             return match  # already active
         self._stop_capture()
+        if self._routes and not self._captures_paused:
+            self._clear_primary_input()
         if self._preset_resolver is not None:
             selection = self._preset_resolver(match.guid, match.name)
             self._preset = selection.config
             self._report_preset(selection)
         self._active_guid = match.guid
+        self._active_controller = match
         self._capture = PygameInputThread(
             self._queue,
             device_index=match.index,
@@ -389,18 +534,80 @@ class ControllerService(threading.Thread):
             pump=False,
             start_paused=self._captures_paused,
             rate_hz=self._rate_hz,
+            instance_id=match.instance_id,
         )
         self._capture.start()
         logger.info(f"Controller selected: '{match.name}' ({match.guid})")
         self._notify()
         return match
 
-    def _do_set_preset(
-        self, preset: PresetConfig, source: str | None = None
+    def _clear_primary_input(self) -> None:
+        while True:
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                break
+        self._queue.put(NEUTRAL)
+
+    def _assign(self, session_id: str, instance_id: int | None) -> None:
+        match = None
+        if instance_id is not None:
+            match = resolve_controller(f"instance:{instance_id}", self._controllers)
+            if match is None:
+                raise ValueError("Controller is no longer connected")
+        if session_id == "primary":
+            if self._captures_paused:
+                raise ValueError("Cannot change controllers while a macro is active")
+            if match is not None:
+                self._do_select(f"instance:{instance_id}")
+            else:
+                self._stop_capture()
+                self._active_guid = self._active_controller = None
+                self._clear_primary_input()
+                self._notify()
+            return
+
+        route = self._routes[session_id]
+        if route.paused:
+            raise ValueError("Cannot change controllers while a macro is active")
+        if match is not None and (
+            self._active_controller == match
+            or any(
+                other is not route and other.controller == match
+                for other in self._routes.values()
+            )
+        ):
+            raise ValueError("Controller is already assigned to another adapter")
+        if route.controller == match:
+            return
+        if match is not None and route.preset_override is None and self._preset_resolver:
+            selection = self._preset_resolver(match.guid, match.name)
+            route.preset, route.preset_name = selection.config, selection.source
+        route.stop()
+        self._start_route(route, match)
+
+    def _start_route(
+        self, route: ControllerRoute, match: ControllerInfo | None
     ) -> None:
+        route.controller = match
+        if match is None:
+            return
+        capture = PygameInputThread(
+            route.input_queue,
+            device_index=match.index,
+            preset=route.preset,
+            pump=False,
+            rate_hz=self._rate_hz,
+            instance_id=match.instance_id,
+        )
+        route.start(capture)
+
+    def _do_set_preset(self, preset: PresetConfig, source: str | None = None) -> None:
         self._preset = preset
         self._report_preset(PresetSelection(source or preset.name, preset))
-        active = resolve_controller(self._active_guid or "", self._controllers)
+        active = self._active_controller or resolve_controller(
+            self._active_guid or "", self._controllers
+        )
         if active is not None:
             self._stop_capture()
             self._capture = PygameInputThread(
@@ -410,11 +617,10 @@ class ControllerService(threading.Thread):
                 pump=False,
                 start_paused=self._captures_paused,
                 rate_hz=self._rate_hz,
+                instance_id=active.instance_id,
             )
             self._capture.start()
-            logger.info(
-                f"Applied preset '{preset.name}' to '{active.name}'"
-            )
+            logger.info(f"Applied preset '{preset.name}' to '{active.name}'")
         else:
             logger.info(
                 f"Preset '{preset.name}' stored; no active controller to restart"
@@ -441,6 +647,8 @@ class ControllerService(threading.Thread):
 
     def _shutdown_captures(self) -> None:
         self._stop_capture()
+        for route in self._routes.values():
+            route.stop()
 
     def _notify(self) -> None:
         cb = self._on_change

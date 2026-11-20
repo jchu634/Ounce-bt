@@ -3,6 +3,7 @@ export type BluetoothStatus = {
   pairing: boolean;
   state: "disconnected" | "disconnecting" | "connecting" | "reconnecting" | "connected";
   address: string | null;
+  player_number?: number | null;
   peers: string[];
   names: Record<string, string>;
   failure_id: number;
@@ -34,6 +35,9 @@ function isBluetoothStatus(value: unknown): value is BluetoothStatus {
       value.state === "connected") &&
     "address" in value &&
     (value.address === null || typeof value.address === "string") &&
+    (!("player_number" in value) ||
+      value.player_number === null ||
+      (typeof value.player_number === "number" && Number.isInteger(value.player_number))) &&
     "peers" in value &&
     Array.isArray(value.peers) &&
     value.peers.every((peer: unknown) => typeof peer === "string") &&
@@ -61,11 +65,18 @@ export function connectionDetail(status: BluetoothStatus): string {
 }
 
 export class BluetoothDisconnectingError extends Error {}
+export class BluetoothPageTimeoutError extends Error {}
 
-export async function requestStatus(init?: RequestInit): Promise<BluetoothStatus> {
+export async function requestStatus(
+  init?: RequestInit,
+  sessionId?: string,
+): Promise<BluetoothStatus> {
   let response: Response;
   try {
-    response = await fetch("/api/bluetooth", {
+    const url = sessionId
+      ? `/api/adapters/${encodeURIComponent(sessionId)}/bluetooth`
+      : "/api/bluetooth";
+    response = await fetch(url, {
       ...init,
       cache: "no-store",
       signal: AbortSignal.timeout(init?.method ? 35000 : 5000),
@@ -98,6 +109,14 @@ export async function requestStatus(init?: RequestInit): Promise<BluetoothStatus
       body.code === "disconnecting"
     ) {
       throw new BluetoothDisconnectingError(message);
+    }
+    if (
+      typeof body === "object" &&
+      body !== null &&
+      "code" in body &&
+      body.code === "page_timeout"
+    ) {
+      throw new BluetoothPageTimeoutError(message);
     }
     throw new Error(message);
   }

@@ -3,6 +3,7 @@ from __future__ import annotations
 import queue
 
 import pygame
+import pytest
 from pygame import event
 
 from app.input.controller_service import ControllerInfo, ControllerService
@@ -12,6 +13,7 @@ from lib.input.presets import (
     detect_controller_preset,
     resolve_controller_preset,
 )
+from lib.input.state import NEUTRAL, Button, ControllerState
 
 
 def test_controller_type_detection_uses_name_and_sdl_vendor_guid():
@@ -71,6 +73,60 @@ def test_select_resolves_and_reports_controller_preset(monkeypatch):
 
     assert service._preset is preset
     assert reported == [PresetSelection("playstation", preset)]
+
+
+def test_identical_controllers_keep_independent_routes_after_hotplug(monkeypatch):
+    service = ControllerService(queue.Queue())
+    first = ControllerInfo("same-guid", 0, "Pad", 4, 10, 1, instance_id=10)
+    second = ControllerInfo("same-guid", 1, "Pad", 4, 10, 1, instance_id=11)
+    service._controllers = [first, second]
+    route = service.add_route("adapter-2")
+
+    class Capture:
+        def __init__(self, output, *, instance_id, **kwargs):
+            self.output = output
+            self.instance_id = instance_id
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def join(self, timeout=None):
+            pass
+
+        def is_alive(self):
+            return False
+
+    monkeypatch.setattr("app.input.controller_service.PygameInputThread", Capture)
+    service._assign("primary", 10)
+    service._assign("adapter-2", 11)
+    with pytest.raises(ValueError, match="already assigned"):
+        service._assign("adapter-2", 10)
+    state = ControllerState(Button.A)
+    route.capture.output.put(state)
+    assert route.input_queue.get_nowait() == state
+    assert service._queue.get_nowait() == NEUTRAL
+
+    def refresh():
+        service._controllers = [
+            ControllerInfo("same-guid", 0, "Pad", 4, 10, 1, instance_id=11)
+        ]
+        return True
+
+    monkeypatch.setattr(event, "pump", lambda: None)
+    monkeypatch.setattr(
+        event, "get", lambda: [event.Event(pygame.JOYDEVICEREMOVED, instance_id=10)]
+    )
+    monkeypatch.setattr(service, "_refresh_controllers", refresh)
+    service._pump_and_handle_hotplug()
+
+    assert service.active_guid is None
+    assert route.capture.instance_id == 11
+    assert route.controller.index == 0
+    service._assign("adapter-2", None)
+    assert route.input_queue.get_nowait() == NEUTRAL
 
 
 def test_poll_without_hotplug_does_not_reprobe_active_joystick(monkeypatch):

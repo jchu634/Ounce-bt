@@ -680,16 +680,13 @@ class ControllerProtocol:
         # Subcommand reply
         self.report[15] = 0x30
 
+        if len(message.subcommand) < 2:
+            return
         bitfield = message.subcommand[1]
-
-        if bitfield == 0x01 or bitfield == 0x10:
-            self.player_number = 1
-        elif bitfield == 0x03 or bitfield == 0x30:
-            self.player_number = 2
-        elif bitfield == 0x07 or bitfield == 0x70:
-            self.player_number = 3
-        elif bitfield == 0x0F or bitfield == 0xF0:
-            self.player_number = 4
+        # The lower nibble is solid lights, the upper nibble is flashing lights.
+        pattern = (bitfield & 0x0F) or (bitfield >> 4)
+        players = {0x1: 1, 0x3: 2, 0x7: 3, 0xF: 4, 0x9: 5, 0x5: 6, 0xD: 7, 0x6: 8}
+        self.player_number = players.get(pattern, self.player_number)
 
     def set_nfc_ir_state(self):
         # ACK byte
