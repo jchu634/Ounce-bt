@@ -115,6 +115,7 @@ def test_linux_starts_without_realtek_files_and_reports_transport_failure(
         raise PermissionError("Operation not permitted")
 
     async def serve(app, host, port, stop, **kwargs):
+        await asyncio.sleep(0)
         with TestClient(app) as client:
             response = client.get("/api/startup").json()
             assert response["kind"] == "bluetooth_error"

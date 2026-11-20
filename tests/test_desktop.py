@@ -157,7 +157,7 @@ def test_bridge_save_refuses_external_pages():
 
 
 @pytest.mark.parametrize("platform", [sys.platform, "win32"])
-def test_window_close_cancels_backend(monkeypatch, platform):
+def test_window_close_requests_graceful_backend_shutdown(monkeypatch, platform):
     monkeypatch.setattr("app.desktop.sys", SimpleNamespace(platform=platform))
     import webview
 
@@ -181,10 +181,9 @@ def test_window_close_cancels_backend(monkeypatch, platform):
     ):
         assert len(ws_token) == 43
         ready.set()
-        try:
-            await asyncio.Future()
-        finally:
-            cleaned.append(True)
+        await asyncio.wait_for(shutdown_event.wait(), timeout=3)
+        await asyncio.sleep(0)
+        cleaned.append(True)
 
     run_application(Config(), None, backend)
     assert cleaned == [True]
@@ -223,7 +222,9 @@ def test_backend_failure_prevents_window_open(monkeypatch):
     create.assert_not_called()
 
 
-def test_web_server_closes_active_websockets_before_cancellation(tmp_path, monkeypatch):
+@pytest.mark.parametrize("cancel", [False, True])
+def test_web_server_closes_active_websockets(tmp_path, monkeypatch, capsys, cancel):
+    import httpx2
     from websockets.asyncio.client import connect
     from websockets.exceptions import ConnectionClosed
 
@@ -240,7 +241,9 @@ def test_web_server_closes_active_websockets_before_cancellation(tmp_path, monke
 
         monkeypatch.setattr(application.uvicorn, "Server", make_server)
         app = app_for(tmp_path)
-        task = asyncio.create_task(application.serve_web(app, "127.0.0.1", 0))
+        stop = asyncio.Event()
+        app.state.shutdown_event = stop
+        task = asyncio.create_task(application.serve_web(app, "127.0.0.1", 0, stop))
         try:
 
             async def started():
@@ -255,29 +258,39 @@ def test_web_server_closes_active_websockets_before_cancellation(tmp_path, monke
             ) as ws:
                 await ws.recv()
                 await ws.recv()
-                task.cancel()
-                with pytest.raises(asyncio.CancelledError):
+                if cancel:
+                    task.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await asyncio.wait_for(task, 3)
+                else:
+                    async with httpx2.AsyncClient() as client:
+                        response = await client.post(
+                            f"http://127.0.0.1:{port}/api/application/close", json={}
+                        )
+                        assert response.json() == {"closing": True}
                     await asyncio.wait_for(task, 3)
                 with pytest.raises(ConnectionClosed):
                     await ws.recv()
             assert not servers[0].server_state.connections
+            assert not servers[0].server_state.tasks
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(scenario())
+    server_log = capsys.readouterr().err
+    assert "Finished server process" in server_log
+    assert "Exception in ASGI application" not in server_log
 
 
-def test_browser_restart_cancels_backend_before_return():
+def test_browser_restart_allows_backend_to_finish():
     cleaned = []
 
     async def backend(config, args, *, shutdown_event, restart_callback):
-        try:
-            restart_callback()
-            shutdown_event.set()
-            await asyncio.Future()
-        finally:
-            cleaned.append(True)
+        restart_callback()
+        shutdown_event.set()
+        await asyncio.sleep(0)
+        cleaned.append(True)
 
     assert (
         run_application(

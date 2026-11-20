@@ -360,11 +360,7 @@ def make_l2cap_handler(psm, state):
 async def serve_web(
     app, host: str, port: int, stop_event: asyncio.Event | None = None, ready=None
 ) -> None:
-    """Run the Starlette app under uvicorn until cancelled.
-
-    Shutdown is driven by task cancellation; ``should_exit`` is set on
-    cancel so uvicorn finishes in-flight requests cleanly.
-    """
+    """Ask Uvicorn to finish in-flight requests before closing the server."""
     config = uvicorn.Config(
         app,
         host=host,
@@ -394,12 +390,10 @@ async def serve_web(
         await server_task
         raise
     finally:
-        if ready_task:
-            ready_task.cancel()
-            await asyncio.gather(ready_task, return_exceptions=True)
-        if stop_task:
-            stop_task.cancel()
-            await asyncio.gather(stop_task, return_exceptions=True)
+        watchers = [task for task in (ready_task, stop_task) if task is not None]
+        for task in watchers:
+            task.cancel()
+        await asyncio.gather(*watchers, return_exceptions=True)
 
 
 def load_options():
@@ -689,7 +683,6 @@ async def main(
 
     stop_event = shutdown_event or asyncio.Event()
     app = None
-    web_task = None
     power_lock = asyncio.Lock()
     addresses = set()
 
@@ -780,20 +773,14 @@ async def main(
                     restart_callback=restart_callback,
                 )
                 app.state.transport_pending = True
-                web_task = asyncio.create_task(
-                    serve_web(
-                        app, config.web_host, config.web_port, stop_event, ready=ready
-                    )
+                await serve_web(
+                    app, config.web_host, config.web_port, stop_event, ready=ready
                 )
-                await stop_event.wait()
             else:
                 await tasks[0]
         finally:
             for task in tasks:
                 task.cancel()
-            if web_task is not None:
-                web_task.cancel()
-                tasks.append(web_task)
             await asyncio.gather(*tasks, return_exceptions=True)
             manager.shutdown()
             for session in sessions.values():

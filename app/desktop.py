@@ -49,19 +49,6 @@ class DesktopBridge:
         return True
 
 
-async def _run_backend_until_stopped(backend, config, args, stop, **kwargs):
-    task = asyncio.create_task(backend(config, args, shutdown_event=stop, **kwargs))
-    stopped = asyncio.create_task(stop.wait())
-    try:
-        await asyncio.wait({task, stopped}, return_when=asyncio.FIRST_COMPLETED)
-        if task.done():
-            await task
-    finally:
-        task.cancel()
-        stopped.cancel()
-        await asyncio.gather(task, stopped, return_exceptions=True)
-
-
 def run_application(config, args, backend):
     restart_requested = threading.Event()
 
@@ -77,9 +64,7 @@ def run_application(config, args, backend):
         if config.ws_auth_required:
             raise ValueError("Browser mode requires ws_auth_required=false")
         asyncio.run(
-            _run_backend_until_stopped(
-                restartable_backend, config, args, asyncio.Event()
-            )
+            restartable_backend(config, args, shutdown_event=asyncio.Event())
         )
         return restart_requested.is_set()
     if config.web_host not in ("127.0.0.1", "localhost", "::1"):
@@ -99,8 +84,8 @@ def run_application(config, args, backend):
     stop = asyncio.Event()
 
     async def run_backend():
-        await _run_backend_until_stopped(
-            restartable_backend, config, args, stop, ws_token=token, ready=ready
+        await restartable_backend(
+            config, args, shutdown_event=stop, ws_token=token, ready=ready
         )
 
     def worker():

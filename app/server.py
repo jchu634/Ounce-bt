@@ -104,6 +104,8 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
         try:
             while True:
                 event = await websocket.receive()
+                if event["type"] == "websocket.disconnect":
+                    return
                 text = event.get("text") or ""
                 if text:
                     incoming.put_nowait(text)
@@ -113,22 +115,14 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
             incoming.put_nowait(None)  # disconnect sentinel
 
     reader_task = asyncio.create_task(reader())
+    incoming_task = asyncio.create_task(incoming.get())
+    status_task = asyncio.create_task(status_q.get())
 
     try:
         await websocket.send_text(frame_text(manager.status_payload()))
         await websocket.send_text(frame_text(primary.controllers_payload()))
-    except WebSocketDisconnect:
-        reader_task.cancel()
-        await asyncio.gather(reader_task, return_exceptions=True)
-        for source in managers.values():
-            source.unsubscribe(status_q)
-        return
-
-    try:
         # Persistent get-tasks, renewed immediately after consumption so
         # no frame is ever stranded in an abandoned task.
-        incoming_task = asyncio.create_task(incoming.get())
-        status_task = asyncio.create_task(status_q.get())
         while True:
             done, _pending = await asyncio.wait(
                 {incoming_task, status_task},
