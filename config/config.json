@@ -1,54 +1,5 @@
 {
-  "adapter_colours": {
-    "usb:0bda:8771/00e04c239987": {
-      "body": "#000000",
-      "buttons": "#FFFFFF",
-      "left_grip": "#BF7373",
-      "right_grip": "#C20000"
-    },
-    "usb:2357:0604/3c7895789c4d": {
-      "body": "#000000",
-      "buttons": "#FFFFFF",
-      "left_grip": "#6DE715",
-      "right_grip": "#DE0E72"
-    },
-    "usb:5-2.2.2": {
-      "body": "#000000",
-      "buttons": "#FFFFFF",
-      "left_grip": "#FFFFFF",
-      "right_grip": "#FF0FE3"
-    },
-    "usb:5-2.3.2": {
-      "body": "#000000",
-      "buttons": "#FFFFFF",
-      "left_grip": "#002FFF",
-      "right_grip": "#11FF21"
-    },
-    "usb:5-2.3.4": {
-      "body": "#000000",
-      "buttons": "#FFFFFF",
-      "left_grip": "#7615CF",
-      "right_grip": "#ECAEAE"
-    },
-    "usb:5-2.4.2": {
-      "body": "#000000",
-      "buttons": "#FFFFFF",
-      "left_grip": "#7615CF",
-      "right_grip": "#FF0000"
-    },
-    "usb:5-2.4.3.2": {
-      "body": "#000000",
-      "buttons": "#FFFFFF",
-      "left_grip": "#4EEC15",
-      "right_grip": "#11FF21"
-    },
-    "usb:5-2.4.3.4.2": {
-      "body": "#000000",
-      "buttons": "#676767",
-      "left_grip": "#D12121",
-      "right_grip": "#CE0D0D"
-    }
-  },
+  "adapter_colours": {},
   "adapter_presets": {},
   "bt_address": "98:B6:E9:19:13:08",
   "bumble_logging": true,
