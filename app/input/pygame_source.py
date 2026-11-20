@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 import time
 
@@ -9,6 +10,7 @@ from pygame import event, joystick
 from pygame import init as pygame_init
 from pygame._sdl2 import controller as sdl_controller
 
+from app.input.switch2_pro import Switch2ProInput, is_wired_switch2_pro
 from lib.input.presets import PresetConfig
 from lib.input.rumble import RumbleData
 from lib.input.state import Button, ControllerState
@@ -217,6 +219,7 @@ class PygameInputThread(threading.Thread):
 
         stick = None
         gamepad = None
+        switch2 = None
         try:
             count = joystick.get_count()
             if count <= self._device_index:
@@ -231,6 +234,15 @@ class PygameInputThread(threading.Thread):
                 stick = None
                 return
             stick.init()
+            if sys.platform == "win32" and is_wired_switch2_pro(stick.get_guid()):
+                switch2 = Switch2ProInput(self._device_index, xbox_layout=self._standard_gamepad)
+                logger.info("Reading Nintendo Switch 2 Pro Controller over wired USB")
+                try:
+                    self._loop(switch2, refresh=switch2.update)
+                finally:
+                    if self._pause.is_set() and not self._stop_event.is_set():
+                        self._queue.put(ControllerState())
+                return
             logger.info(
                 f"Pygame input following '{stick.get_name()}' "
                 f"({stick.get_numaxes()} axes, {stick.get_numbuttons()} "
@@ -249,6 +261,8 @@ class PygameInputThread(threading.Thread):
         except Exception:
             logger.exception("Pygame input thread crashed")
         finally:
+            if switch2 is not None:
+                switch2.close()
             if gamepad is not None:
                 gamepad.quit()
             # Close only this instance; ``joystick.quit()`` tears down whole module
@@ -263,7 +277,7 @@ class PygameInputThread(threading.Thread):
                 except Exception:
                     logger.debug("failed to close pygame joystick", exc_info=True)
 
-    def _loop(self, stick):
+    def _loop(self, stick, *, refresh=None):
         n_axes = stick.get_numaxes()
         n_buttons = stick.get_numbuttons()
         n_hats = stick.get_numhats()
@@ -275,6 +289,8 @@ class PygameInputThread(threading.Thread):
             # while paused. We just skip the enqueue when paused.
             if self._pump:
                 event.pump()
+            if refresh is not None:
+                refresh()
             self._update_rumble(stick)
             if not self._pause.is_set():
                 time.sleep(self._period)

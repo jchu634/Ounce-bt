@@ -175,6 +175,7 @@ def test_mainloop_cancellation_stops_rumble():
 def test_joystick_cleanup_stops_effect_before_close(monkeypatch):
     capture = PygameInputThread(queue.Queue(), pump=False)
     stick = Mock()
+    stick.get_guid.return_value = "0300938d5e040000ff02000000007200"
     monkeypatch.setattr("app.input.pygame_source.joystick.get_count", lambda: 1)
     monkeypatch.setattr("app.input.pygame_source.joystick.Joystick", lambda _: stick)
 

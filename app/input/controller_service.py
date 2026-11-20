@@ -5,6 +5,7 @@ from __future__ import annotations
 import concurrent.futures
 import logging
 import queue
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -12,6 +13,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.input.pygame_source import PygameInputThread
+from app.input.switch2_pro import NAME as SWITCH2_PRO_NAME
+from app.input.switch2_pro import is_wired_switch2_pro
 from lib.input.presets import PresetConfig, PresetSelection
 from lib.input.rumble import RumbleData
 from lib.input.state import NEUTRAL, ControllerState
@@ -416,13 +419,14 @@ class ControllerService(threading.Thread):
             try:
                 probe = joystick.Joystick(i)
                 guid = probe.get_guid()
+                switch2 = sys.platform == "win32" and is_wired_switch2_pro(guid)
                 infos.append(
                     ControllerInfo(
                         guid=guid,
                         index=i,
-                        name=probe.get_name(),
-                        axes=probe.get_numaxes(),
-                        buttons=probe.get_numbuttons(),
+                        name=SWITCH2_PRO_NAME if switch2 else probe.get_name(),
+                        axes=6 if switch2 else probe.get_numaxes(),
+                        buttons=16 if switch2 else probe.get_numbuttons(),
                         hats=probe.get_numhats(),
                         instance_id=probe.get_instance_id(),
                     )
