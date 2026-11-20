@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  BluetoothDisconnectingError,
   connectionDetail,
   deviceName,
   requestStatus,
@@ -9,11 +10,11 @@ import {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Bluetooth status requests", () => {
-  it("accepts the live backend's saved public-address format", async () => {
+  it.each(["disconnected", "disconnecting"])("accepts saved addresses while %s", async (state) => {
     const status = {
       available: true,
       pairing: false,
-      state: "disconnected",
+      state,
       address: null,
       peers: ["12:34:56:78:90:AB/P"],
       names: { "12:34:56:78:90:AB/P": "Switch Device 1" },
@@ -22,6 +23,20 @@ describe("Bluetooth status requests", () => {
     };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(status)));
     await expect(requestStatus()).resolves.toEqual(status);
+  });
+
+  it("identifies disconnect conflicts so the UI can show a wait warning", async () => {
+    const message = "The previous connection is still closing. Please wait a moment.";
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockImplementation(async () =>
+          Response.json({ error: message, code: "disconnecting" }, { status: 409 }),
+        ),
+    );
+    await expect(requestStatus()).rejects.toBeInstanceOf(BluetoothDisconnectingError);
+    await expect(requestStatus()).rejects.toThrow(message);
   });
 
   it("shows saved names and reconnect targets without exposing addresses as labels", () => {

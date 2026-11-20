@@ -3,15 +3,21 @@
 import asyncio
 import logging
 
-from bumble.hci import Address
+from bumble.core import ConnectionError as BluetoothConnectionError
+from bumble.hci import HCI_CONNECTION_ALREADY_EXISTS_ERROR, Address
 from bumble.l2cap import ClassicChannelSpec
 
 logger = logging.getLogger("switch_pair")
 
 
+class BluetoothDisconnectingError(ValueError):
+    """A new connection must wait for the previous one to close."""
+
+
 class BluetoothService:
     def __init__(self):
         self.device = None
+        self.state = None
         self.connection = None
         self.connected = False
         self.pairing = False
@@ -20,8 +26,26 @@ class BluetoothService:
         self.failure_id = 0
         self.failure = None
         self._intentional_disconnect = False
+        self._disconnect_requested = False
         self._lock = asyncio.Lock()
         self._disconnect_lock = asyncio.Lock()
+
+    @property
+    def disconnecting(self):
+        # ACL loss wakes the session loop before its tasks and channels finish
+        # cleanup. Only reset_for_session() acknowledges that cleanup is done.
+        return (
+            self._disconnect_requested
+            or self._disconnect_lock.locked()
+            or (self.state is not None and self.state.session_stop.is_set())
+        )
+
+    def _check_disconnecting(self):
+        if self.disconnecting:
+            raise BluetoothDisconnectingError(
+                "The previous connection is still closing. "
+                "Please wait a moment before reconnecting or starting pairing."
+            )
 
     def attach(self, device, state, channel_handler):
         self.device = device
@@ -66,7 +90,9 @@ class BluetoothService:
         return {
             "available": self.device is not None,
             "pairing": self.pairing,
-            "state": "reconnecting"
+            "state": "disconnecting"
+            if self.disconnecting
+            else "reconnecting"
             if self.reconnecting
             else (
                 "connected"
@@ -82,9 +108,13 @@ class BluetoothService:
         }
 
     async def set_pairing(self, enabled):
+        if enabled:
+            self._check_disconnecting()
         async with self._lock:
             if self.device is None:
                 raise RuntimeError("Bluetooth is not ready")
+            if enabled:
+                self._check_disconnecting()
             if enabled and (self.connection or self.reconnecting):
                 raise ValueError("A Switch connection is already active")
             await self.device.set_discoverable(enabled)
@@ -109,12 +139,16 @@ class BluetoothService:
     async def _disconnect(self):
         if self.device is None:
             raise RuntimeError("Bluetooth is not ready")
-        await self.device.set_discoverable(False)
-        await self.device.set_connectable(False)
-        self.pairing = False
-        if self.connection is not None:
-            self._intentional_disconnect = True
-            await self.disconnect_connection(self.connection)
+        self._disconnect_requested = True
+        try:
+            await self.device.set_discoverable(False)
+            await self.device.set_connectable(False)
+            self.pairing = False
+            if self.connection is not None:
+                self._intentional_disconnect = True
+                await self.disconnect_connection(self.connection)
+        finally:
+            self._disconnect_requested = False
 
     async def forget(self, address):
         async with self._lock:
@@ -128,10 +162,23 @@ class BluetoothService:
                 await self._disconnect()
             await self.device.keystore.delete(address)
 
+    async def forget_all(self):
+        """Disconnect before removing every bond for the current controller identity."""
+        async with self._lock:
+            if self.device is None:
+                raise RuntimeError(
+                    "Bluetooth must be ready before regenerating its address"
+                )
+            await self._disconnect()
+            if self.device.keystore is not None:
+                await self.device.keystore.delete_all()
+
     async def reconnect(self, address):
+        self._check_disconnecting()
         async with self._lock:
             if self.device is None:
                 raise RuntimeError("Bluetooth is not ready")
+            self._check_disconnecting()
             if self.connection or self.reconnecting:
                 raise ValueError("A Switch connection is already active")
             if address not in (await self.status())["peers"]:
@@ -156,6 +203,20 @@ class BluetoothService:
             except BaseException as error:
                 if self.connection:
                     await self.disconnect_connection(self.connection)
+                if (
+                    isinstance(error, BluetoothConnectionError)
+                    and error.error_namespace == "hci"
+                    and error.error_code == HCI_CONNECTION_ALREADY_EXISTS_ERROR
+                ):
+                    logger.warning(
+                        "Adapter reports an existing Bluetooth connection: peer=%s",
+                        address,
+                        exc_info=True,
+                    )
+                    raise BluetoothDisconnectingError(
+                        "Bluetooth still reports an existing connection to this Switch. "
+                        "Please wait a moment, then try reconnecting again."
+                    ) from error
                 # Bumble also uses CancelledError to signal a lost ACL. It is
                 # an operation failure unless our caller actually cancelled us.
                 if (

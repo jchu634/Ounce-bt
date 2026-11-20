@@ -95,7 +95,7 @@ def test_linux_starts_without_realtek_files_and_reports_transport_failure(
     tmp_path, monkeypatch, headless
 ):
     monkeypatch.setattr(paths.sys, "platform", "linux")
-    monkeypatch.setattr(application, "setup_logging", lambda: None)
+    monkeypatch.setattr(application, "setup_logging", lambda _bumble_logging=True: None)
     monkeypatch.setattr(application, "application_dir", lambda: tmp_path)
     monkeypatch.setattr(
         application,

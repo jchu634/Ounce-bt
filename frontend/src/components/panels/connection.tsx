@@ -31,10 +31,57 @@ import {
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
 import { useControllers } from "@/src/hooks/use-controllers";
-import { connectionDetail, deviceName } from "@/src/lib/bluetooth";
+import { connectionDetail, deviceName, type BluetoothStatus } from "@/src/lib/bluetooth";
 import { errorMessage } from "@/src/lib/errors";
 import { useSwitchConnection } from "@/src/lib/switch-connection";
 import { cn } from "cn";
+
+type ConnectionToggleButtonProps = {
+  status: BluetoothStatus | null;
+  address: string;
+  disabled: boolean;
+  busy: boolean;
+  onReconnect: () => void;
+  onDisconnect: () => void;
+};
+
+export function ConnectionToggleButton({
+  status,
+  address,
+  disabled,
+  busy,
+  onReconnect,
+  onDisconnect,
+}: ConnectionToggleButtonProps) {
+  const active = status?.state !== "disconnected";
+  const reconnecting = status?.state === "reconnecting";
+  const disconnecting = status?.state === "disconnecting";
+  const action = disconnecting
+    ? "Disconnecting…"
+    : active
+      ? "Disconnect controller"
+      : "Reconnect controller";
+
+  return (
+    <Button
+      variant={active && status?.address ? "destructive" : "outline"}
+      size="icon-sm"
+      className="rounded-lg"
+      aria-label={action}
+      title={action}
+      disabled={disabled || (active ? !status?.address || reconnecting || disconnecting : !address)}
+      onClick={active ? onDisconnect : onReconnect}
+    >
+      {busy || reconnecting || disconnecting ? (
+        <SpinnerGapIcon className="animate-spin" />
+      ) : active && status?.address ? (
+        <PlugsIcon weight="fill" />
+      ) : (
+        <PlugsConnectedIcon weight="fill" />
+      )}
+    </Button>
+  );
+}
 
 type SwitchConnectionState = ReturnType<typeof useSwitchConnection>;
 
@@ -56,7 +103,9 @@ function ConnectionStatus({
               ? "Connecting"
               : status.state === "reconnecting"
                 ? "Reconnecting"
-                : "Disconnected";
+                : status.state === "disconnecting"
+                  ? "Disconnecting"
+                  : "Disconnected";
   const statusDetail = statusError
     ? statusError
     : !status
@@ -69,7 +118,10 @@ function ConnectionStatus({
       ? "error"
       : !status
         ? "loading"
-        : status.pairing || status.state === "connecting" || status.state === "reconnecting"
+        : status.pairing ||
+            status.state === "connecting" ||
+            status.state === "reconnecting" ||
+            status.state === "disconnecting"
           ? "pending"
           : status.state === "connected"
             ? "connected"
@@ -136,7 +188,6 @@ function ConnectionCard({
   const [savingName, setSavingName] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
   const pairing = status?.pairing ?? false;
-  const connectionAction = active ? "Disconnect controller" : "Reconnect controller";
   const pairingAction = pairing ? "Stop pairing" : "Start pairing";
 
   async function saveName() {
@@ -175,25 +226,14 @@ function ConnectionCard({
           </div>
         </div>
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          <Button
-            variant={active && status?.address ? "destructive" : "outline"}
-            size="icon-sm"
-            className="rounded-lg"
-            aria-label={connectionAction}
-            title={connectionAction}
-            disabled={
-              disabled || (active ? !status?.address || status.state === "reconnecting" : !address)
-            }
-            onClick={() => void update("POST", active ? { action: "disconnect" } : { address })}
-          >
-            {busy || status?.state === "reconnecting" ? (
-              <SpinnerGapIcon className="animate-spin" />
-            ) : active && status?.address ? (
-              <PlugsIcon weight="fill" />
-            ) : (
-              <PlugsConnectedIcon weight="fill" />
-            )}
-          </Button>
+          <ConnectionToggleButton
+            status={status}
+            address={address}
+            disabled={disabled}
+            busy={busy}
+            onReconnect={() => void update("POST", { address })}
+            onDisconnect={() => void update("POST", { action: "disconnect" })}
+          />
           <div className="min-w-24 flex-1">
             <Select
               value={address || null}

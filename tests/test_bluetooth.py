@@ -4,11 +4,13 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from bumble.core import ConnectionError as BluetoothConnectionError
+from bumble.core import PhysicalTransport
 from bumble.hci import Address
 from bumble.keys import JsonKeyStore, MemoryKeyStore, PairingKeys
 
 import app.main as application
-from app.bluetooth import BluetoothService
+from app.bluetooth import BluetoothDisconnectingError, BluetoothService
 from app.main import SessionState, make_l2cap_handler, run_until_disconnected
 from lib.config import Config
 
@@ -81,7 +83,9 @@ def test_startup_pairing_requires_ui_action_unless_headless(
             "sys",
             SimpleNamespace(platform="win32" if realtek else "linux"),
         )
-        monkeypatch.setattr(application, "setup_logging", lambda: None)
+        monkeypatch.setattr(
+            application, "setup_logging", lambda _bumble_logging=True: None
+        )
         monkeypatch.setattr(application, "missing_firmware", lambda _: None)
         prepare = Mock()
         monkeypatch.setattr(application, "prepare_bluetooth", prepare)
@@ -192,6 +196,10 @@ def test_reconnect_saved_bond_and_disconnect():
         with pytest.raises(ValueError, match="already active"):
             await service.reconnect(ADDRESS)
         await connection.disconnect()
+        assert (await service.status())["state"] == "disconnecting"
+        state = service.state
+        await application.cleanup_session(service)
+        state.reset_for_session()
         assert (await service.status())["state"] == "disconnected"
 
     asyncio.run(scenario())
@@ -205,9 +213,95 @@ def test_failed_reconnect_cleans_up_and_allows_retry():
             await service.reconnect(ADDRESS)
         assert not service.reconnecting
         assert service.connection is None
+        service.state.reset_for_session()
         connection.authenticate.side_effect = None
         await service.reconnect(ADDRESS)
         assert service.connection is connection
+
+    asyncio.run(scenario())
+
+
+def test_reconnect_and_pairing_rejected_until_disconnect_and_session_cleanup_finish():
+    async def scenario():
+        service, device, connection = await setup_service()
+        service._on_connection(connection)
+        service.connected = True
+        scan_started = asyncio.Event()
+        finish_scan = asyncio.Event()
+        disconnect_started = asyncio.Event()
+        emit_disconnection = asyncio.Event()
+        disconnected = asyncio.Event()
+        finish_disconnect = asyncio.Event()
+
+        async def scan(_enabled):
+            scan_started.set()
+            await finish_scan.wait()
+
+        async def disconnect():
+            disconnect_started.set()
+            await emit_disconnection.wait()
+            connection.on.call_args.args[1](0x16)
+            disconnected.set()
+            await finish_disconnect.wait()
+
+        async def assert_blocked():
+            assert (await service.status())["state"] == "disconnecting"
+            for operation in (service.reconnect(ADDRESS), service.set_pairing(True)):
+                with pytest.raises(BluetoothDisconnectingError, match="wait a moment"):
+                    await asyncio.wait_for(operation, 1)
+            device.connect_classic.assert_not_awaited()
+
+        device.set_discoverable.side_effect = scan
+        connection.disconnect.side_effect = disconnect
+        task = asyncio.create_task(service.disconnect())
+        try:
+            await asyncio.wait_for(scan_started.wait(), 1)
+            await assert_blocked()
+            finish_scan.set()
+            await asyncio.wait_for(disconnect_started.wait(), 1)
+            await assert_blocked()
+            emit_disconnection.set()
+            await asyncio.wait_for(disconnected.wait(), 1)
+            assert service.connection is None
+            await assert_blocked()
+            finish_disconnect.set()
+            await asyncio.wait_for(task, 1)
+            # The HCI command has returned but the session loop has not yet
+            # cancelled its tasks and reset its channel references/events.
+            await assert_blocked()
+            await application.cleanup_session(service)
+            service.state.reset_for_session()
+            assert (await service.status())["state"] == "disconnected"
+            await service.reconnect(ADDRESS)
+            device.connect_classic.assert_awaited_once()
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("error_code", [0x0B, 0x04])
+def test_adapter_connection_conflict_asks_user_to_wait_without_retry(error_code):
+    async def scenario():
+        service, device, _ = await setup_service()
+        error = BluetoothConnectionError(
+            error_code, PhysicalTransport.BR_EDR, ADDRESS, "hci"
+        )
+        device.connect_classic.side_effect = error
+        if error_code == 0x0B:
+            with pytest.raises(
+                BluetoothDisconnectingError, match="wait a moment"
+            ) as result:
+                await service.reconnect(ADDRESS)
+            assert result.value.__cause__ is error
+        else:
+            with pytest.raises(BluetoothConnectionError) as result:
+                await service.reconnect(ADDRESS)
+            assert result.value is error
+        device.connect_classic.assert_awaited_once()
+        assert not service.reconnecting
+        assert (await service.status())["state"] == "disconnected"
 
     asyncio.run(scenario())
 
@@ -299,6 +393,8 @@ def test_disconnect_keeps_saved_bond_and_can_be_repeated():
         service._on_connection(connection)
         service.connected = True
         await service.disconnect()
+        assert (await service.status())["state"] == "disconnecting"
+        service.state.reset_for_session()
         assert (await service.status())["state"] == "disconnected"
         assert (await service.status())["peers"] == [ADDRESS]
         assert not service.pairing
@@ -326,6 +422,7 @@ def test_forget_disconnects_selected_peer_and_preserves_other_bonds():
         )
         await service.forget(ADDRESS)
         connection.disconnect.assert_awaited_once()
+        service.state.reset_for_session()
         assert (await service.status())["state"] == "disconnected"
         assert (await service.status())["peers"] == [other]
         with pytest.raises(ValueError, match="previously paired"):
@@ -431,5 +528,26 @@ def test_forget_persists_across_key_store_reload(tmp_path):
         await service.forget(ADDRESS)
         reloaded = JsonKeyStore(namespace="controller", filename=filename)
         assert await reloaded.get(ADDRESS) is None
+
+    asyncio.run(scenario())
+
+
+def test_forget_all_disconnects_before_deleting_pairing_keys():
+    async def scenario():
+        service, device, connection = await setup_service()
+        service._on_connection(connection)
+        service.connected = True
+        original_delete = device.keystore.delete_all
+
+        async def delete_after_disconnect():
+            assert service.connection is None
+            assert not service.connected
+            assert not service.pairing
+            await original_delete()
+
+        device.keystore.delete_all = delete_after_disconnect
+        await service.forget_all()
+        connection.disconnect.assert_awaited_once()
+        assert await device.keystore.get_all() == []
 
     asyncio.run(scenario())
