@@ -28,11 +28,11 @@ describe("disconnect cleanup", () => {
         />,
       );
     const closing = render(status);
-    expect(closing).toContain("Disconnecting…");
+    expect(closing).toContain('aria-label="Disconnecting…"');
     expect(closing).toMatch(/<button[^>]*\sdisabled=""/);
     expect(connectionDetail(status)).toContain("Please wait");
     const ready = render({ ...status, state: "disconnected" });
-    expect(ready).toContain("Reconnect Controller");
+    expect(ready).toContain('aria-label="Reconnect controller"');
     expect(ready).not.toMatch(/<button[^>]*\sdisabled=""/);
   });
 });

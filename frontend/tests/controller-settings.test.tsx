@@ -10,7 +10,6 @@ import type { JsonEditorProps } from "@/src/components/editors/json-editor";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
-vi.mock("@/src/components/settings/controller-panel", () => ({ ControllerPanel: () => null }));
 vi.mock("@/src/components/settings/vibration-setting", () => ({ VibrationSetting: () => null }));
 vi.mock("@/src/components/settings/controller-preset-picker", () => ({ PresetPicker: () => null }));
 vi.mock("@/src/components/editors/json-editor", () => ({

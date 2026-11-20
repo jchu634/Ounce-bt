@@ -1,10 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Effect } from "effect";
 import { Checkbox } from "@/src/components/ui/checkbox";
 import { Label } from "@/src/components/ui/label";
 import { Button } from "@/src/components/ui/button";
 import { getConfig, patchConfig } from "@/src/lib/api";
 import { errorMessage } from "@/src/lib/errors";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/src/components/ui/tooltip";
 
 function readVibration(config: Record<string, unknown>): boolean {
   if (typeof config.vibration_enabled !== "boolean") {
@@ -13,9 +18,13 @@ function readVibration(config: Record<string, unknown>): boolean {
   return config.vibration_enabled;
 }
 
-export function VibrationSetting() {
-  const [enabled, setEnabled] = useState(true);
-  const [ready, setReady] = useState(false);
+export function VibrationSetting({
+  controllerGuid,
+}: {
+  controllerGuid?: string | null;
+}) {
+  const id = useId();
+  const [config, setConfig] = useState<Record<string, unknown> | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -25,10 +34,9 @@ export function VibrationSetting() {
     setError(null);
     void Effect.runPromise(getConfig())
       .then((config) => {
-        const value = readVibration(config);
+        readVibration(config);
         if (!disposed) {
-          setEnabled(value);
-          setReady(true);
+          setConfig(config);
         }
       })
       .catch((cause: unknown) => {
@@ -40,13 +48,19 @@ export function VibrationSetting() {
   }, [attempt]);
 
   async function save(value: boolean) {
+    if (controllerGuid === null) return;
     setSaving(true);
     setError(null);
     try {
       const result = await Effect.runPromise(
-        patchConfig({ vibration_enabled: value }),
+        patchConfig(
+          controllerGuid
+            ? { controller_vibration: { [controllerGuid]: value } }
+            : { vibration_enabled: value },
+        ),
       );
-      setEnabled(readVibration(result.config));
+      readVibration(result.config);
+      setConfig(result.config);
     } catch (cause: unknown) {
       setError(errorMessage(cause));
     } finally {
@@ -54,27 +68,70 @@ export function VibrationSetting() {
     }
   }
 
+  const globalEnabled = config?.vibration_enabled === true;
+  const individual = controllerGuid !== undefined;
+  const globalDisabled = individual && config !== null && !globalEnabled;
+  const disabledReason = globalDisabled
+    ? "Enable Vibration (All Controllers) in Settings to change this controller’s vibration."
+    : controllerGuid === null
+      ? "Connect and select a controller to change its vibration."
+      : null;
+  const preferences = config?.controller_vibration;
+  const preference =
+    preferences && typeof preferences === "object"
+      ? Object.entries(preferences).find(
+          ([key]) => key === controllerGuid?.toLowerCase(),
+        )?.[1]
+      : undefined;
+  const disabled =
+    !config || saving || globalDisabled || controllerGuid === null;
+  const checkbox = (
+    <Checkbox
+      id={id}
+      checked={
+        individual ? !!controllerGuid && preference !== false : globalEnabled
+      }
+      disabled={disabled}
+      onCheckedChange={(value) => void save(value)}
+    />
+  );
+
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-4">
-        <Label className="font-semibold text-lg" htmlFor="controller-vibration">
-          Vibration
+        <Label
+          className={
+            disabled ? "font-medium text-muted-foreground" : "font-medium"
+          }
+          htmlFor={id}
+        >
+          {individual ? "Controller vibration" : "Vibration (All Controllers)"}
         </Label>
-        <Checkbox
-          id="controller-vibration"
-          checked={enabled}
-          disabled={!ready || saving}
-          onCheckedChange={(value) => {
-            void save(value);
-          }}
-        />
+        {disabled && disabledReason ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span
+                  className="inline-flex *:pointer-events-none"
+                  tabIndex={0}
+                />
+              }
+              aria-label="Controller vibration unavailable"
+            >
+              {checkbox}
+            </TooltipTrigger>
+            <TooltipContent>{disabledReason}</TooltipContent>
+          </Tooltip>
+        ) : (
+          checkbox
+        )}
       </div>
       {error && (
         <p role="alert" className="text-sm text-destructive">
           {error}
         </p>
       )}
-      {!ready && error && (
+      {!config && error && (
         <Button
           variant="outline"
           onClick={() => setAttempt((value) => value + 1)}

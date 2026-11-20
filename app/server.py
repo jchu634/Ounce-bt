@@ -20,7 +20,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from app.bluetooth import BluetoothDisconnectingError, BluetoothService
 from app.input.manager import InputManager, MacroActiveError, state_from_event
 from lib.colours import normalize_controller_colours
-from lib.config import ConfigStore
+from lib.config import ConfigStore, normalize_controller_vibration
 from lib.device_names import normalize_device_names, validate_device_name
 from lib.input.macros import MacroValidationError, validate_macro
 from lib.input.presets import (
@@ -631,6 +631,11 @@ async def config_patch(request: Request) -> Response:
         )
     if "vibration_enabled" in body and not isinstance(body["vibration_enabled"], bool):
         return _error("vibration_enabled must be a boolean")
+    if "controller_vibration" in body:
+        try:
+            normalize_controller_vibration(body["controller_vibration"])
+        except ValueError as error:
+            return _error(str(error))
     if "controller_colours" in body:
         try:
             normalize_controller_colours(body["controller_colours"])

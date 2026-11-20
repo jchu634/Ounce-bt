@@ -12,8 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/src/components/ui/dialog";
-import { useMacroRunner } from "@/src/hooks/use-macro-runner";
-import { activatePreset, deletePreset } from "@/src/lib/api";
+import { deletePreset } from "@/src/lib/api";
 import { errorMessage } from "@/src/lib/errors";
 import type { PresetInfo } from "@/src/lib/types";
 import { cn } from "cn";
@@ -38,24 +37,6 @@ export function PresetPicker({
   const [busy, setBusy] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<PresetInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const { macroActive } = useMacroRunner();
-
-  const activate = useCallback(
-    async (name: string) => {
-      setBusy(name);
-      setError(null);
-      const ok = await Effect.runPromise(activatePreset(name))
-        .then(() => true)
-        .catch((error: unknown) => {
-          setError(errorMessage(error));
-          return false;
-        });
-      setBusy(null);
-      if (ok) onRefresh();
-    },
-    [onRefresh],
-  );
-
   const remove = useCallback(async () => {
     if (deleting === null) return;
     const filename = deleting.filename;
@@ -109,42 +90,44 @@ export function PresetPicker({
             <li
               key={p.filename}
               className={cn(
-                "group flex flex-wrap items-center gap-2 px-3 py-2 text-sm hover:bg-blue-200/40",
+                "flex flex-wrap items-center gap-2 px-3 py-2 text-sm hover:bg-blue-200/40",
                 p.active && "bg-primary/40",
                 selected === p.filename && "bg-blue-200 text-black",
               )}
-              onClick={() => onSelect(p)}
             >
-              <div className="min-w-0 flex-1">
-                <p className="truncate">
+              <button
+                type="button"
+                className="min-w-0 flex-1 rounded-sm text-start focus-visible:outline-2 focus-visible:outline-ring"
+                aria-pressed={selected === p.filename}
+                onClick={() => onSelect(p)}
+              >
+                <span className="block truncate">
                   {p.name}
                   {p.builtin && (
                     <span className="ms-2 rounded-4xl bg-muted px-2 py-0.5 text-[10px] tracking-wide text-muted-foreground uppercase">
                       built-in
                     </span>
                   )}
-                </p>
+                </span>
                 {p.description && (
-                  <p
+                  <span
                     className={cn(
-                      "truncate text-xs text-muted-foreground",
+                      "block truncate text-xs text-muted-foreground",
                       selected === p.filename && "text-muted-background",
                       p.active && "text-muted-background/10",
                     )}
                   >
                     {p.description}
-                  </p>
+                  </span>
                 )}
-              </div>
+              </button>
               <div className="flex items-center gap-1.5">
+                {p.active && <span className="text-xs font-medium">Active</span>}
                 {!p.builtin && (
                   <Button
                     size="icon-sm"
                     variant="ghost"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setDeleting(p);
-                    }}
+                    onClick={() => setDeleting(p)}
                     disabled={busy !== null}
                     title={`Delete ${p.name}`}
                     aria-label={`Delete ${p.name}`}
@@ -152,36 +135,10 @@ export function PresetPicker({
                     <TrashIcon size={14} />
                   </Button>
                 )}
-                <Button
-                  size="xs"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    void activate(p.filename);
-                  }}
-                  disabled={p.active || macroActive || busy !== null}
-                  title={
-                    macroActive ? "Presets are locked while a macro runs" : "Activate this preset"
-                  }
-                  className={cn(
-                    "",
-                    p.active && "bg-transparent group-hover:text-black",
-                    p.active && selected === p.filename && "text-black",
-                  )}
-                >
-                  {busy === p.filename ? (
-                    <SpinnerGapIcon size={12} className="animate-spin" />
-                  ) : null}
-                  {p.active ? "Active" : "Activate"}
-                </Button>
               </div>
             </li>
           ))}
         </ul>
-      )}
-      {macroActive && (
-        <p className="text-xs text-muted-foreground">
-          Presets are locked while a macro is running.
-        </p>
       )}
       <Dialog
         open={deleting !== null}
