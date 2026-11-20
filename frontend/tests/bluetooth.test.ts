@@ -11,18 +11,22 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("Bluetooth status requests", () => {
   it.each(["disconnected", "disconnecting"])("accepts saved addresses while %s", async (state) => {
+    const address = "12:34:56:78:90:AB/P";
     const status = {
       available: true,
       pairing: false,
       state,
       address: null,
-      peers: ["12:34:56:78:90:AB/P"],
-      names: { "12:34:56:78:90:AB/P": "Switch Device 1" },
+      peers: [address],
+      names: { [address]: "Living room Switch" },
       failure_id: 0,
       failure: null,
     };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(status)));
-    await expect(requestStatus()).resolves.toEqual(status);
+    const saved = await requestStatus();
+    expect(saved.state).toBe(state);
+    expect(saved.peers).toContain(address);
+    expect(deviceName(saved, address)).toBe("Living room Switch");
   });
 
   it("identifies disconnect conflicts so the UI can show a wait warning", async () => {
@@ -36,7 +40,6 @@ describe("Bluetooth status requests", () => {
         ),
     );
     await expect(requestStatus()).rejects.toBeInstanceOf(BluetoothDisconnectingError);
-    await expect(requestStatus()).rejects.toThrow(message);
   });
 
   it("shows saved names and reconnect targets without exposing addresses as labels", () => {

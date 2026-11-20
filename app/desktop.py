@@ -92,9 +92,7 @@ def run_application(config, args, backend):
     if not config.webview_enabled:
         if config.ws_auth_required:
             raise ValueError("Browser mode requires ws_auth_required=false")
-        asyncio.run(
-            restartable_backend(config, args, shutdown_event=asyncio.Event())
-        )
+        asyncio.run(restartable_backend(config, args, shutdown_event=asyncio.Event()))
         return restart_requested.is_set()
     if config.web_host not in ("127.0.0.1", "localhost", "::1"):
         raise ValueError("The desktop web server must bind to localhost")
@@ -152,7 +150,7 @@ def run_application(config, args, backend):
         if finished.is_set():
             return
         window = webview.create_window(
-            "Ounce-bt", url, js_api=bridge, width=1280, height=800, min_size=(400, 500)
+            "Ounce-bt", url, js_api=bridge, width=1550, height=800, min_size=(400, 500)
         )
         bridge._window = window
         window.events.closed += request_stop
