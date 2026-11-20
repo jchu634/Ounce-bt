@@ -91,9 +91,20 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
     managers.update({
         slot.id: slot.input_manager for slot in sessions.values() if slot.input_manager
     })
-    manager = primary
-    selected = "primary"
-    manual_input_sent = False
+    selected = ("primary",)
+    manual_targets: set[InputManager] = set()
+
+    def selection_status() -> dict:
+        if len(selected) == 1:
+            return managers[selected[0]].status_payload()
+        statuses = {adapter_id: managers[adapter_id].status() for adapter_id in selected}
+        return {
+            "type": "status",
+            "adapter_id": selected[0],
+            **statuses[selected[0]],
+            "adapter_statuses": statuses,
+        }
+
     status_q: asyncio.Queue = asyncio.Queue()
     for source in managers.values():
         source.ensure_loop(asyncio.get_running_loop())
@@ -122,7 +133,7 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
     status_task = asyncio.create_task(status_q.get())
 
     try:
-        await websocket.send_text(frame_text(manager.status_payload()))
+        await websocket.send_text(frame_text(selection_status()))
         await websocket.send_text(frame_text(primary.controllers_payload()))
         # Persistent get-tasks, renewed immediately after consumption so
         # no frame is ever stranded in an abandoned task.
@@ -140,19 +151,37 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
                 try:
                     message = parse_message(text)
                     if isinstance(message, SelectAdapter):
-                        if message.adapter_id not in managers:
+                        if any(adapter_id not in managers for adapter_id in message.adapter_ids):
                             raise ProtocolError("Unknown adapter")
-                        if selected != message.adapter_id:
-                            if manual_input_sent:
+                        if set(selected) != set(message.adapter_ids):
+                            for manager in manual_targets:
                                 manager.release_manual_input()
-                                manual_input_sent = False
-                            selected = message.adapter_id
-                            manager = managers[selected]
-                        await websocket.send_text(frame_text(manager.status_payload()))
+                            manual_targets.clear()
+                            selected = message.adapter_ids
+                        await websocket.send_text(frame_text(selection_status()))
+                    elif isinstance(message, (EventMessage, StateMessage)):
+                        state = (
+                            state_from_event(message.action)
+                            if isinstance(message, EventMessage) else message.to_state()
+                        )
+                        accepted = False
+                        for adapter_id in selected:
+                            manager = managers[adapter_id]
+                            if manager.submit_state(state):
+                                accepted = True
+                                manual_targets.add(manager)
+                        if not accepted:
+                            await websocket.send_text(
+                                error_frame("manual input disabled while macro running")
+                            )
                     else:
-                        await _dispatch_ws(message, websocket, manager)
-                        if isinstance(message, (EventMessage, StateMessage)):
-                            manual_input_sent = True
+                        error = None
+                        for adapter_id in selected:
+                            failure = _dispatch_macro(message, managers[adapter_id])
+                            if failure is not None:
+                                error = failure
+                        if error is not None:
+                            await websocket.send_text(error)
                 except ProtocolError as e:
                     await websocket.send_text(error_frame(str(e)))
                 except WebSocketDisconnect:
@@ -169,8 +198,11 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
             if status_task in done:
                 payload = status_task.result()
                 status_task = asyncio.create_task(status_q.get())
-                if payload["type"] == "status" and payload.get("adapter_id", "primary") != selected:
-                    continue
+                if payload["type"] == "status":
+                    if payload.get("adapter_id", "primary") not in selected:
+                        continue
+                    if len(selected) > 1:
+                        payload = selection_status()
                 try:
                     await websocket.send_text(frame_text(payload))
                 except WebSocketDisconnect:
@@ -186,53 +218,29 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
             task.cancel()
         for source in managers.values():
             source.unsubscribe(status_q)
-        if manual_input_sent and manager.adapter_id is not None:
-            manager.release_manual_input()
+        for manager in manual_targets:
+            if manager.adapter_id is not None:
+                manager.release_manual_input()
 
 
-async def _dispatch_ws(msg: InboundMessage, websocket: WebSocket, manager: InputManager) -> None:
-    if isinstance(msg, EventMessage):
-        accepted = manager.submit_state(state_from_event(msg.action))
-        if not accepted:
-            await websocket.send_text(
-                error_frame("manual input disabled while macro running")
-            )
-        return
-
-    if isinstance(msg, StateMessage):
-        accepted = manager.submit_state(msg.to_state())
-        if not accepted:
-            await websocket.send_text(
-                error_frame("manual input disabled while macro running")
-            )
-        return
-
+def _dispatch_macro(msg: InboundMessage, manager: InputManager) -> str | None:
     if isinstance(msg, MacroStartInline):
         try:
             manager.start_macro(msg.macro)
         except MacroValidationError as e:
-            await websocket.send_text(
-                error_frame(
-                    "invalid macro",
-                    detail=str(e),
-                )
-            )
-        return
-    if isinstance(msg, MacroStartByName):
+            return error_frame("invalid macro", detail=str(e))
+    elif isinstance(msg, MacroStartByName):
         try:
             manager.start_macro_by_name(msg.name)
         except (FileNotFoundError, ValueError) as e:
-            await websocket.send_text(error_frame(f"could not load macro: {e}"))
-        return
-    if isinstance(msg, MacroCancel):
+            return error_frame(f"could not load macro: {e}")
+    elif isinstance(msg, MacroCancel):
         manager.cancel_macro()
-        return
-    if isinstance(msg, MacroPause):
+    elif isinstance(msg, MacroPause):
         manager.pause_macro()
-        return
-    if isinstance(msg, MacroResume):
+    elif isinstance(msg, MacroResume):
         manager.resume_macro()
-        return
+    return None
 
 
 async def bluetooth_control(request: Request) -> Response:

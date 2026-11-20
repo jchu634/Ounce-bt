@@ -6,7 +6,7 @@ import {
   SpinnerGapIcon,
   TrashIcon,
 } from "@phosphor-icons/react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type MouseEvent } from "react";
 import type { PresetInfo } from "@/src/lib/types";
 import { ControllerColoursDialog } from "@/src/components/settings/controller-colours-dialog";
 import {
@@ -174,12 +174,29 @@ function ConnectionStatus({
 
 export function ConnectionPanel({ onEditPreset }: { onEditPreset: (preset: PresetInfo) => void }) {
   const controller = useControllers();
-  const { status, send } = useSocket();
-  const activeAdapter = status?.adapter_id ?? "primary";
+  const { status, adapterStatuses, lastError, send } = useSocket();
+  const selectedAdapters = Object.keys(adapterStatuses);
   const [inventory, setInventory] = useState<AdapterInventory | null>(null);
   const [settingsError, setSettingsError] = useState<{ id: string; message: string } | null>(null);
   const [pending, setPending] = useState<AdapterChange | null>(null);
   const inventoryVersion = useRef(0);
+  const selectionAnchor = useRef<string | null>(null);
+  const pendingSelection = useRef<string[] | null>(null);
+
+  useEffect(() => {
+    const pending = pendingSelection.current;
+    if (
+      pending &&
+      pending.length === Object.keys(adapterStatuses).length &&
+      pending.every((id) => Object.hasOwn(adapterStatuses, id))
+    ) {
+      pendingSelection.current = null;
+    }
+  }, [adapterStatuses]);
+
+  useEffect(() => {
+    if (lastError?.message === "Unknown adapter") pendingSelection.current = null;
+  }, [lastError]);
 
   useEffect(() => {
     let disposed = false;
@@ -217,6 +234,42 @@ export function ConnectionPanel({ onEditPreset }: { onEditPreset: (preset: Prese
       inventoryVersion.current++;
       setPending(null);
     }
+  }
+
+  function selectAdapter(id: string, modifiers: AdapterSelectionModifiers) {
+    if (!inventory) return;
+    const adapterIds = inventory.adapters.map((adapter) => adapter.id);
+    const current = pendingSelection.current ?? selectedAdapters;
+    const additive = modifiers.ctrlKey || modifiers.metaKey;
+    let next = [id];
+    if (modifiers.shiftKey) {
+      const anchorId = selectionAnchor.current ?? current[0];
+      const index = adapterIds.indexOf(id);
+      const anchor = anchorId ? adapterIds.indexOf(anchorId) : -1;
+      const start = anchor < 0 ? index : anchor;
+      const range = adapterIds.slice(Math.min(start, index), Math.max(start, index) + 1);
+      next = additive
+        ? adapterIds.filter(
+            (adapterId) => current.includes(adapterId) || range.includes(adapterId),
+          )
+        : range;
+    } else {
+      selectionAnchor.current = id;
+      if (additive) {
+        next = current.includes(id)
+          ? current.filter((adapterId) => adapterId !== id)
+          : adapterIds.filter((adapterId) => current.includes(adapterId) || adapterId === id);
+        if (next.length === 0) return;
+      }
+    }
+    const [first, ...rest] = next;
+    if (first === undefined) return;
+    const sent = send(
+      rest.length === 0
+        ? { type: "select_adapter", adapter_id: first }
+        : { type: "select_adapters", adapter_ids: next },
+    );
+    if (sent) pendingSelection.current = next;
   }
 
   const legacyMapping: MappingSettings = {
@@ -281,8 +334,8 @@ export function ConnectionPanel({ onEditPreset }: { onEditPreset: (preset: Prese
               inputTarget={
                 multiple
                   ? {
-                      selected: activeAdapter === adapter.id,
-                      select: () => send({ type: "select_adapter", adapter_id: adapter.id }),
+                      selected: selectedAdapters.includes(adapter.id),
+                      select: (modifiers) => selectAdapter(adapter.id, modifiers),
                     }
                   : undefined
               }
@@ -301,6 +354,8 @@ export function ConnectionPanel({ onEditPreset }: { onEditPreset: (preset: Prese
   );
 }
 
+type AdapterSelectionModifiers = Pick<MouseEvent, "shiftKey" | "ctrlKey" | "metaKey">;
+
 function ConnectionCard({
   adapter,
   controllerName = "No controller selected",
@@ -312,7 +367,7 @@ function ConnectionCard({
   controllerName?: string;
   mapping: MappingSettings;
   onEditPreset: (preset: PresetInfo) => void;
-  inputTarget?: { selected: boolean; select: () => void };
+  inputTarget?: { selected: boolean; select: (modifiers: AdapterSelectionModifiers) => void };
 }) {
   const connection = useSwitchConnection(adapter?.id === "primary" ? undefined : adapter?.id);
   const {
@@ -361,7 +416,17 @@ function ConnectionCard({
           type="button"
           aria-label={`Send manual and macro input through ${adapter?.transport}`}
           aria-pressed={inputTarget.selected}
+          title="Shift to select a range. Ctrl+Shift to add a range. Ctrl to toggle."
           onClick={inputTarget.select}
+          onKeyDown={(event) => {
+            if (
+              (event.key === "Enter" || event.key === " ") &&
+              (event.shiftKey || event.ctrlKey || event.metaKey)
+            ) {
+              event.preventDefault();
+              if (!event.repeat) inputTarget.select(event);
+            }
+          }}
           className="absolute inset-0 z-0 cursor-pointer rounded-xl outline-offset-2 focus-visible:outline-2 focus-visible:outline-ring"
         />
       )}

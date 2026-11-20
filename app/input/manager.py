@@ -251,12 +251,11 @@ class InputManager:
         self._emit_status()
 
     def start_macro(self, macro: dict) -> None:
-        """Start a fresh macro dict. Validates it first, cancels any
-        currently running macro (immediate stop + queue drain + NEUTRAL),
-        flips mode to ``macro`` and pauses physical input."""
-        validate_macro(macro)
+        """Start a macro if this adapter has no active playback."""
         with self._lock:
-            self._cancel_internal()
+            if self._macro is not None:
+                return
+            validate_macro(macro)
             self._manual_state = NEUTRAL
             name = macro.get("name", "<unnamed>")
             thread = MacroPlayerThread(
@@ -279,6 +278,9 @@ class InputManager:
         self._emit_status()
 
     def start_macro_by_name(self, name: str) -> None:
+        with self._lock:
+            if self._macro is not None:
+                return
         path = self.macros_dir / f"{name}.json"
         macro = load_macro(path)
         macro["name"] = name

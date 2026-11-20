@@ -190,6 +190,125 @@ def test_selected_adapter_receives_manual_input_and_owns_its_macro(fx):
         secondary_input.shutdown()
 
 
+def test_multi_adapter_controls_preserve_independent_playback(fx):
+    fx.manager.adapter_id = "primary"
+    managers = {
+        "primary": fx.manager,
+        **{
+            adapter_id: InputManager(queue.Queue(), fx.macros_dir, adapter_id=adapter_id)
+            for adapter_id in ("adapter-2", "adapter-3")
+        },
+    }
+    sessions = {
+        adapter_id: AdapterSession(
+            adapter_id, f"usb:{index}", manager.command_queue, None, input_manager=manager
+        )
+        for index, (adapter_id, manager) in enumerate(managers.items())
+    }
+    app = build_app(
+        fx.manager, fx.config_store, Path("/nonexistent-dist"), adapter_sessions=sessions
+    )
+    hold = {
+        "version": 1, "name": "hold", "repeat": 0,
+        "actions": [{"do": "press", "button": "A"}, {"do": "wait", "ms": 100}],
+    }
+    (fx.macros_dir / "hold.json").write_text(
+        '{"version": 1, "repeat": 0, "actions": [{"do": "wait", "ms": 100}]}',
+        encoding="utf-8",
+    )
+    secondary = managers["adapter-2"]
+    unselected = managers["adapter-3"]
+    try:
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()
+            ws.receive_json()
+
+            def select(*ids):
+                ws.send_json({"type": "select_adapters", "adapter_ids": list(ids)})
+
+            def macro(op, **payload):
+                ws.send_json({"type": "macro", "op": op, **payload})
+
+            def flush_commands():
+                # The server processes inbound messages in order.
+                ws.send_json({"type": "invalid"})
+                while (frame := ws.receive_json())["type"] != "error":
+                    pass
+                assert frame["message"] == "unknown message type: 'invalid'"
+
+            select("primary", "adapter-2")
+            assert list(ws.receive_json()["adapter_statuses"]) == ["primary", "adapter-2"]
+            ws.send_json({"type": "state", "buttons": ["B"]})
+            flush_commands()
+            assert fx.manager.mix_manual_input(NEUTRAL).buttons == Button.B
+            assert secondary.mix_manual_input(NEUTRAL).buttons == Button.B
+            assert unselected.mix_manual_input(NEUTRAL) == NEUTRAL
+
+            select("adapter-3")
+            assert ws.receive_json()["adapter_id"] == "adapter-3"
+            assert fx.manager.mix_manual_input(NEUTRAL) == NEUTRAL
+            assert secondary.mix_manual_input(NEUTRAL) == NEUTRAL
+            macro("start", macro=hold)
+            select("adapter-2")
+            macro("start", macro={**hold, "name": "first"})
+            macro("pause")
+            select("primary", "adapter-2")
+            flush_commands()
+
+            ws.send_json({"type": "event", "action": {"do": "press", "button": "X"}})
+            flush_commands()
+            assert fx.manager.mix_manual_input(NEUTRAL).buttons == Button.X
+            assert secondary.mix_manual_input(NEUTRAL) == NEUTRAL
+
+            macro("start", name="hold")
+            snapshot = ws.receive_json()["adapter_statuses"]
+            assert snapshot["primary"]["macro"] == {"name": "hold", "state": "running"}
+            assert snapshot["adapter-2"]["macro"] == {"name": "first", "state": "paused"}
+            macro("pause")
+            flush_commands()
+            assert fx.manager.status()["macro"]["state"] == "paused"
+            assert unselected.status()["macro"]["state"] == "running"
+
+            select("primary")
+            macro("resume")
+            flush_commands()
+            assert fx.manager.status()["macro"]["state"] == "running"
+            assert secondary.status()["macro"]["state"] == "paused"
+            select("primary", "adapter-2")
+            macro("resume")
+            flush_commands()
+            assert secondary.status()["macro"] == {"name": "first", "state": "running"}
+            macro("start", macro={**hold, "name": "replacement"})
+            flush_commands()
+            assert fx.manager.status()["macro"]["name"] == "hold"
+            assert secondary.status()["macro"]["name"] == "first"
+
+            select("primary", "unknown")
+            while (error := ws.receive_json())["type"] != "error":
+                pass
+            assert error["message"] == "Unknown adapter"
+            macro("cancel")
+            flush_commands()
+            assert fx.manager.status()["macro"] is None
+            assert secondary.status()["macro"] is None
+            assert unselected.status()["macro"]["state"] == "running"
+
+            macro("start", macro=hold)
+            flush_commands()
+            assert fx.manager.status()["macro"]["name"] == "hold"
+            assert secondary.status()["macro"]["name"] == "hold"
+            macro("cancel")
+            ws.send_json({"type": "state", "buttons": ["Y"]})
+            flush_commands()
+            assert fx.manager.mix_manual_input(NEUTRAL).buttons == Button.Y
+            assert secondary.mix_manual_input(NEUTRAL).buttons == Button.Y
+        assert fx.manager.mix_manual_input(NEUTRAL) == NEUTRAL
+        assert secondary.mix_manual_input(NEUTRAL) == NEUTRAL
+    finally:
+        secondary.shutdown()
+        unselected.shutdown()
+
+
 def test_adapter_colours_are_saved_independently(fx):
     primary = AdapterSession("primary", "usb:0", queue.Queue(), None)
     secondary = AdapterSession("adapter-2", "usb:1", queue.Queue(), None)

@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { act, createRef } from "react";
 import {
+  createMemoryHistory,
+  createRootRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
+import {
   SettingsDialog,
   type SettingsDialogHandle,
 } from "@/src/components/settings/dialog";
@@ -8,12 +14,14 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { CapturePreview } from "@/src/components/panels/capture-preview";
 import { ConnectionPanel } from "@/src/components/panels/connection";
+import { MacroRunPanel } from "@/src/components/panels/macro-runner";
+import { ManualControl } from "@/src/components/panels/manual-control";
 import { CaptureDeviceSettings } from "@/src/components/settings/capture-device-settings";
 import { CaptureProvider } from "@/src/hooks/use-capture";
 import { SocketProvider } from "@/src/hooks/use-socket";
 import type { BluetoothStatus } from "@/src/lib/bluetooth";
 import { DEFAULT_CONTROLLER_COLOURS } from "@/src/lib/controller-colours";
-import type { ServerFrame } from "@/src/lib/types";
+import type { AdapterInputStatus, ServerFrame } from "@/src/lib/types";
 import { socket } from "@/src/lib/ws";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -54,7 +62,7 @@ function button(label: string): HTMLButtonElement {
   const match = Array.from(document.querySelectorAll("button")).find(
     (element) =>
       element.getAttribute("aria-label") === label ||
-      element.textContent === label,
+      element.textContent?.trim() === label,
   );
   if (!match) throw new Error(`Missing button: ${label}`);
   return match;
@@ -69,7 +77,7 @@ async function chooseOption(label: string, name: string) {
   await act(async () => option.click());
 }
 
-it("keeps per-adapter settings in the dialog and selects input from the card", async () => {
+it("keeps adapter settings scoped to the card and supports range selection", async () => {
   const makeAdapter = (
     id: string,
     transport: string,
@@ -86,7 +94,12 @@ it("keeps per-adapter settings in the dialog and selects input from the card", a
   const primary = makeAdapter("primary", "usb:0", 1);
   let secondary = makeAdapter("adapter-2", "usb:1", null);
   const inventory = () => ({
-    adapters: [primary, secondary],
+    adapters: [
+      primary,
+      secondary,
+      makeAdapter("adapter-3", "usb:2", null),
+      makeAdapter("adapter-4", "usb:3", null),
+    ],
     controllers_available: true,
     controllers: [
       { id: 1, guid: "first", name: "First Pad" },
@@ -130,7 +143,7 @@ it("keeps per-adapter settings in the dialog and selects input from the card", a
     );
   });
   const cards = container.querySelectorAll("article");
-  expect(cards).toHaveLength(2);
+  expect(cards).toHaveLength(4);
   expect(
     cards[1].querySelector('[data-region="body"]')?.getAttribute("fill"),
   ).toBe("#1122AA");
@@ -169,6 +182,135 @@ it("keeps per-adapter settings in the dialog and selects input from the card", a
   );
   expect(cards[1].querySelector("h3")?.textContent).toBe("Second Pad");
   expect(send).toHaveBeenCalledTimes(1);
+
+  const firstCard = button("Send manual and macro input through usb:0");
+  const lastCard = button("Send manual and macro input through usb:3");
+  const manual: AdapterInputStatus = { mode: "manual", macro: null };
+  await act(async () =>
+    lastCard.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true })),
+  );
+  expect(send).toHaveBeenLastCalledWith({
+    type: "select_adapters",
+    adapter_ids: ["adapter-2", "adapter-3", "adapter-4"],
+  });
+  await act(async () =>
+    receive?.({
+      type: "status",
+      ...manual,
+      adapter_id: "adapter-2",
+      adapter_statuses: { "adapter-2": manual, "adapter-3": manual, "adapter-4": manual },
+    }),
+  );
+  expect(selectCard.getAttribute("aria-pressed")).toBe("true");
+  expect(lastCard.getAttribute("aria-pressed")).toBe("true");
+  expect(firstCard.getAttribute("aria-pressed")).toBe("false");
+
+  await act(async () =>
+    firstCard.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, ctrlKey: true, shiftKey: true }),
+    ),
+  );
+  expect(send).toHaveBeenLastCalledWith({
+    type: "select_adapters",
+    adapter_ids: ["primary", "adapter-2", "adapter-3", "adapter-4"],
+  });
+
+  await act(async () =>
+    lastCard.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })),
+  );
+  expect(send).toHaveBeenLastCalledWith({
+    type: "select_adapters",
+    adapter_ids: ["primary", "adapter-2", "adapter-3"],
+  });
+  await act(async () =>
+    selectCard.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })),
+  );
+  expect(send).toHaveBeenLastCalledWith({
+    type: "select_adapters",
+    adapter_ids: ["primary", "adapter-3"],
+  });
+
+  await act(async () => firstCard.click());
+  expect(send).toHaveBeenLastCalledWith({ type: "select_adapter", adapter_id: "primary" });
+  const commands = send.mock.calls.length;
+  await act(async () =>
+    firstCard.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })),
+  );
+  expect(send).toHaveBeenCalledTimes(commands);
+});
+
+it("offers controls based on the state of every selected adapter", async () => {
+  vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+  vi.spyOn(socket, "start").mockImplementation(() => {});
+  vi.spyOn(socket, "getState").mockReturnValue("open");
+  const send = vi.spyOn(socket, "send").mockReturnValue(true);
+  let receive: ((frame: ServerFrame) => void) | undefined;
+  vi.spyOn(socket, "onFrame").mockImplementation((handler) => {
+    receive = handler;
+    return () => {};
+  });
+  const routeTree = createRootRoute({
+    component: () => (
+      <SocketProvider>
+        <ManualControl />
+        <MacroRunPanel
+          names={["first", "second"]}
+          listError={null}
+          onRetry={() => {}}
+          selected={null}
+          onSelect={() => {}}
+        />
+      </SocketProvider>
+    ),
+  });
+  const router = createRouter({ routeTree, history: createMemoryHistory() });
+  await act(async () => {
+    await router.load();
+    root.render(<RouterProvider router={router} />);
+  });
+
+  const running: AdapterInputStatus = {
+    mode: "macro",
+    macro: { name: "first", state: "running" },
+  };
+  const paused: AdapterInputStatus = {
+    mode: "macro",
+    macro: { name: "second", state: "paused" },
+  };
+  const showStatus = async (secondary: AdapterInputStatus) => {
+    await act(async () =>
+      receive?.({
+        type: "status",
+        ...running,
+        adapter_id: "primary",
+        adapter_statuses: { primary: running, "adapter-2": secondary },
+      }),
+    );
+  };
+
+  await showStatus({ mode: "manual", macro: null });
+  expect(button("Home").disabled).toBe(false);
+  expect(button("Run").disabled).toBe(false);
+  expect(button("Pause").disabled).toBe(false);
+  await act(async () =>
+    button("Home").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+  );
+  expect(send).toHaveBeenLastCalledWith({
+    type: "state",
+    buttons: ["HOME"],
+    left: [0, 0],
+    right: [0, 0],
+  });
+
+  await showStatus(paused);
+  expect(button("Home").disabled).toBe(true);
+  expect(button("Home").getAttribute("aria-pressed")).toBe("false");
+  expect(button("Run").disabled).toBe(true);
+  expect(button("Pause").disabled).toBe(false);
+  await act(async () => button("Resume").click());
+  expect(send).toHaveBeenLastCalledWith({ type: "macro", op: "resume" });
+  await act(async () => button("Stop").click());
+  expect(send).toHaveBeenLastCalledWith({ type: "macro", op: "cancel" });
 });
 
 it.each([

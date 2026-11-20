@@ -20,6 +20,10 @@ The server sends a `status` frame on connect and on every mode/macro transition.
 }
 ```
 
+For a multi-adapter selection, the frame also includes an `adapter_statuses`
+object keyed by adapter ID. Each entry contains its own `mode` and `macro`.
+The top-level status fields describe the first selected adapter.
+
 ### Standard Error packet
 
 ```jsonc
@@ -33,6 +37,10 @@ The server sends a `status` frame on connect and on every mode/macro transition.
 ## Client → server
 
 ```jsonc
+// Set the input targets for this connection (defaults to primary)
+{"type": "select_adapter", "adapter_id": "adapter-2"}
+{"type": "select_adapters", "adapter_ids": ["primary", "adapter-2"]}
+
 // Full controller-state snapshot (lowest-latency manual path)
 {"type": "state", "buttons": ["A","B"], "left": [0.0, 1.0], "right": [0.0, 0.0]}
 
@@ -52,6 +60,10 @@ The server sends a `status` frame on connect and on every mode/macro transition.
 Valid button names: `A B X Y L R ZL ZR UP DOWN LEFT RIGHT PLUS MINUS HOME CAPTURE STICK_L STICK_R`.
 
 `event` semantics: each frame replaces the current controller state (latest-wins consumer). For chorded/persistent input, prefer `state` snapshots.
+
+Manual input reaches each selected adapter that is in manual mode. Start runs
+the macro on each idle adapter. Pause, resume, and cancel apply to the selected
+adapters' own playback, including any macro started before the selection changed.
 
 ### Macros
 
