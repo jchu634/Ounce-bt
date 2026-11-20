@@ -182,7 +182,8 @@ def test_service_initializes_event_queue_without_capture():
         display.quit()
 
 
-def test_hotplug_connect_disconnect_reconnect(monkeypatch):
+@pytest.mark.parametrize("multiple_adapters", [False, True])
+def test_hotplug_connect_disconnect_reconnect(monkeypatch, multiple_adapters):
     from app.input.pygame_source import PygameInputThread
     from lib.input.state import NEUTRAL
 
@@ -190,7 +191,12 @@ def test_hotplug_connect_disconnect_reconnect(monkeypatch):
     service = ControllerService(
         queue.Queue(), on_change=lambda devices, active: notifications.append((devices, active))
     )
-    controller = ControllerInfo("guid-1", 0, "Pad", 4, 10, 1)
+    if multiple_adapters:
+        service.add_route("adapter-2")
+    controller = ControllerInfo(
+        "0300b7e67e0500000920000000006803", 0,
+        "Nintendo Switch Pro Controller", 6, 20, 0, instance_id=1,
+    )
     connected = []
     pending = []
     captures = []
@@ -234,6 +240,14 @@ def test_hotplug_connect_disconnect_reconnect(monkeypatch):
             assert service._queue.get_nowait() == NEUTRAL
         assert len(captures) == 2
         assert all(not capture.is_alive() for capture in captures)
+
+        service._assign("primary", None)
+        connected.append(controller)
+        pending.append(event.Event(pygame.JOYDEVICEADDED, device_index=0))
+        service._pump_and_handle_hotplug()
+        assert service._controllers == [controller]
+        assert service._active_guid is None
+        assert service._capture is None
     finally:
         service._shutdown_captures()
 

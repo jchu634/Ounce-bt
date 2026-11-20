@@ -206,6 +206,7 @@ class ControllerService(threading.Thread):
         self._controllers: list[ControllerInfo] = []
         self._active_guid: str | None = None
         self._active_controller: ControllerInfo | None = None
+        self._auto_select_primary = True
         self._routes: dict[str, ControllerRoute] = {}
         self._capture: PygameInputThread | None = None
         # Mirrors the manager's macro pause state so threads created while
@@ -503,9 +504,14 @@ class ControllerService(threading.Thread):
             self._active_guid = None
             self._active_controller = None
 
-        if self._active_guid is None and self._controllers and not self._routes:
+        if self._active_guid is None and self._auto_select_primary:
+            assigned = {route.controller for route in self._routes.values()}
+            candidate = next((pad for pad in self._controllers if pad not in assigned), None)
+        else:
+            candidate = None
+        if candidate is not None:
             try:
-                fallback = self._do_select(self._controllers[0].index)
+                fallback = self._do_select(candidate.index)
                 logger.info(f"Fell back to '{fallback.name}'")
             except ValueError:
                 pass
@@ -531,6 +537,7 @@ class ControllerService(threading.Thread):
             self._report_preset(selection)
         self._active_guid = match.guid
         self._active_controller = match
+        self._auto_select_primary = True
         self._capture = PygameInputThread(
             self._queue,
             device_index=match.index,
@@ -567,6 +574,7 @@ class ControllerService(threading.Thread):
             else:
                 self._stop_capture()
                 self._active_guid = self._active_controller = None
+                self._auto_select_primary = False
                 self._clear_primary_input()
                 self._notify()
             return
