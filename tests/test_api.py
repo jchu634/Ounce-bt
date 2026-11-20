@@ -502,6 +502,22 @@ def test_vibration_defaults_on_and_persists_live_change(fx):
         assert Config.load().vibration_enabled is False
 
 
+def test_controller_vibration_preferences_are_independent_and_respect_global_switch(fx):
+    with fx.client() as client:
+        first = client.patch("/api/config", json={"controller_vibration": {"Pad-A": False}})
+        assert first.status_code == 200
+        result = client.patch("/api/config", json={"controller_vibration": {"pad-b": True}})
+        assert result.json()["config"]["controller_vibration"] == {"pad-a": False, "pad-b": True}
+        assert not fx.config_store.config.allows_controller_vibration("PAD-A")
+        assert fx.config_store.config.allows_controller_vibration("pad-b")
+        assert fx.config_store.config.allows_controller_vibration("unconfigured")
+        client.patch("/api/config", json={"vibration_enabled": False})
+        assert not Config.load().allows_controller_vibration("pad-b")
+        client.patch("/api/config", json={"vibration_enabled": True})
+        assert Config.load().allows_controller_vibration("pad-b")
+        assert not Config.load().allows_controller_vibration("pad-a")
+
+
 @pytest.mark.parametrize("invalid", [None, "false", 0, 1, [], {}])
 def test_invalid_vibration_rejected_atomically(fx, invalid):
     with fx.client() as client:

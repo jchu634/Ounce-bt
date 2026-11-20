@@ -90,6 +90,15 @@ def config_path() -> Path:
     return resolve_config_file("config.json")
 
 
+def normalize_controller_vibration(value: object) -> dict[str, bool]:
+    if not isinstance(value, dict) or any(
+        not isinstance(key, str) or not key.strip() or not isinstance(enabled, bool)
+        for key, enabled in value.items()
+    ):
+        raise ValueError("controller_vibration must map controller IDs to booleans")
+    return {key.strip().casefold(): enabled for key, enabled in value.items()}
+
+
 @dataclass
 class Config:
     """Runtime configuration. Add new fields here; defaults are picked up
@@ -113,6 +122,7 @@ class Config:
     macro_rate_hz: int = 120
     preset: str = "xbox"
     vibration_enabled: bool = True
+    controller_vibration: dict[str, bool] = field(default_factory=dict)
     controller_guid: str = ""
     controller_presets: dict[str, str] = field(default_factory=dict)
     controller_colours: dict[str, str] = field(default_factory=dict)
@@ -122,12 +132,16 @@ class Config:
         if not isinstance(self.vibration_enabled, bool):
             raise TypeError("vibration_enabled must be a boolean")
         self.controller_presets = _normalize_controller_presets(self.controller_presets)
+        self.controller_vibration = normalize_controller_vibration(self.controller_vibration)
         self.controller_colours = normalize_controller_colours(self.controller_colours)
         self.switch_device_names = normalize_device_names(self.switch_device_names)
 
     @property
     def web_enabled(self) -> bool:
         return bool(self.web_host and self.web_port)
+
+    def allows_controller_vibration(self, guid: str | None) -> bool:
+        return self.vibration_enabled and self.controller_vibration.get((guid or "").casefold(), True)
 
     def resolve_folder(self, folder: str) -> Path:
         path = Path(folder).expanduser()
@@ -173,6 +187,7 @@ class Config:
         }
         for key, normalize in (
             ("controller_colours", normalize_controller_colours),
+            ("controller_vibration", normalize_controller_vibration),
             ("switch_device_names", normalize_device_names),
         ):
             if key not in filtered:
@@ -235,6 +250,14 @@ class ConfigStore:
             raise TypeError("vibration_enabled must be a boolean")
         valid = Config._valid_keys()
         with self._lock:
+            if "controller_vibration" in changes:
+                changes = {
+                    **changes,
+                    "controller_vibration": {
+                        **self._config.controller_vibration,
+                        **normalize_controller_vibration(changes["controller_vibration"]),
+                    },
+                }
             if "switch_device_names" in changes:
                 changes = {
                     **changes,

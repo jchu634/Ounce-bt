@@ -784,7 +784,9 @@ async def main(
                         command_queue,
                         controller_service=controller_service,
                         vibration_allowed=lambda: (
-                            config_store.config.vibration_enabled
+                            config_store.config.allows_controller_vibration(
+                                controller_service.active_guid if controller_service else None
+                            )
                             and (manager.current_preset or preset).rumble_enabled
                         ),
                     )

@@ -124,6 +124,10 @@ class ControllerService(threading.Thread):
         # a macro runs start paused.
         self._captures_paused = False
 
+    @property
+    def active_guid(self) -> str | None:
+        return self._active_guid
+
     def set_rumble(self, rumble: RumbleData | None) -> None:
         """Publish the latest effect without blocking the Bluetooth loop."""
         capture = self._capture
