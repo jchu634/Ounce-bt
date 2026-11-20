@@ -61,7 +61,7 @@
   "controller_guid": "",
   "controller_presets": {},
   "controller_vibration": {},
-  "debug_enabled": true,
+  "debug_enabled": false,
   "device_config": "pro_controller.json",
   "firmware_dir": null,
   "input_specs": [

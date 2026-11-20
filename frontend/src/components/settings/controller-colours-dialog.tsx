@@ -21,6 +21,7 @@ import {
   expandHexColour,
   parseControllerColourHistory,
   parseControllerColours,
+  randomColour,
   RECENT_COLOURS_STORAGE_KEY,
   recordSavedControllerColours,
   sameColours,
@@ -54,7 +55,9 @@ export function ControllerColoursDialog({ adapterId }: { adapterId?: string }) {
     let disposed = false;
     const load = adapterId
       ? requestAdapterColours(adapterId).then((result) => result.colours)
-      : Effect.runPromise(getConfig()).then((config) => config.controller_colours);
+      : Effect.runPromise(getConfig()).then(
+          (config) => config.controller_colours,
+        );
     void load
       .then((palette) => {
         if (!disposed) setSaved(parseControllerColours(palette));
@@ -75,7 +78,7 @@ export function ControllerColoursDialog({ adapterId }: { adapterId?: string }) {
     }
   }, [recent]);
 
-  function edit(next: ControllerColours) {
+  function edit(next: ControllerColours | null) {
     setDraft(next);
     setNotice(null);
   }
@@ -94,17 +97,20 @@ export function ControllerColoursDialog({ adapterId }: { adapterId?: string }) {
     setError(null);
     try {
       const submitted = { ...draft };
-      for (const { key } of COLOUR_FIELDS) submitted[key] = expandHexColour(submitted[key]);
+      for (const { key } of COLOUR_FIELDS)
+        submitted[key] = expandHexColour(submitted[key]);
       const result = adapterId
         ? await requestAdapterColours(adapterId, submitted)
-        : await Effect.runPromise(patchConfig({ controller_colours: submitted })).then(
-            (config) => ({
-              colours: config.config.controller_colours,
-              reconnectRequired: config.colours_reconnect_required,
-            }),
-          );
+        : await Effect.runPromise(
+            patchConfig({ controller_colours: submitted }),
+          ).then((config) => ({
+            colours: config.config.controller_colours,
+            reconnectRequired: config.colours_reconnect_required,
+          }));
       const palette = parseControllerColours(result.colours);
-      setRecent((history) => recordSavedControllerColours(history, saved, palette));
+      setRecent((history) =>
+        recordSavedControllerColours(history, saved, palette),
+      );
       setSaved(palette);
       setDraft(null);
       setNotice(
@@ -178,6 +184,35 @@ export function ControllerColoursDialog({ adapterId }: { adapterId?: string }) {
                   }
                 />
               ))}
+              <div className="col-span-2 mt-2 flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    edit({
+                      ...colours,
+                      left_grip: randomColour(),
+                      right_grip: randomColour(),
+                    })
+                  }
+                >
+                  Randomise grips
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    edit({
+                      body: randomColour(),
+                      buttons: randomColour(),
+                      left_grip: randomColour(),
+                      right_grip: randomColour(),
+                    })
+                  }
+                >
+                  Randomise all colours
+                </Button>
+              </div>
             </fieldset>
           </div>
         )}
@@ -202,7 +237,7 @@ export function ControllerColoursDialog({ adapterId }: { adapterId?: string }) {
             <p role="status">Loading controller coloursâ€¦</p>
           ))}
         {colours && (
-          <DialogFooter className="items-center">
+          <DialogFooter className="items-center sm:flex-wrap">
             <p role="status" className="me-auto text-xs text-muted-foreground">
               {notice ?? (dirty ? "Unsaved colour changes" : "")}
             </p>
@@ -213,8 +248,16 @@ export function ControllerColoursDialog({ adapterId }: { adapterId?: string }) {
               }
               onClick={() => edit(DEFAULT_CONTROLLER_COLOURS)}
             >
+              Reset to default
+            </Button>
+            <Button
+              variant="outline"
+              disabled={!dirty || saving}
+              onClick={() => edit(null)}
+            >
               Reset
             </Button>
+
             <Button disabled={!dirty || saving} onClick={() => void save()}>
               {saving ? "Savingâ€¦" : "Save"}
             </Button>

@@ -20,6 +20,14 @@ export const COLOUR_FIELDS = [
 ] satisfies { key: keyof ControllerColours; label: string }[];
 
 export const FIXED_COLOURS = ["#000000", "#828282"];
+
+export function randomColour() {
+  return `#${Math.floor(Math.random() * 0x1000000)
+    .toString(16)
+    .padStart(6, "0")
+    .toUpperCase()}`;
+}
+
 export const INITIAL_RECENT_COLOURS = ["#0355A8", "#AE2121", "#2915EC"];
 export const RECENT_COLOURS_STORAGE_KEY = "controller-recent-colours-by-part";
 export type ControllerColourHistory = Record<keyof ControllerColours, string[]>;
