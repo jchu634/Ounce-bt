@@ -68,9 +68,18 @@ async function chooseOption(label: string, name: string) {
 }
 
 it("keeps per-adapter settings in the dialog and selects input from the card", async () => {
-  const makeAdapter = (id: string, transport: string, controller_id: number | null) => ({
-    id, transport, controller_id, preset: "xbox", macro_mode: false,
-    local_address: null, error: null,
+  const makeAdapter = (
+    id: string,
+    transport: string,
+    controller_id: number | null,
+  ) => ({
+    id,
+    transport,
+    controller_id,
+    preset: "xbox",
+    macro_mode: false,
+    local_address: null,
+    error: null,
   });
   const primary = makeAdapter("primary", "usb:0", 1);
   let secondary = makeAdapter("adapter-2", "usb:1", null);
@@ -97,8 +106,10 @@ it("keeps per-adapter settings in the dialog and selects input from the card", a
         colours_reconnect_required: false,
       });
     }
-    if (path === "/api/presets") return Response.json({ presets: [], active: "xbox" });
-    if (path === "/api/config") return Response.json({ vibration_enabled: true });
+    if (path === "/api/presets")
+      return Response.json({ presets: [], active: "xbox" });
+    if (path === "/api/config")
+      return Response.json({ vibration_enabled: true });
     return Response.json({}, { status: 404 });
   });
   vi.stubGlobal("fetch", fetchRequest);
@@ -110,21 +121,45 @@ it("keeps per-adapter settings in the dialog and selects input from the card", a
     return () => {};
   });
   await act(async () => {
-    root.render(<SocketProvider><ConnectionPanel onEditPreset={() => {}} /></SocketProvider>);
+    root.render(
+      <SocketProvider>
+        <ConnectionPanel onEditPreset={() => {}} />
+      </SocketProvider>,
+    );
   });
   const cards = container.querySelectorAll("article");
   expect(cards).toHaveLength(2);
-  expect(cards[1].querySelector('[data-region="body"]')?.getAttribute("fill")).toBe("#1122AA");
-  expect(container.querySelector('[aria-label="Select controller"]')).toBeNull();
+  expect(
+    cards[1].querySelector('[data-region="body"]')?.getAttribute("fill"),
+  ).toBe("#1122AA");
+  expect(
+    container.querySelector('[aria-label="Select controller"]'),
+  ).toBeNull();
 
   const selectCard = button("Send manual and macro input through usb:1");
   await act(async () => selectCard.click());
-  expect(send).toHaveBeenCalledWith({ type: "select_adapter", adapter_id: "adapter-2" });
-  await act(async () => receive?.({ type: "status", mode: "manual", macro: null, adapter_id: "adapter-2" }));
+  expect(send).toHaveBeenCalledWith({
+    type: "select_adapter",
+    adapter_id: "adapter-2",
+  });
+  await act(async () =>
+    receive?.({
+      type: "status",
+      mode: "manual",
+      macro: null,
+      adapter_id: "adapter-2",
+    }),
+  );
   expect(selectCard.getAttribute("aria-pressed")).toBe("true");
 
-  await act(async () => cards[1].querySelector<HTMLButtonElement>('[aria-label="Controller settings"]')?.click());
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("usb:1");
+  await act(async () =>
+    cards[1]
+      .querySelector<HTMLButtonElement>('[aria-label="Controller settings"]')
+      ?.click(),
+  );
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+    "usb:1",
+  );
   await chooseOption("Select controller", "Second Pad");
   expect(fetchRequest).toHaveBeenCalledWith(
     "/api/adapters/adapter-2/controller",
@@ -320,14 +355,23 @@ it("opens controller settings and sends actions for the card’s saved profile",
   expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
     "Controller colours",
   );
+  expect(button("Reset").disabled).toBe(true);
+  await act(async () => button("Reset to default").click());
   await act(async () => button("Reset").click());
+  expect(
+    document
+      .querySelector('[role="dialog"] [data-region="body"]')
+      ?.getAttribute("fill"),
+  ).toBe("#FF3344");
+  expect(button("Save").disabled).toBe(true);
+  await act(async () => button("Reset to default").click());
   expect(cardBodyColour()).toBe("#FF3344");
   await act(async () => button("Close").click());
   await act(async () => button("Discard changes").click());
   expect(cardBodyColour()).toBe("#FF3344");
 
   await act(async () => button("Edit controller colours").click());
-  await act(async () => button("Reset").click());
+  await act(async () => button("Reset to default").click());
   await act(async () => button("Save").click());
   expect(cardBodyColour()).toBe(DEFAULT_CONTROLLER_COLOURS.body);
   expect(document.body.textContent).toContain(

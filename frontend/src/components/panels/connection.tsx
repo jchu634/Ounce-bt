@@ -33,6 +33,7 @@ import {
 } from "@/src/components/ui/select";
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/src/components/ui/tooltip";
 import { useControllers } from "@/src/hooks/use-controllers";
 import { useSocket } from "@/src/hooks/use-socket";
 import {
@@ -74,9 +75,13 @@ export function ConnectionToggleButton({
 
   return (
     <Button
-      variant={active && status?.address ? "destructive" : "outline"}
+      variant={status?.state === "disconnected" ? "destructive" : "outline"}
       size="icon-sm"
-      className="rounded-lg"
+      className={cn(
+        "rounded-lg",
+        status?.state === "connected" &&
+          "border-transparent bg-green-700 text-white hover:bg-green-800 hover:text-white dark:bg-green-700 dark:hover:bg-green-800",
+      )}
       aria-label={action}
       title={action}
       disabled={disabled || (active ? !status?.address || reconnecting || disconnecting : !address)}
@@ -138,23 +143,31 @@ function ConnectionStatus({
             : "disconnected";
 
   return (
-    <p
-      className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
-      title={statusDetail}
-    >
-      <span className="shrink-0">{statusLabel}</span>
-      <span
-        aria-hidden
-        className={cn(
-          "size-1.5 shrink-0 rounded-full bg-current",
-          statusTone === "connected" && "bg-emerald-500",
-          statusTone === "pending" && "bg-amber-500",
-          statusTone === "error" && "bg-destructive",
-        )}
-      />
-      {status?.address && !statusError && (
-        <span className="min-w-0 truncate font-mono">{status.address}</span>
-      )}
+    <p className="flex shrink-0 items-center gap-1 text-sm text-muted-foreground">
+      <span>{statusLabel}</span>
+      <Tooltip>
+        <TooltipTrigger
+          render={<span tabIndex={0} />}
+          aria-label="Bluetooth connection details"
+          className="pointer-events-auto grid size-4 place-items-center rounded-full focus-visible:outline-2 focus-visible:outline-ring"
+        >
+          <span
+            aria-hidden
+            className={cn(
+              "size-1.5 rounded-full bg-current",
+              statusTone === "connected" && "bg-emerald-500",
+              statusTone === "pending" && "bg-amber-500",
+              statusTone === "error" && "bg-destructive",
+            )}
+          />
+        </TooltipTrigger>
+        <TooltipContent>
+          {statusDetail}
+          {status?.state === "disconnecting" && !statusError && status.address && (
+            <span className="font-mono">{status.address}</span>
+          )}
+        </TooltipContent>
+      </Tooltip>
     </p>
   );
 }
@@ -390,14 +403,28 @@ function ConnectionCard({
           </div>
         </div>
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          <ConnectionToggleButton
-            status={status}
-            address={address}
-            disabled={disabled}
-            busy={busy}
-            onReconnect={() => void update("POST", { address })}
-            onDisconnect={() => void update("POST", { action: "disconnect" })}
-          />
+          <div className="flex shrink-0 items-center gap-1.5">
+            <ConnectionToggleButton
+              status={status}
+              address={address}
+              disabled={disabled}
+              busy={busy}
+              onReconnect={() => void update("POST", { address })}
+              onDisconnect={() => void update("POST", { action: "disconnect" })}
+            />
+            <Button
+              variant="outline"
+              size="icon-sm"
+              className="rounded-lg"
+              aria-label={pairingAction}
+              aria-pressed={pairing}
+              title={pairingAction}
+              disabled={disabled || (!pairing && active)}
+              onClick={() => void update("PUT", { pairing: !pairing })}
+            >
+              <BluetoothIcon weight={pairing ? "bold" : "regular"} />
+            </Button>
+          </div>
           <div className="min-w-24 flex-1">
             <Select
               value={address || null}
@@ -435,17 +462,6 @@ function ConnectionCard({
             }}
           >
             <PencilSimpleIcon />
-          </Button>
-          <Button
-            variant={pairing ? "secondary" : "default"}
-            size="icon-sm"
-            className="rounded-lg"
-            aria-label={pairingAction}
-            title={pairingAction}
-            disabled={disabled || (!pairing && active)}
-            onClick={() => void update("PUT", { pairing: !pairing })}
-          >
-            <BluetoothIcon weight={pairing ? "bold" : "regular"} />
           </Button>
           <div className="flex shrink-0 items-center gap-1.5">
             <Dialog
