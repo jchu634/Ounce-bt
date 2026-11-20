@@ -2,7 +2,7 @@
   "adapter_colours": {},
   "adapter_presets": {},
   "bt_address": "98:B6:E9:19:13:08",
-  "bumble_logging": true,
+  "bumble_logging": false,
   "controller_colours": {
     "body": "#000000",
     "buttons": "#828282",
