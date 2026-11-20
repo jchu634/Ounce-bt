@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { Controls } from "@videojs/react";
-import { ArrowsInIcon, ArrowsOutIcon } from "@phosphor-icons/react";
+import { ArrowsInIcon, ArrowsOutIcon, StopIcon } from "@phosphor-icons/react";
+import { cn } from "cn";
 import { Button } from "@/src/components/videojs/ui/button";
 import { Container } from "@/src/components/videojs/ui/container";
 import { MuteButton } from "@/src/components/videojs/ui/mute-button";
@@ -10,9 +11,13 @@ import { VolumeSlider } from "@/src/components/videojs/ui/volume-slider";
 export function CapturePreviewSkin({
   children,
   aspectRatio,
+  capturing,
+  onStop,
 }: {
   children: ReactNode;
   aspectRatio: number;
+  capturing: boolean;
+  onStop: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const style: CSSProperties & { "--capture-aspect-ratio": number } = {
@@ -41,8 +46,24 @@ export function CapturePreviewSkin({
     >
       {children}
       <Controls.Root>
-        <Controls.Content className="absolute inset-x-0 bottom-0 z-30 flex items-center justify-between gap-3 bg-(image:--media-controls-gradient) px-3 pt-6 pb-3 text-media-controls-foreground transition-opacity duration-media-controls not-data-visible:pointer-events-none not-data-visible:opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 motion-reduce:transition-none">
-          <Controls.Group aria-label="Audio controls" className="flex items-center gap-2">
+        <Controls.Content
+          className={cn(
+            "absolute inset-x-0 bottom-0 z-30 flex items-center justify-between gap-3 bg-(image:--media-controls-gradient) px-3 pt-3 pb-2 text-media-controls-foreground transition-opacity duration-media-controls motion-reduce:transition-none",
+            capturing &&
+              "not-data-visible:pointer-events-none not-data-visible:opacity-0 focus-within:pointer-events-auto focus-within:opacity-100",
+          )}
+        >
+          <Controls.Group aria-label="Playback controls" className="flex items-center gap-2">
+            <Button
+              type="button"
+              onClick={onStop}
+              disabled={!capturing}
+              aria-label="Stop capture input"
+              title="Stop capture input"
+              className="disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <StopIcon size={20} weight="fill" aria-hidden />
+            </Button>
             <MuteButton />
             <VolumeSlider className="w-22 flex-none" />
           </Controls.Group>

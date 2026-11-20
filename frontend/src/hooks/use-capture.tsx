@@ -8,8 +8,6 @@ import {
   type ReactNode,
 } from "react";
 import { Effect } from "effect";
-import { useSelector } from "@tanstack/react-store";
-import { generalSettingsStore } from "@/src/stores/general-settings";
 import {
   type CameraDevice,
   CameraError,
@@ -74,10 +72,6 @@ export function CaptureProvider({
 }: {
   readonly children: ReactNode;
 }) {
-  const controlsOnlyHomepage = useSelector(
-    generalSettingsStore,
-    (settings) => settings.controlsOnlyHomepage,
-  );
   const activeStreamRef = useRef<MediaStream | null>(null);
   const [cameras, setCameras] = useState<readonly CameraDevice[]>([]);
   const [selectedAudioInputId, setSelectedAudioInputId] = useState(
@@ -94,10 +88,10 @@ export function CaptureProvider({
   );
   const [error, setError] = useState<string | null>(null);
 
-  const syncActiveStream = (nextStream: MediaStream | null) => {
+  const syncActiveStream = useCallback((nextStream: MediaStream | null) => {
     activeStreamRef.current = nextStream;
     setStream(nextStream);
-  };
+  }, []);
 
   const refreshCameras = useCallback(async () => {
     const devices = await Effect.runPromise(enumerateCameras).catch(
@@ -109,11 +103,29 @@ export function CaptureProvider({
     );
   }, []);
 
-  const stop = () => {
+  const stop = useCallback(() => {
     const current = activeStreamRef.current;
     syncActiveStream(null);
     if (current) void Effect.runPromise(releaseStream(current));
-  };
+  }, [syncActiveStream]);
+
+  useEffect(() => {
+    if (!stream) return;
+    const tracks = stream.getVideoTracks();
+    const stopIfVideoEnded = () => {
+      if (
+        activeStreamRef.current === stream &&
+        tracks.every((track) => track.readyState === "ended")
+      ) {
+        stop();
+      }
+    };
+    for (const track of tracks) track.addEventListener("ended", stopIfVideoEnded);
+    stopIfVideoEnded();
+    return () => {
+      for (const track of tracks) track.removeEventListener("ended", stopIfVideoEnded);
+    };
+  }, [stop, stream]);
 
   const startWithInputs = async (deviceId: string, audioDeviceId: string) => {
     setError(null);
@@ -198,9 +210,6 @@ export function CaptureProvider({
         if (cancelled) return;
         status = nextStatus;
         setPermission(nextStatus.state);
-        if (nextStatus.state === "prompt" && !controlsOnlyHomepage) {
-          void requestAccess();
-        }
         nextStatus.onchange = () => setPermission(nextStatus.state);
       })
       .catch(() => {
@@ -211,7 +220,7 @@ export function CaptureProvider({
       cancelled = true;
       if (status) status.onchange = null;
     };
-  }, [requestAccess, controlsOnlyHomepage]);
+  }, []);
 
   useEffect(() => {
     if (permission !== "granted" && permission !== "unsupported") return;
@@ -271,7 +280,6 @@ export function useCaptureControls() {
     start,
     starting,
     stop,
-    stream,
   } = useCaptureContext();
   return {
     error,
@@ -281,7 +289,6 @@ export function useCaptureControls() {
     start,
     starting,
     stop,
-    streaming: stream !== null,
   } as const;
 }
 
