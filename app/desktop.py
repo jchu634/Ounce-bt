@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import secrets
 import sys
@@ -13,6 +14,8 @@ import webview
 
 from lib.config import application_dir
 from lib.server.files import validate_name
+
+logger = logging.getLogger("switch_pair")
 
 
 class DesktopBridge:
@@ -49,6 +52,32 @@ class DesktopBridge:
         return True
 
 
+class WindowsDesktopBridge(DesktopBridge):
+    def __init__(self, token, origin):
+        super().__init__(token, origin)
+        from app.audio_monitor import AudioMonitor
+
+        self._audio = AudioMonitor()
+
+    def start_capture_audio(self, label):
+        self._check_origin()
+        from pygame import error as pygame_error
+
+        try:
+            return self._audio.start(label)
+        except (OSError, pygame_error, RuntimeError) as error:
+            logger.warning("Native capture audio unavailable: %s", error)
+            return None
+
+    def set_capture_volume(self, session, volume):
+        self._check_origin()
+        self._audio.set_volume(session, volume)
+
+    def stop_capture_audio(self, session):
+        self._check_origin()
+        self._audio.stop(session)
+
+
 def run_application(config, args, backend):
     restart_requested = threading.Event()
 
@@ -75,7 +104,8 @@ def run_application(config, args, backend):
     launch_nonce = secrets.token_hex(16)
     host = f"[{config.web_host}]" if ":" in config.web_host else config.web_host
     url = f"http://{host}:{config.web_port}/?launch={launch_nonce}"
-    bridge = DesktopBridge(token, ("http", f"{host}:{config.web_port}"))
+    bridge_class = WindowsDesktopBridge if sys.platform == "win32" else DesktopBridge
+    bridge = bridge_class(token, ("http", f"{host}:{config.web_port}"))
     ready = threading.Event()
     finished = threading.Event()
     closed = threading.Event()
@@ -146,8 +176,12 @@ def run_application(config, args, backend):
             options["icon"] = str(application_dir() / "frontend/public/icon-512.png")
         webview.start(monitor_backend, private_mode=False, **options)
     finally:
-        request_stop()
-        thread.join()
+        try:
+            if isinstance(bridge, WindowsDesktopBridge):
+                bridge._audio.close()
+        finally:
+            request_stop()
+            thread.join()
     if failures:
         raise failures[0]
 

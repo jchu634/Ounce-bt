@@ -8,6 +8,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { CapturePreview } from "@/src/components/panels/capture-preview";
 import { ConnectionPanel } from "@/src/components/panels/connection";
+import { CaptureDeviceSettings } from "@/src/components/settings/capture-device-settings";
 import { CaptureProvider } from "@/src/hooks/use-capture";
 import { SocketProvider } from "@/src/hooks/use-socket";
 import type { BluetoothStatus } from "@/src/lib/bluetooth";
@@ -44,6 +45,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
   Reflect.deleteProperty(navigator, "mediaDevices");
+  localStorage.removeItem("ounce-bt.audio-input");
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -169,14 +171,38 @@ it("keeps per-adapter settings in the dialog and selects input from the card", a
   expect(send).toHaveBeenCalledTimes(1);
 });
 
-it("starts capture from the player and disables Stop after releasing the stream", async () => {
+it.each([
+  { audioId: "", native: false },
+  { audioId: "capture-audio", native: true },
+])("starts and stops capture with native monitoring set to $native", async ({ audioId, native }) => {
+  localStorage.setItem("ounce-bt.audio-input", audioId);
   const stopTrack = vi.fn();
   const track = Object.assign(new EventTarget(), {
     stop: stopTrack,
     readyState: "live",
   });
-  const stream = { getTracks: () => [track], getVideoTracks: () => [track] };
+  const audioTrack = { label: "Capture card audio", stop: vi.fn() };
+  const stream = {
+    getTracks: () => [track, audioTrack],
+    getVideoTracks: () => [track],
+    getAudioTracks: () => [audioTrack],
+  };
   const getUserMedia = vi.fn().mockResolvedValue(stream);
+  const api = {
+    start_capture_audio: vi.fn().mockResolvedValue(1),
+    set_capture_volume: vi.fn().mockResolvedValue(undefined),
+    stop_capture_audio: vi.fn().mockResolvedValue(undefined),
+  };
+  if (native) {
+    vi.stubGlobal("pywebview", { api });
+    vi.stubGlobal("MediaStream", class {
+      readonly tracks: unknown[];
+
+      constructor(tracks: unknown[]) {
+        this.tracks = tracks;
+      }
+    });
+  }
   Object.defineProperty(navigator, "mediaDevices", {
     configurable: true,
     value: {
@@ -202,13 +228,35 @@ it("starts capture from the player and disables Stop after releasing the stream"
   await act(async () => button("Start capture input").click());
   expect(getUserMedia).toHaveBeenCalledWith({
     video: { deviceId: { exact: "capture-card" } },
-    audio: true,
+    audio: {
+      ...(audioId ? { deviceId: { exact: audioId } } : {}),
+      echoCancellation: { exact: false },
+      noiseSuppression: { exact: false },
+      autoGainControl: { exact: false },
+    },
   });
-  expect(container.querySelector("video")?.srcObject).toBe(stream);
+  const video = container.querySelector("video");
+  if (!video) throw new Error("Missing capture video");
+  if (native) {
+    expect(api.start_capture_audio).toHaveBeenCalledWith("Capture card audio");
+    expect(video.srcObject).toEqual({ tracks: [track] });
+    expect(audioTrack.stop).toHaveBeenCalledOnce();
+    Object.defineProperty(video, "paused", { value: false, configurable: true });
+    video.volume = 0.5;
+    await act(async () => { video.dispatchEvent(new Event("volumechange")); });
+    expect(api.set_capture_volume).toHaveBeenLastCalledWith(1, 0.5);
+    video.muted = true;
+    await act(async () => { video.dispatchEvent(new Event("volumechange")); });
+    expect(api.set_capture_volume).toHaveBeenLastCalledWith(1, 0);
+  } else {
+    expect(video.srcObject).toBe(stream);
+  }
   expect(button("Stop capture input").disabled).toBe(false);
 
   await act(async () => button("Stop capture input").click());
   expect(stopTrack).toHaveBeenCalledOnce();
+  expect(audioTrack.stop).toHaveBeenCalledTimes(native ? 2 : 1);
+  if (native) expect(api.stop_capture_audio).toHaveBeenCalledWith(1);
   expect(container.querySelector("video")?.srcObject).toBeNull();
   expect(button("Stop capture input").disabled).toBe(true);
   expect(button("Start capture input").disabled).toBe(false);
@@ -220,6 +268,33 @@ it("starts capture from the player and disables Stop after releasing the stream"
   });
   expect(button("Stop capture input").disabled).toBe(true);
   expect(container.querySelector("video")?.srcObject).toBeNull();
+});
+
+it("opens the settings camera preview without capturing audio", async () => {
+  localStorage.setItem("ounce-bt.audio-input", "capture-audio");
+  const stop = vi.fn();
+  const getUserMedia = vi.fn().mockResolvedValue({ getTracks: () => [{ stop }] });
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: { getUserMedia },
+  });
+
+  await act(async () => root.render(
+    <CaptureProvider>
+      <CaptureDeviceSettings
+        disabled={false}
+        draftInputId="capture-card"
+        onDraftInputChange={() => {}}
+      />
+    </CaptureProvider>,
+  ));
+  await act(async () => button("Show preview").click());
+  expect(getUserMedia).toHaveBeenCalledWith({
+    video: { deviceId: { exact: "capture-card" } },
+    audio: false,
+  });
+  await act(async () => button("Hide preview").click());
+  expect(stop).toHaveBeenCalledOnce();
 });
 
 it("opens controller settings and sends actions for the card’s saved profile", async () => {

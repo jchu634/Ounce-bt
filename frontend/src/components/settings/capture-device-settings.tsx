@@ -100,15 +100,8 @@ function CaptureDeviceSettingsContent({
     setPreviewError(null);
     setPreviewStarting(true);
     try {
-      const audioDeviceId = (() => {
-        try {
-          return localStorage.getItem("ounce-bt.audio-input") ?? "";
-        } catch {
-          return "";
-        }
-      })();
       const nextStream = await Effect.runPromise(
-        acquireStream(draftInputId, audioDeviceId),
+        acquireStream(draftInputId, false),
       );
       if (!previewRequestedRef.current) {
         void Effect.runPromise(releaseStream(nextStream));

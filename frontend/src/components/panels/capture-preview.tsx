@@ -10,6 +10,60 @@ import {
 import { CapturePreviewSkin } from "./capture-preview-skin";
 import { Button } from "@/src/components/ui/button";
 import { useCaptureControls, useCaptureInput, useCaptureStream } from "@/src/hooks/use-capture";
+import { desktopApi } from "@/src/lib/desktop";
+
+let monitorQueue = Promise.resolve();
+
+function attachPreview(video: HTMLVideoElement, stream: MediaStream | null) {
+  const api = desktopApi();
+  const audioTrack = api?.start_capture_audio && stream?.getAudioTracks()[0];
+  if (!stream || !audioTrack || !api?.start_capture_audio ||
+      !api.set_capture_volume || !api.stop_capture_audio) {
+    video.srcObject = stream;
+    return () => { video.srcObject = null; };
+  }
+
+  const { start_capture_audio, set_capture_volume, stop_capture_audio } = api;
+  let disposed = false;
+  let session: number | null = null;
+  const syncVolume = () => {
+    if (session !== null) {
+      const volume = video.muted || video.paused ? 0 : video.volume;
+      void set_capture_volume(session, volume).catch(() => {});
+    }
+  };
+  const events = ["volumechange", "play", "pause"];
+  for (const event of events) video.addEventListener(event, syncVolume);
+  // Windows desktop plays through SDL. Keep the WebView silent until its
+  // native monitor opens, and use the original stream if the device fails.
+  video.srcObject = new MediaStream(stream.getVideoTracks());
+  monitorQueue = monitorQueue.then(async () => {
+    if (disposed) return;
+    try {
+      session = await start_capture_audio(audioTrack.label);
+    } catch {
+      session = null;
+    }
+    if (disposed) return;
+    if (session === null) {
+      video.srcObject = stream;
+    } else {
+      audioTrack.stop();
+      syncVolume();
+    }
+  });
+
+  return () => {
+    disposed = true;
+    for (const event of events) video.removeEventListener(event, syncVolume);
+    video.srcObject = null;
+    // Wait for a pending open before stopping this session. A replacement
+    // stream queues its own open after this stop.
+    monitorQueue = monitorQueue.then(async () => {
+      if (session !== null) await stop_capture_audio(session).catch(() => {});
+    });
+  };
+}
 
 export function CapturePreview() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -20,11 +74,7 @@ export function CapturePreview() {
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video) return;
-    video.srcObject = stream;
-    return () => {
-      video.srcObject = null;
-    };
+    if (video) return attachPreview(video, stream);
   }, [stream]);
 
   return (
