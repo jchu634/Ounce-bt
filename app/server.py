@@ -26,7 +26,7 @@ from app.bluetooth import (
 from app.input.controller_service import ControllerRoute
 from app.input.manager import InputManager, MacroActiveError, state_from_event
 from lib.colours import normalize_controller_colours
-from lib.config import ConfigStore, normalize_controller_vibration
+from lib.config import ConfigStore, new_profile_address, normalize_controller_vibration
 from lib.device_names import normalize_device_names, validate_device_name
 from lib.input.macros import MacroValidationError, validate_macro
 from lib.input.presets import (
@@ -81,9 +81,12 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
         ):
             await websocket.close(code=1008)
             return
-    await websocket.accept(subprotocol="ounce-bt" if token is not None else None)
     primary: InputManager = websocket.app.state.manager
     sessions: dict[str, AdapterSession] = websocket.app.state.adapter_sessions
+    if websocket.app.state.startup_phase is not None and not sessions:
+        await websocket.close(code=1013)
+        return
+    await websocket.accept(subprotocol="ounce-bt" if token is not None else None)
     managers = {"primary": primary}
     managers.update({
         slot.id: slot.input_manager for slot in sessions.values() if slot.input_manager
@@ -371,7 +374,11 @@ async def adapter_colours(request: Request) -> Response:
     if slot is None:
         return _error("Unknown adapter", status=404)
     store: ConfigStore = request.app.state.config_store
-    colours = store.config.colours_for_adapter(slot.transport, primary=slot.primary)
+    profile_index = slot.profile_index
+    colours = (
+        store.config.adapter_profiles[profile_index].colours if profile_index is not None
+        else store.config.colours_for_adapter(slot.transport, primary=slot.primary)
+    )
     changed = False
     if request.method == "PATCH":
         try:
@@ -380,7 +387,9 @@ async def adapter_colours(request: Request) -> Response:
             return _error(str(error))
         changed = updated != colours
         if changed:
-            if slot.primary:
+            if profile_index is not None:
+                store.update_adapter_profile(profile_index, colours=updated)
+            elif slot.primary:
                 store.update({"controller_colours": updated})
             else:
                 store.update({"adapter_colours": {
@@ -520,7 +529,8 @@ async def controller_select(request: Request) -> Response:
         return _error(str(e), status=503)
 
     # Persist the selection (GUID) so it survives restarts.
-    if info.get("guid"):
+    primary = request.app.state.adapter_sessions.get("primary")
+    if info.get("guid") and (primary is None or primary.profile_index is None):
         store.update({"controller_guid": info["guid"]})
     payload = await asyncio.to_thread(manager.controllers_payload)
     return JSONResponse(payload)
@@ -595,6 +605,7 @@ async def preset_delete(request: Request) -> Response:
         store.config.preset == name
         or name in store.config.controller_presets.values()
         or name in store.config.adapter_presets.values()
+        or any(profile.preset == name for profile in store.config.adapter_profiles)
     ):
         return _error(
             f"preset '{name}' is active or assigned to a controller",
@@ -632,9 +643,12 @@ async def preset_activate(request: Request) -> Response:
                 await asyncio.to_thread(service.set_preset, preset, name, session_id=session_id)
             except (FileNotFoundError, TypeError, ValueError, RuntimeError) as error:
                 return _error(str(error), status=409)
-            store.update({"adapter_presets": {
-                **store.config.adapter_presets, slot.transport.casefold(): name
-            }})
+            if slot.profile_index is not None:
+                store.update_adapter_profile(slot.profile_index, preset=name)
+            else:
+                store.update({"adapter_presets": {
+                    **store.config.adapter_presets, slot.transport.casefold(): name
+                }})
             return await adapters_get(request)
 
     try:
@@ -649,6 +663,13 @@ async def preset_activate(request: Request) -> Response:
     # Persist the selection so it survives restarts (and so the config
     # store stays the single source of truth).
     payload = await asyncio.to_thread(manager.controllers_payload)
+    primary = request.app.state.adapter_sessions.get("primary")
+    if primary is not None and primary.profile_index is not None:
+        store.update_adapter_profile(primary.profile_index, preset=name)
+        if session_id:
+            return await adapters_get(request)
+        payload["applied"] = preset.name
+        return JSONResponse(payload)
     changes: dict = {"preset": name}
     active_guid = payload.get("active")
     if active_guid:
@@ -679,7 +700,7 @@ def validate_debug_changes(body):
     for key in ("macro_rate_hz", "tick_rate_hz"):
         if key in body and (type(body[key]) is not int or not 1 <= body[key] <= 1000):
             raise ValueError(f"{key} must be an integer between 1 and 1000")
-    if {"bt_address", "adapter_address_seed", "adapter_addresses"} & body.keys():
+    if {"bt_address", "adapter_address_seed", "adapter_addresses", "adapter_profiles"} & body.keys():
         raise ValueError("Use Regenerate BD address to change the Bluetooth identity")
 
 
@@ -808,6 +829,7 @@ async def debug_apply(request: Request) -> Response:
         }
         used_addresses.add(config.bt_address.upper())
         used_addresses.update(value.upper() for value in config.adapter_addresses.values())
+        used_addresses.update(profile.address for profile in config.adapter_profiles)
         if current_address := getattr(service.device, "public_address", None):
             used_addresses.add(str(current_address).split("/")[0].upper())
         prefix = bytes([0x98, 0xB6, 0xE9]) if use_primary_address else bytes([2])
@@ -820,7 +842,11 @@ async def debug_apply(request: Request) -> Response:
             await service.forget_all()
         except (OSError, RuntimeError, TimeoutError) as error:
             return _error(f"Could not clear saved Switch devices: {error}", status=503)
-        if use_primary_address:
+        if session is not None and session.profile_index is not None:
+            store.update_adapter_profile(
+                session.profile_index, address=new_profile_address(used_addresses), legacy_keystore=False
+            )
+        elif use_primary_address:
             changes["bt_address"] = address
             # Keep the secondary adapters' derived addresses stable.
             if not config.adapter_address_seed:
@@ -903,6 +929,19 @@ async def config_patch(request: Request) -> Response:
             controller_presets[str(active_guid).casefold()] = requested_preset
             body["controller_presets"] = controller_presets
     changed = store.update(body)
+    primary = request.app.state.adapter_sessions.get("primary")
+    if primary is not None and primary.profile_index is not None:
+        profile = store.config.adapter_profiles[primary.profile_index]
+        profile_changes = {}
+        if "controller_colours" in body:
+            colours = normalize_controller_colours(body["controller_colours"], profile.colours)
+            if colours != profile.colours:
+                profile_changes["colours"] = colours
+                changed["controller_colours"] = colours
+        if requested_preset is not None:
+            profile_changes["preset"] = requested_preset
+        if profile_changes:
+            store.update_adapter_profile(primary.profile_index, **profile_changes)
     bluetooth: BluetoothService = request.app.state.bluetooth
     return JSONResponse(
         {
@@ -979,8 +1018,8 @@ async def startup_status(request: Request) -> JSONResponse:
             "kind": "bluetooth_error",
             "message": request.app.state.bluetooth_error,
         }
-    elif request.app.state.transport_pending:
-        status = {"kind": "checking"}
+    elif request.app.state.startup_phase is not None:
+        status = {"kind": "checking", "phase": request.app.state.startup_phase}
     else:
         status = {"kind": "ready"}
     return JSONResponse(
@@ -1088,7 +1127,7 @@ def build_app(
     app.state.missing_firmware = missing_firmware
     app.state.usb_driver_error = usb_driver_error
     app.state.bluetooth_error = None
-    app.state.transport_pending = False
+    app.state.startup_phase = None
     app.state.restart_callback = restart_callback
     app.state.shutdown_event = shutdown_event
     app.state.ws_token = (

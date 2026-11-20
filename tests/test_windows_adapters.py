@@ -1,8 +1,46 @@
+import asyncio
+from threading import Event
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import pytest
 
 import app.main as application
+from lib import bluetooth_transport
 from lib.config import Config
 from lib.windows_adapters import UsbRadio, _transport_specs
+
+
+def test_usb_open_leaves_application_loop_free_and_cleans_up_on_cancel(monkeypatch):
+    monkeypatch.setattr(bluetooth_transport, "sys", SimpleNamespace(platform="win32"))
+
+    async def scenario():
+        context = Mock()
+        release = Event()
+        started = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def open_device(*selector):
+            loop.call_soon_threadsafe(started.set)
+            release.wait(3)
+            return context, None, None, None
+
+        monkeypatch.setattr(bluetooth_transport, "_open_usb_device", open_device)
+        task = asyncio.create_task(bluetooth_transport.open_transport("usb:5-2.4"))
+        try:
+            await asyncio.wait_for(started.wait(), 2)
+            assert not task.done()
+            assert not release.is_set()
+            task.cancel()
+            await asyncio.sleep(0)
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            context.close.assert_called_once()
+        finally:
+            release.set()
+
+    asyncio.run(scenario())
 
 
 def test_winusb_discovery_uses_unique_serials_and_disambiguates_usb_locations():

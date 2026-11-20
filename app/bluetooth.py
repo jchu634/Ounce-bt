@@ -278,6 +278,8 @@ class AdapterSession:
     local_address: str | None = None
     error: str | None = None
     input_manager: InputManager | None = None
+    profile_index: int | None = None
+    legacy_keystore: bool = False
 
     @property
     def primary(self) -> bool:

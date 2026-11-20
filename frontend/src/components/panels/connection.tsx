@@ -242,42 +242,40 @@ export function ConnectionPanel({ onEditPreset }: { onEditPreset: (preset: Prese
         inventory.adapters.map((adapter) => {
           const pad = inventory.controllers.find((entry) => entry.id === adapter.controller_id);
           const multiple = inventory.adapters.length > 1;
-          const mapping: MappingSettings = multiple
-            ? {
-                available: inventory.controllers_available,
-                options: inventory.controllers.map((entry) => ({
-                  id: entry.id.toString(),
-                  name: inventory.controllers.some(
-                    (other) => other.id !== entry.id && other.name === entry.name,
-                  )
-                    ? `${entry.name} (${entry.id})`
-                    : entry.name,
-                  disabled: inventory.adapters.some(
-                    (slot) => slot.id !== adapter.id && slot.controller_id === entry.id,
-                  ),
-                })),
-                active: adapter.controller_id?.toString() ?? null,
-                controllerGuid: pad?.guid ?? null,
-                preset: adapter.preset,
-                pending: pending ? (pending.kind === "assign" ? "selecting" : "applying") : null,
-                error: settingsError?.id === adapter.id ? settingsError.message : null,
-                macroMode: adapter.macro_mode,
-                allowUnassign: true,
-                selectController: (id) =>
-                  void saveSettings({
-                    kind: "assign",
-                    adapterId: adapter.id,
-                    controllerId: id === null ? null : Number(id),
-                  }),
-                applyPreset: (preset) =>
-                  void saveSettings({ kind: "preset", adapterId: adapter.id, preset }),
-              }
-            : legacyMapping;
+          const mapping: MappingSettings = {
+            available: inventory.controllers_available,
+            options: inventory.controllers.map((entry) => ({
+              id: entry.id.toString(),
+              name: inventory.controllers.some(
+                (other) => other.id !== entry.id && other.name === entry.name,
+              )
+                ? `${entry.name} (${entry.id})`
+                : entry.name,
+              disabled: inventory.adapters.some(
+                (slot) => slot.id !== adapter.id && slot.controller_id === entry.id,
+              ),
+            })),
+            active: adapter.controller_id?.toString() ?? null,
+            controllerGuid: pad?.guid ?? null,
+            preset: adapter.preset,
+            pending: pending ? (pending.kind === "assign" ? "selecting" : "applying") : null,
+            error: settingsError?.id === adapter.id ? settingsError.message : null,
+            macroMode: adapter.macro_mode,
+            allowUnassign: true,
+            selectController: (id) =>
+              void saveSettings({
+                kind: "assign",
+                adapterId: adapter.id,
+                controllerId: id === null ? null : Number(id),
+              }),
+            applyPreset: (preset) =>
+              void saveSettings({ kind: "preset", adapterId: adapter.id, preset }),
+          };
           return (
             <ConnectionCard
               key={adapter.id}
               adapter={adapter}
-              controllerName={multiple ? pad?.name : controller.activeInfo?.name}
+              controllerName={pad?.name}
               mapping={mapping}
               onEditPreset={onEditPreset}
               inputTarget={

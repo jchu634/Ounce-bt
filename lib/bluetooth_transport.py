@@ -1,11 +1,136 @@
-"""Compatibility for Linux Python builds without Bluetooth header definitions."""
+"""Open platform Bluetooth transports and handle host compatibility."""
 
+import asyncio
+import logging
+import re
 import socket
 import sys
+from collections.abc import Callable
+from threading import Event, Lock
 
+import usb1
 from bumble.device import Device
 from bumble.hci import HCI_Reset_Command
 from bumble.host import Host
+from bumble.transport import _wrap_transport, open_transport as open_bumble_transport
+from bumble.transport.common import TransportInitError
+from bumble.transport.usb import (
+    UsbPacketSink,
+    UsbPacketSource,
+    UsbTransport,
+    find_endpoints,
+    load_libusb,
+)
+
+from lib.windows_adapters import is_bluetooth_usb
+
+logger = logging.getLogger(__name__)
+_usb_open_lock = Lock()
+
+
+def _usb_selector(spec: str) -> tuple[Callable[[usb1.USBDevice], bool], int] | None:
+    if re.fullmatch(r"\d+", spec):
+        return is_bluetooth_usb, int(spec)
+    if re.fullmatch(r"\d+-\d+(?:\.\d+)*", spec):
+        def matches_port(device):
+            ports = ".".join(map(str, device.getPortNumberList()))
+            return spec == f"{device.getBusNumber()}-{ports}"
+
+        return matches_port, 0
+    match = re.fullmatch(r"([0-9a-fA-F]+):([0-9a-fA-F]+)(?:/([\w-]+)|#(\d+))?", spec)
+    if match is None:
+        return None
+    vendor, product = int(match[1], 16), int(match[2], 16)
+    serial = match[3]
+
+    def matches_id(device):
+        if (device.getVendorID(), device.getProductID()) != (vendor, product):
+            return False
+        if serial is None:
+            return True
+        try:
+            return device.getSerialNumber() == serial
+        except usb1.USBError:
+            return False
+
+    return matches_id, int(match[4] or 0)
+
+
+def _open_usb_device(matches: Callable[[usb1.USBDevice], bool], index: int):
+    """Return a configured native handle without creating asyncio packet tasks."""
+    load_libusb()
+    context = usb1.USBContext()
+    try:
+        context.open()
+        for device in context.getDeviceIterator(skip_on_error=True):
+            if matches(device):
+                if index == 0:
+                    break
+                index -= 1
+            device.close()
+        else:
+            raise TransportInitError("device not found")
+
+        endpoints = find_endpoints(device, forced_mode=False)
+        if endpoints is None:
+            raise TransportInitError("no compatible interface found for device")
+        metadata = {"vendor_id": device.getVendorID(), "product_id": device.getProductID()}
+        handle = device.open()
+        if usb1.hasCapability(usb1.CAP_SUPPORTS_DETACH_KERNEL_DRIVER):
+            try:
+                handle.setAutoDetachKernelDriver(True)
+            except usb1.USBError as error:
+                logger.warning("Unable to auto-detach USB kernel driver: %s", error)
+        try:
+            current_configuration = handle.getConfiguration()
+        except usb1.USBError:
+            current_configuration = None
+        if current_configuration != endpoints[0]:
+            try:
+                handle.setConfiguration(endpoints[0])
+            except usb1.USBError as error:
+                logger.warning("Unable to configure the USB device: %s", error)
+        return context, handle, metadata, endpoints
+    except BaseException:
+        context.close()
+        raise
+
+
+async def open_transport(spec: str):
+    if sys.platform != "win32" or not spec.startswith("usb:"):
+        return await open_bumble_transport(spec)
+    selector = _usb_selector(spec[4:])
+    if selector is None:
+        return await open_bumble_transport(spec)
+
+    cancelled = Event()
+
+    def open_device():
+        # Serial lookups may briefly open the same WinUSB device.
+        with _usb_open_lock:
+            if cancelled.is_set():
+                return None
+            return _open_usb_device(*selector)
+
+    opening = asyncio.create_task(asyncio.to_thread(open_device))
+    try:
+        context, handle, metadata, endpoints = await asyncio.shield(opening)
+    except asyncio.CancelledError:
+        # The worker may still return a libusb handle after shutdown starts.
+        cancelled.set()
+        result, = await asyncio.gather(opening, return_exceptions=True)
+        if result is not None and not isinstance(result, BaseException):
+            await asyncio.to_thread(result[0].close)
+        raise
+
+    _, acl, sco, interrupt_in, bulk_in, iso_in, bulk_out, iso_out = endpoints
+    try:
+        source = UsbPacketSource(handle, metadata, interrupt_in, bulk_in, iso_in)
+        sink = UsbPacketSink(handle, bulk_out, iso_out)
+        return _wrap_transport(UsbTransport(context, handle, acl, sco, source, sink))
+    except BaseException:
+        context.close()
+        raise
 
 
 class WindowsUsbHost(Host):

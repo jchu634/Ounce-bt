@@ -776,8 +776,9 @@ def test_debug_status_includes_switch_name_and_address(fx):
 
 
 @pytest.mark.parametrize("target", [True, "adapter-2"])
+@pytest.mark.parametrize("profiled", [False, True])
 def test_debug_regenerates_only_the_target_adapter(
-    fx, monkeypatch, target, tmp_path
+    fx, monkeypatch, target, tmp_path, profiled
 ):
     import asyncio
     from types import SimpleNamespace
@@ -794,6 +795,10 @@ def test_debug_regenerates_only_the_target_adapter(
     })
     primary = AdapterSession("primary", "usb:0", fx.command_queue, None)
     secondary = AdapterSession("adapter-2", "usb:1", queue.Queue(), None)
+    if profiled:
+        primary.profile_index = 0
+        secondary.profile_index = 1
+        profiles = fx.config_store.ensure_adapter_profiles([primary.transport, secondary.transport])
     for slot, bd_address, peer in (
         (primary, primary_address, first_switch),
         (secondary, "02:12:34:56:78:9A", second_switch),
@@ -833,6 +838,15 @@ def test_debug_regenerates_only_the_target_adapter(
         assert client.post("/api/debug", json={"regenerate_address": target}).status_code == 200
         saved = Config.load()
         assert saved.switch_device_names == names
+        if profiled:
+            index = 0 if target is True else 1
+            changed, unchanged = (primary, secondary) if index == 0 else (secondary, primary)
+            changed.bluetooth.device.keystore.delete_all.assert_awaited_once()
+            unchanged.bluetooth.device.keystore.delete_all.assert_not_awaited()
+            assert saved.adapter_profiles[index].address != profiles[index].address
+            assert saved.adapter_profiles[1 - index] == profiles[1 - index]
+            assert saved.adapter_addresses == {}
+            return
         if target is True:
             primary.bluetooth.device.keystore.delete_all.assert_awaited_once()
             secondary.bluetooth.device.keystore.delete_all.assert_not_awaited()
@@ -856,9 +870,8 @@ def test_debug_regenerates_only_the_target_adapter(
             assert address != second["bd_address"]
             (tmp_path / CONFIG_NAME).write_bytes(CONFIG_HEADER + bytes(6))
             (tmp_path / FIRMWARE_NAME).write_bytes(b"firmware")
-            stage_adapter_firmware(
-                secondary, primary_address, tmp_path, tmp_path, address_override=address
-            )
+            secondary.expected_address = address
+            stage_adapter_firmware(secondary, tmp_path, tmp_path)
             assert secondary.expected_address == address
             assert (tmp_path / secondary.id / CONFIG_NAME).read_bytes() == (
                 CONFIG_HEADER + bytes.fromhex(address.replace(":", ""))[::-1]

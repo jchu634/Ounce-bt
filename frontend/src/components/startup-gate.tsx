@@ -1,3 +1,4 @@
+import { SpinnerGapIcon } from "@phosphor-icons/react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Button } from "@/src/components/ui/button";
 import { configureWebSocketAuth, desktopApi } from "@/src/lib/desktop";
@@ -17,8 +18,22 @@ type StartupState =
   | { kind: "bluetooth_error"; message: string }
   | { kind: "usb_driver_error" };
 
+function startupMessage(phase: unknown): string {
+  switch (phase) {
+    case "discovering_adapters":
+      return "Looking for Bluetooth adapters…";
+    case "checking_firmware":
+      return "Checking Bluetooth firmware…";
+    case "starting_adapters":
+      return "Initializing Bluetooth adapters…";
+    default:
+      return "Preparing Bluetooth…";
+  }
+}
+
 export function StartupGate({ children }: { children: ReactNode }) {
   const [state, setState] = useState<StartupState>({ kind: "loading" });
+  const [pendingMessage, setPendingMessage] = useState("Starting Ounce-bt…");
   const [closing, setClosing] = useState(false);
   const [closed, setClosed] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,6 +56,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
         }
         configureWebSocketAuth(body.ws_auth_required);
         if (body.kind === "checking") {
+          setPendingMessage(startupMessage("phase" in body ? body.phase : undefined));
           retry = setTimeout(() => void check(), 250);
         } else if (body.kind === "ready") {
           setState({ kind: "ready" });
@@ -98,8 +114,9 @@ export function StartupGate({ children }: { children: ReactNode }) {
   if (state.kind === "ready") return children;
   if (state.kind === "loading") {
     return (
-      <p role="status" className="p-6">
-        {error ?? "Checking application files…"}
+      <p role="status" className="flex items-center gap-2 p-6">
+        <SpinnerGapIcon aria-hidden className="size-5 shrink-0 motion-safe:animate-spin" />
+        {error ?? pendingMessage}
       </p>
     );
   }

@@ -8,7 +8,6 @@ import sys
 import tempfile
 from collections.abc import Callable
 from contextlib import nullcontext
-from hashlib import sha256
 from pathlib import Path
 from time import perf_counter
 
@@ -22,14 +21,14 @@ from bumble.hci import (
 from bumble.keys import JsonKeyStore
 from bumble.l2cap import ClassicChannelSpec
 from bumble.pairing import PairingConfig, PairingDelegate
-from bumble.transport import open_transport
+from starlette.applications import Starlette
 
 from app.bluetooth import AdapterSession
 from app.input.controller_service import ControllerService
 from app.input.macro_source import MacroPlayerThread
 from app.input.manager import InputManager
 from app.server import build_app
-from lib.bluetooth_transport import WindowsUsbDevice, prepare_hci_socket
+from lib.bluetooth_transport import WindowsUsbDevice, open_transport, prepare_hci_socket
 from lib.config import (
     Config,
     ConfigStore,
@@ -44,7 +43,6 @@ from lib.firmware import (
     FIRMWARE_NAME,
     missing_firmware,
     patch_address,
-    prepare_bluetooth,
 )
 from lib.input import NEUTRAL, apply_to_protocol, parse_rumble
 from lib.input import presets as presets_module
@@ -358,7 +356,11 @@ def make_l2cap_handler(psm, state):
 
 
 async def serve_web(
-    app, host: str, port: int, stop_event: asyncio.Event | None = None, ready=None
+    app,
+    host: str,
+    port: int,
+    stop_event: asyncio.Event | None = None,
+    on_started: Callable[[], None] | None = None,
 ) -> None:
     """Ask Uvicorn to finish in-flight requests before closing the server."""
     config = uvicorn.Config(
@@ -375,12 +377,14 @@ async def serve_web(
         await stop_event.wait()
         server.should_exit = True
 
-    async def report_ready():
+    async def report_ready(callback: Callable[[], None]):
         while not server.started:
             await asyncio.sleep(0.01)
-        ready.set()
+        callback()
 
-    ready_task = asyncio.create_task(report_ready()) if ready is not None else None
+    ready_task = (
+        asyncio.create_task(report_ready(on_started)) if on_started is not None else None
+    )
     stop_task = asyncio.create_task(stop_when_requested()) if stop_event else None
     server_task = asyncio.create_task(server.serve())
     try:
@@ -537,9 +541,74 @@ async def main(
     logger.info(f"Config path: {config_path()}")
     logger.info(f"Config: {config_store.snapshot()}")
 
+    command_queue: queue.Queue[ControllerState] = queue.Queue()
+    manager = InputManager(
+        command_queue,
+        config.resolve_folder(config.macros_dir),
+        macro_rate_hz=config.macro_rate_hz,
+    )
+    manager.bind_loop(asyncio.get_running_loop())
+    presets_module.PRESETS_DIR = config.resolve_folder(config.presets_dir)
+
+    if not config.web_enabled:
+        try:
+            await run_bluetooth(config_store, args, manager)
+        finally:
+            manager.shutdown()
+        return
+
+    stop_event = shutdown_event or asyncio.Event()
+    app = build_app(
+        manager,
+        config_store,
+        application_dir() / "frontend" / "dist",
+        shutdown_event=stop_event,
+        ws_token=ws_token,
+        restart_callback=restart_callback,
+    )
+    app.state.startup_phase = "preparing_bluetooth"
+    web_started = asyncio.Event()
+
+    def on_started():
+        if ready is not None:
+            ready.set()
+        web_started.set()
+
+    async def start_bluetooth():
+        await web_started.wait()
+        if stop_event.is_set():
+            return
+        try:
+            await run_bluetooth(config_store, args, manager, app)
+        except Exception as error:
+            logger.exception("Bluetooth startup failed")
+            app.state.bluetooth_error = f"Could not initialize Bluetooth: {error}"
+            app.state.startup_phase = None
+
+    bluetooth_task = asyncio.create_task(start_bluetooth())
+    try:
+        await serve_web(
+            app, config.web_host, config.web_port, stop_event, on_started=on_started
+        )
+    finally:
+        bluetooth_task.cancel()
+        await asyncio.gather(bluetooth_task, return_exceptions=True)
+        manager.shutdown()
+
+
+async def run_bluetooth(
+    config_store: ConfigStore,
+    args: argparse.Namespace,
+    manager: InputManager,
+    app: Starlette | None = None,
+) -> None:
+    config = config_store.config
+    command_queue = manager.command_queue
     transports = [config.transport_spec, *getattr(args, "adapter", ())]
     discovery_error = None
     if getattr(args, "auto_adapters", False):
+        if app is not None:
+            app.state.startup_phase = "discovering_adapters"
         try:
             detected = await asyncio.to_thread(discover_winusb_adapters)
         except Exception as error:
@@ -555,65 +624,46 @@ async def main(
                     "Connect a dedicated Bluetooth adapter configured with the WinUSB driver."
                 )
 
-    # Shared, thread-safe command queue. Input-source threads are producers;
-    # the asyncio main loop is the consumer. The InputManager arbitrates
-    # between physical / WebSocket input and macro playback.
-    command_queue: queue.Queue[ControllerState] = queue.Queue()
-    project_root = application_dir()
-    macros_dir = config.resolve_folder(config.macros_dir)
-    presets_module.PRESETS_DIR = config.resolve_folder(config.presets_dir)
-    manager = InputManager(
-        command_queue,
-        macros_dir,
-        macro_rate_hz=config.macro_rate_hz,
-        adapter_id="primary" if len(transports) > 1 else None,
-    )
-    manager.bind_loop(asyncio.get_running_loop())
-
     firmware_root = config.bluetooth_firmware_dir
     # Linux uses the adapter's existing firmware and public address. Legacy
     # realtek_firmware config keys are ignored by Config.load.
     patch_firmware = sys.platform == "win32"
-    firmware = missing_firmware(firmware_root) if patch_firmware else None
+    if app is not None and patch_firmware:
+        app.state.startup_phase = "checking_firmware"
+    firmware = (
+        await asyncio.to_thread(missing_firmware, firmware_root) if patch_firmware else None
+    )
+    if app is not None and app.state.shutdown_event.is_set():
+        return
     if firmware:
         message = f"Missing required Bluetooth file: {firmware_root / firmware}. Bluetooth files are not distributed with this application."
         logger.error(message)
-        if not config.web_enabled:
+        if app is None:
             raise SystemExit(message)
-        stop_event = shutdown_event or asyncio.Event()
-        app = build_app(
-            manager,
-            config_store,
-            project_root / "frontend" / "dist",
-            missing_firmware=str(firmware_root / firmware),
-            shutdown_event=stop_event,
-            ws_token=ws_token,
-            restart_callback=restart_callback,
-        )
-        try:
-            await serve_web(
-                app, config.web_host, config.web_port, stop_event, ready=ready
-            )
-        finally:
-            manager.shutdown()
+        app.state.missing_firmware = str(firmware_root / firmware)
+        app.state.startup_phase = None
         return
 
-    primary_override = config.adapter_addresses.get(transports[0].casefold())
-    if patch_firmware:
-        if primary_override:
-            prepare_bluetooth(config, firmware_root, address_override=primary_override)
-        else:
-            prepare_bluetooth(config, firmware_root)
+    if discovery_error:
+        if app is None:
+            raise RuntimeError(discovery_error)
+        app.state.bluetooth_error = discovery_error
+        app.state.startup_phase = None
+        return
+
+    explicit_address = getattr(args, "bt_address", None)
+    profiles = config_store.ensure_adapter_profiles(transports, persist=not explicit_address)
+    primary_preset_name = args.preset or profiles[0].preset or config.preset
 
     # Load the configured preset as the initial fallback. Once pygame selects
     # a controller, its saved GUID mapping or detected controller type replaces
     # this value. An explicit --preset keeps its session-wide override behavior.
     try:
-        preset = load_preset(config.preset)
+        preset = load_preset(primary_preset_name)
     except (FileNotFoundError, ValueError, TypeError) as e:
-        logger.warning(f"Could not load preset {config.preset!r}: {e}; using defaults")
+        logger.warning(f"Could not load preset {primary_preset_name!r}: {e}; using defaults")
         preset = PresetConfig.default()
-    manager.set_preset(preset, config.preset)
+    manager.set_preset(preset, primary_preset_name)
     logger.info(
         f"Controller preset: {preset.name} "
         f"(rumble {'on' if preset.rumble_enabled else 'off'})"
@@ -625,7 +675,7 @@ async def main(
     controllers_enabled, controller_index = controller_spec_info(config.input_specs)
     controller_service: ControllerService | None = None
     if controllers_enabled:
-        initial_ident = config.controller_guid or controller_index
+        initial_ident = profiles[0].controller_guid or controller_index
         if args.preset is not None:
 
             def preset_resolver(_guid: str, _name: str) -> PresetSelection:
@@ -639,6 +689,14 @@ async def main(
                     config_store.config.controller_presets,
                 )
 
+        profile_indices = {
+            "primary" if index == 0 else f"adapter-{index + 1}": index
+            for index in range(len(profiles))
+        }
+
+        def save_assignment(session_id: str, guid: str) -> None:
+            config_store.update_adapter_profile(profile_indices[session_id], controller_guid=guid)
+
         controller_service = ControllerService(
             command_queue,
             preset=preset,
@@ -646,6 +704,12 @@ async def main(
             on_change=manager.on_controllers_changed,
             preset_resolver=preset_resolver,
             on_preset_changed=manager.on_controller_preset_changed,
+            saved_assignments={
+                session_id: profiles[index].controller_guid
+                for session_id, index in profile_indices.items()
+            } if app is not None else None,
+            on_assignment=save_assignment,
+            primary_preset_override=bool(profiles[0].preset),
         )
         manager.set_controller_service(controller_service)
 
@@ -654,19 +718,23 @@ async def main(
         input_threads.append(controller_service)
     manager.attach_pygame_threads(input_threads)
 
+    manager.adapter_id = "primary" if len(transports) > 1 else None
     primary = AdapterSession(
         "primary",
         transports[0],
         command_queue,
         controller_service,
-        expected_address=(primary_override or config.bt_address) if patch_firmware else None,
+        expected_address=(explicit_address or profiles[0].address) if patch_firmware else None,
         input_manager=manager,
+        profile_index=0,
+        legacy_keystore=profiles[0].legacy_keystore,
     )
     sessions = {primary.id: primary}
     for index, spec in enumerate(transports[1:], 2):
         session_id = f"adapter-{index}"
         route = controller_service.add_route(session_id, config.preset) if controller_service else None
-        if route and (saved_preset := config.adapter_presets.get(spec.casefold())):
+        profile = profiles[index - 1]
+        if route and (saved_preset := profile.preset):
             try:
                 route.preset = load_preset(saved_preset)
             except (FileNotFoundError, ValueError, TypeError):
@@ -676,36 +744,36 @@ async def main(
                 route.preset_override = PresetSelection(saved_preset, route.preset)
         input_queue = route.input_queue if route else queue.Queue()
         adapter_input = InputManager(
-            input_queue, macros_dir, config.macro_rate_hz, adapter_id=session_id,
+            input_queue, manager.macros_dir, config.macro_rate_hz, adapter_id=session_id,
             pause_capture=route.pause if route else None,
             resume_capture=route.resume if route else None,
         )
         adapter_input.bind_loop(asyncio.get_running_loop())
         sessions[session_id] = AdapterSession(
-            session_id, spec, input_queue, route, input_manager=adapter_input
+            session_id, spec, input_queue, route,
+            expected_address=profile.address if patch_firmware else None,
+            input_manager=adapter_input,
+            profile_index=index - 1,
+            legacy_keystore=profile.legacy_keystore,
         )
 
-    stop_event = shutdown_event or asyncio.Event()
-    app = None
+    if app is not None:
+        app.state.bluetooth = primary.bluetooth
+        app.state.adapter_sessions = sessions
+        app.state.startup_phase = "starting_adapters"
+
     power_lock = asyncio.Lock()
     addresses = set()
 
     def adapter_ready(session):
         if app is not None:
-            app.state.transport_pending = False
+            app.state.startup_phase = None
         if session.primary:
             for thread in input_threads:
                 if thread is not controller_service:
                     thread.start()
 
     async def supervise(session, firmware_dir):
-        if discovery_error:
-            if app is None:
-                raise RuntimeError(discovery_error)
-            app.state.bluetooth_error = session.error = discovery_error
-            app.state.transport_pending = False
-            return
-
         def vibration_allowed():
             controller = session.controller
             selected = (
@@ -721,16 +789,8 @@ async def main(
             )
 
         try:
-            if patch_firmware and not session.primary:
-                stage_adapter_firmware(
-                    session,
-                    config.adapter_address_seed or config.bt_address,
-                    firmware_root,
-                    firmware_dir,
-                    address_override=config.adapter_addresses.get(
-                        session.transport.casefold()
-                    ),
-                )
+            if patch_firmware:
+                stage_adapter_firmware(session, firmware_root, firmware_dir)
             await run_adapter(
                 session,
                 config_store,
@@ -755,12 +815,12 @@ async def main(
                 else:
                     app.state.bluetooth_error = session.error
             if all(item.error for item in sessions.values()):
-                app.state.transport_pending = False
+                app.state.startup_phase = None
 
     tasks = []
     firmware_workspace = (
         tempfile.TemporaryDirectory(prefix="ounce-bt-firmware-")
-        if patch_firmware and len(sessions) > 1
+        if patch_firmware
         else nullcontext()
     )
     with firmware_workspace as tmp:
@@ -771,50 +831,29 @@ async def main(
                 asyncio.create_task(supervise(session, Path(tmp) if tmp else None))
                 for session in sessions.values()
             ]
-            if config.web_enabled:
-                app = build_app(
-                    manager,
-                    config_store,
-                    project_root / "frontend" / "dist",
-                    bluetooth=primary.bluetooth,
-                    adapter_sessions=sessions,
-                    shutdown_event=stop_event,
-                    ws_token=ws_token,
-                    restart_callback=restart_callback,
-                )
-                app.state.transport_pending = True
-                await serve_web(
-                    app, config.web_host, config.web_port, stop_event, ready=ready
-                )
+            if app is not None:
+                # Keep controller input available until the web server stops.
+                await asyncio.Future()
             else:
                 await tasks[0]
         finally:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
-            manager.shutdown()
             for session in sessions.values():
                 if not session.primary and session.input_manager:
                     session.input_manager.shutdown()
-            if controller_service is not None:
+            if controller_service is not None and controller_service.ident is not None:
+                controller_service.stop()
                 await asyncio.to_thread(controller_service.join, 3)
 
 
 def stage_adapter_firmware(
     session: AdapterSession,
-    address_seed: str,
     source: Path,
     workspace: Path,
-    *,
-    address_override: str | None = None,
 ) -> None:
-    # Keeping the selector and seed preserves the Switch bond.
-    suffix = sha256(f"{address_seed.upper()}/{session.transport}".encode()).digest()[
-        :5
-    ]
-    session.expected_address = address_override or ":".join(
-        f"{byte:02X}" for byte in bytes([2]) + suffix
-    )
+    assert session.expected_address is not None
     session.firmware_dir = workspace / session.id
     session.firmware_dir.mkdir()
     shutil.copyfile(source / FIRMWARE_NAME, session.firmware_dir / FIRMWARE_NAME)
@@ -968,7 +1007,9 @@ async def run_powered_adapter(
     bluetooth = session.bluetooth
     command_queue = session.input_queue
     controller_service = session.controller
-    if config.pairing_dir or not session.primary:
+    if config.pairing_dir or (
+        not session.legacy_keystore and (session.expected_address is not None or not session.primary)
+    ):
         pairing_dir = (
             config.resolve_folder(config.pairing_dir)
             if config.pairing_dir
@@ -1031,7 +1072,12 @@ async def run_powered_adapter(
             protocol = ControllerProtocol(
                 ControllerTypes.PRO_CONTROLLER, str(device.public_address)
             )
-            protocol.set_colours(**config.colours_for_adapter(session.transport, primary=session.primary))
+            colours = (
+                config.adapter_profiles[session.profile_index].colours
+                if session.profile_index is not None
+                else config.colours_for_adapter(session.transport, primary=session.primary)
+            )
+            protocol.set_colours(**colours)
 
             try:
                 if not await run_until_disconnected(

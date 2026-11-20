@@ -128,7 +128,8 @@ def test_startup_pairing_requires_ui_action_unless_headless(
         async def transport():
             yield SimpleNamespace(source=None, sink=None)
 
-        async def serve(*args, **kwargs):
+        async def serve(*args, on_started):
+            on_started()
             await asyncio.Future()
 
         monkeypatch.setattr(
@@ -141,7 +142,8 @@ def test_startup_pairing_requires_ui_action_unless_headless(
         )
         monkeypatch.setattr(application, "missing_firmware", lambda _: None)
         prepare = Mock()
-        monkeypatch.setattr(application, "prepare_bluetooth", prepare)
+        monkeypatch.setattr(application, "stage_adapter_firmware", prepare)
+        monkeypatch.setattr(application.Config, "save", lambda self: None)
         monkeypatch.setattr(application, "serve_web", serve)
         monkeypatch.setattr(
             application, "open_transport", AsyncMock(return_value=transport())

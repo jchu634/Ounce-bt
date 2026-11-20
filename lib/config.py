@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import secrets
 import sys
 import threading
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
+from hashlib import sha256
 from pathlib import Path
 
 from lib.colours import DEFAULT_CONTROLLER_COLOURS, normalize_controller_colours
@@ -109,6 +111,57 @@ def normalize_controller_vibration(value: object) -> dict[str, bool]:
     return {key.strip().casefold(): enabled for key, enabled in value.items()}
 
 
+@dataclass(frozen=True)
+class AdapterProfile:
+    address: str
+    controller_guid: str = ""
+    preset: str = ""
+    colours: dict[str, str] = field(default_factory=dict)
+    legacy_keystore: bool = False
+
+
+def new_profile_address(used: set[str]) -> str:
+    while True:
+        address = ":".join(f"{byte:02X}" for byte in b"\x02" + secrets.token_bytes(5))
+        if address not in used:
+            return address
+
+
+def _valid_profile_address(address: object) -> bool:
+    if not isinstance(address, str):
+        return False
+    parts = address.upper().split(":")
+    return len(parts) == 6 and all(
+        len(part) == 2 and all(c in "0123456789ABCDEF" for c in part) for part in parts
+    )
+
+
+def _adapter_profiles(value: object) -> list[AdapterProfile]:
+    if not isinstance(value, list):
+        raise TypeError("adapter_profiles must be an array")
+    profiles = []
+    addresses = set()
+    for entry in value:
+        if isinstance(entry, AdapterProfile):
+            profile = entry
+        elif isinstance(entry, dict):
+            profile = AdapterProfile(**entry)
+        else:
+            raise TypeError("each adapter profile must be an object")
+        if not _valid_profile_address(profile.address) or profile.address.upper() in addresses:
+            raise ValueError("adapter profiles must have distinct Bluetooth addresses")
+        address = profile.address.upper()
+        if not isinstance(profile.controller_guid, str) or not isinstance(profile.preset, str):
+            raise TypeError("adapter profile controller and preset must be strings")
+        if not isinstance(profile.legacy_keystore, bool):
+            raise TypeError("adapter profile legacy_keystore must be a boolean")
+        addresses.add(address)
+        profiles.append(replace(
+            profile, address=address, colours=normalize_controller_colours(profile.colours)
+        ))
+    return profiles
+
+
 @dataclass
 class Config:
     """Runtime configuration. Add new fields here; defaults are picked up
@@ -121,6 +174,7 @@ class Config:
     bt_address: str = ""
     adapter_address_seed: str = ""
     adapter_addresses: dict[str, str] = field(default_factory=dict)
+    adapter_profiles: list[AdapterProfile] = field(default_factory=list)
     transport_spec: str = "usb:0"
     firmware_dir: str | None = None
     device_config: str = "pro_controller.json"
@@ -153,6 +207,7 @@ class Config:
         self.adapter_colours = _normalize_adapter_colours(self.adapter_colours)
         self.adapter_presets = _normalize_controller_presets(self.adapter_presets)
         self.adapter_addresses = _normalize_controller_presets(self.adapter_addresses)
+        self.adapter_profiles = _adapter_profiles(self.adapter_profiles)
         self.switch_device_names = normalize_device_names(self.switch_device_names)
 
     @property
@@ -212,6 +267,7 @@ class Config:
         for key, normalize in (
             ("controller_colours", normalize_controller_colours),
             ("adapter_colours", _normalize_adapter_colours),
+            ("adapter_profiles", _adapter_profiles),
             ("controller_vibration", normalize_controller_vibration),
             ("switch_device_names", normalize_device_names),
         ):
@@ -265,6 +321,64 @@ class ConfigStore:
     def snapshot(self) -> dict:
         with self._lock:
             return self._config.to_dict()
+
+    def ensure_adapter_profiles(
+        self, transports: list[str], *, persist: bool = True
+    ) -> list[AdapterProfile]:
+        """Bind the active list to existing slots, importing legacy identities once."""
+        with self._lock:
+            config = self._config
+            profiles = list(config.adapter_profiles)
+            migrating = not profiles
+            used = {profile.address for profile in profiles}
+            for index in range(len(profiles), len(transports)):
+                transport = transports[index]
+                key = transport.casefold()
+                address = config.adapter_addresses.get(key, "") if migrating else ""
+                if migrating and not address:
+                    if index == 0:
+                        address = config.bt_address
+                    elif seed := config.adapter_address_seed or config.bt_address:
+                        suffix = sha256(f"{seed.upper()}/{transport}".encode()).digest()[:5]
+                        address = ":".join(f"{byte:02X}" for byte in b"\x02" + suffix)
+                address = address.upper()
+                legacy_keystore = bool(migrating and index == 0 and address)
+                if not _valid_profile_address(address) or address in used:
+                    address = new_profile_address(used)
+                    legacy_keystore = False
+                used.add(address)
+                colours = (
+                    config.colours_for_adapter(transport, primary=index == 0)
+                    if migrating else dict(DEFAULT_CONTROLLER_COLOURS)
+                )
+                profiles.append(AdapterProfile(
+                    address,
+                    controller_guid=config.controller_guid if migrating and index == 0 else "",
+                    preset=config.adapter_presets.get(key, "") if migrating and index > 0 else "",
+                    colours=colours,
+                    legacy_keystore=legacy_keystore,
+                ))
+            if profiles != config.adapter_profiles:
+                self._save_adapter_profiles(profiles, persist=persist)
+            return profiles[:len(transports)]
+
+    def update_adapter_profile(self, index: int, **changes) -> None:
+        with self._lock:
+            profiles = list(self._config.adapter_profiles)
+            updated = replace(profiles[index], **changes)
+            if updated != profiles[index]:
+                profiles[index] = updated
+                self._save_adapter_profiles(profiles)
+
+    def _save_adapter_profiles(self, profiles: list[AdapterProfile], *, persist: bool = True) -> None:
+        previous = self._config.adapter_profiles
+        self._config.adapter_profiles = profiles
+        if persist:
+            try:
+                self._config.save()
+            except OSError:
+                self._config.adapter_profiles = previous
+                raise
 
     def update(self, changes: dict) -> dict:
         """Apply a partial update and persist. Returns the actually-changed

@@ -59,7 +59,7 @@ def discover_winusb_adapters() -> list[str]:
     radios = []
     with usb1.USBContext() as context:
         for device in context.getDeviceIterator(skip_on_error=True):
-            if not _is_bluetooth(device):
+            if not is_bluetooth_usb(device):
                 continue
             try:
                 serial = device.getSerialNumber()
@@ -77,7 +77,7 @@ def discover_winusb_adapters() -> list[str]:
     return _transport_specs(radios, locations)
 
 
-def _is_bluetooth(device: usb1.USBDevice) -> bool:
+def is_bluetooth_usb(device: usb1.USBDevice) -> bool:
     device_class = device.getDeviceClass()
     if (
         device_class,

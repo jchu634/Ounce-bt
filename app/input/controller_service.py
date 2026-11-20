@@ -190,6 +190,9 @@ class ControllerService(threading.Thread):
         preset_resolver: Callable[[str, str], PresetSelection] | None = None,
         on_preset_changed: Callable[[PresetSelection], None] | None = None,
         rate_hz: int = 120,
+        saved_assignments: dict[str, str] | None = None,
+        on_assignment: Callable[[str, str], None] | None = None,
+        primary_preset_override: bool = False,
     ):
         super().__init__(name="controller-service", daemon=True)
         self._queue = command_queue
@@ -207,6 +210,9 @@ class ControllerService(threading.Thread):
         self._active_guid: str | None = None
         self._active_controller: ControllerInfo | None = None
         self._auto_select_primary = True
+        self._saved_assignments = saved_assignments
+        self._on_assignment = on_assignment
+        self._primary_preset_override = primary_preset_override
         self._routes: dict[str, ControllerRoute] = {}
         self._capture: PygameInputThread | None = None
         # Mirrors the manager's macro pause state so threads created while
@@ -312,7 +318,10 @@ class ControllerService(threading.Thread):
             if self._pyg_ok:
                 self._refresh_controllers()
                 selected = False
-                if self._initial_ident is not None:
+                if self._saved_assignments is not None:
+                    self._restore_assignments()
+                    selected = True
+                elif self._initial_ident is not None:
                     try:
                         self._do_select(self._initial_ident)
                         selected = True
@@ -362,7 +371,9 @@ class ControllerService(threading.Thread):
                 )
             elif op == "select":
                 try:
-                    fut.set_result(self._do_select(payload))
+                    match = self._do_select(payload)
+                    self._remember_assignment("primary", match)
+                    fut.set_result(match)
                 except ValueError as e:
                     fut.set_result(e)
             elif op == "set_preset":
@@ -371,6 +382,7 @@ class ControllerService(threading.Thread):
                     if self._captures_paused:
                         raise ValueError("Cannot change presets while a macro is active")
                     self._do_set_preset(preset, source)
+                    self._primary_preset_override = self._saved_assignments is not None
                 else:
                     route = self._routes[session_id]
                     if route.paused:
@@ -381,7 +393,11 @@ class ControllerService(threading.Thread):
                     self._start_route(route, route.controller)
                 fut.set_result(None)
             elif op == "assign":
-                fut.set_result(self._assign(*payload))
+                session_id, instance_id = payload
+                self._assign(session_id, instance_id)
+                match = self._active_controller if session_id == "primary" else self._routes[session_id].controller
+                self._remember_assignment(session_id, match)
+                fut.set_result(None)
             elif op == "shutdown":
                 self._stop_event.set()
                 fut.set_result(None)
@@ -504,7 +520,9 @@ class ControllerService(threading.Thread):
             self._active_guid = None
             self._active_controller = None
 
-        if self._active_guid is None and self._auto_select_primary:
+        if self._saved_assignments is not None:
+            self._restore_assignments()
+        if self._saved_assignments is None and self._active_guid is None and self._auto_select_primary:
             assigned = {route.controller for route in self._routes.values()}
             candidate = next((pad for pad in self._controllers if pad not in assigned), None)
         else:
@@ -519,6 +537,28 @@ class ControllerService(threading.Thread):
         if changed or self._active_guid != previous_guid:
             self._notify()
 
+    def _remember_assignment(self, session_id: str, match: ControllerInfo | None) -> None:
+        if self._saved_assignments is None:
+            return
+        guid = match.guid if match else ""
+        if self._on_assignment is not None:
+            self._on_assignment(session_id, guid)
+        self._saved_assignments[session_id] = guid
+
+    def _restore_assignments(self) -> None:
+        for session_id, guid in self._saved_assignments.items():
+            active = self._active_controller if session_id == "primary" else self._routes[session_id].controller
+            if not guid or active is not None:
+                continue
+            assigned = {self._active_controller, *(route.controller for route in self._routes.values())}
+            matches = [pad for pad in self._controllers if pad.guid == guid and pad not in assigned]
+            if len(matches) == 1 and matches[0].instance_id is not None:
+                try:
+                    self._assign(session_id, matches[0].instance_id)
+                except ValueError:
+                    # A paused route can reject assignment while a macro owns it.
+                    continue
+
     def _do_select(self, ident: str | int) -> ControllerInfo:
         match = resolve_controller(ident, self._controllers)
         if match is None:
@@ -531,7 +571,7 @@ class ControllerService(threading.Thread):
         self._stop_capture()
         if self._routes and not self._captures_paused:
             self._clear_primary_input()
-        if self._preset_resolver is not None:
+        if self._preset_resolver is not None and not self._primary_preset_override:
             selection = self._preset_resolver(match.guid, match.name)
             self._preset = selection.config
             self._report_preset(selection)

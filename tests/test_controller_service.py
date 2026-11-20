@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import queue
+from concurrent.futures import Future
+from unittest.mock import Mock
 
 import pygame
 import pytest
@@ -127,6 +129,36 @@ def test_identical_controllers_keep_independent_routes_after_hotplug(monkeypatch
     assert route.controller.index == 0
     service._assign("adapter-2", None)
     assert route.input_queue.get_nowait() == NEUTRAL
+
+
+def test_profile_controller_restore_requires_an_available_unambiguous_match(monkeypatch):
+    saved = Mock()
+    service = ControllerService(
+        queue.Queue(),
+        saved_assignments={"primary": "missing", "adapter-2": "shared"},
+        on_assignment=saved,
+    )
+    route = service.add_route("adapter-2")
+    first = ControllerInfo("shared", 0, "Pad", 4, 10, 1, instance_id=10)
+    second = ControllerInfo("shared", 1, "Pad", 4, 10, 1, instance_id=11)
+    service._controllers = [first, second]
+    monkeypatch.setattr("app.input.controller_service.PygameInputThread", Mock())
+
+    service._restore_assignments()
+    assert service.active_guid is None
+    assert route.controller is None
+
+    service._controllers = [second]
+    service._restore_assignments()
+    assert route.controller == second
+    saved.assert_not_called()
+
+    assigned = Future()
+    service._handle("assign", ("adapter-2", None), assigned)
+    assert assigned.result() is None
+    saved.assert_called_once_with("adapter-2", "")
+    service._restore_assignments()
+    assert route.controller is None
 
 
 def test_poll_without_hotplug_does_not_reprobe_active_joystick(monkeypatch):
