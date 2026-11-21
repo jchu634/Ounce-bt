@@ -477,7 +477,12 @@ function ConnectionCard({
         />
       )}
       <div className="relative z-10 self-center">
-        <ControllerColoursDialog adapterId={adapter?.id} />
+        <ControllerColoursDialog
+          key={controllerType}
+          adapterId={adapter?.id}
+          variant={adapter?.controller_type}
+          upright={combined}
+        />
         {!!status?.player_number && (
           <p className="pointer-events-none text-center text-xs text-muted-foreground">
             Player {status.player_number}

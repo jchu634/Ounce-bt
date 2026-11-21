@@ -141,10 +141,14 @@ export async function requestAdapters(change?: AdapterChange): Promise<AdapterIn
   };
 }
 
-export async function requestAdapterColours(adapterId: string, colours?: Record<string, string>) {
+export async function requestAdapterColours(
+  adapterId: string,
+  colours?: Record<string, string>,
+  variant?: BluetoothControllerType,
+) {
   const body = await readResponse(
     await fetch(
-      `/api/adapters/${encodeURIComponent(adapterId)}/colours`,
+      `/api/adapters/${encodeURIComponent(adapterId)}/colours${variant ? `?controller_type=${variant}` : ""}`,
       colours
         ? {
             method: "PATCH",

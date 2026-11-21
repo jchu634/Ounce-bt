@@ -331,7 +331,7 @@ def test_adapter_colours_are_saved_independently(fx):
         assert Config.load().adapter_colours["usb:1"]["body"] == "#AA0011"
 
 
-def test_joycon_output_changes_radio_identity_and_combined_routing(fx, tmp_path):
+def test_joycon_output_changes_radio_identity_colours_and_combined_routing(fx, tmp_path):
     fx.manager.adapter_id = "primary"
     other = InputManager(queue.Queue(), fx.macros_dir, adapter_id="adapter-2")
     sessions = {
@@ -357,10 +357,14 @@ def test_joycon_output_changes_radio_identity_and_combined_routing(fx, tmp_path)
         bluetooth=primary.bluetooth, adapter_sessions=sessions,
     )
     output = "/api/adapters/primary/type"
+    colours = "/api/adapters/primary/colours"
     try:
         with TestClient(app) as client:
             assert client.put(output, json={"controller_type": "joycon_r"}).status_code == 200
             assert primary.mapping_variant() == ControllerVariant.RIGHT
+            assert client.get(colours).json()["controller_colours"]["body"] == "#FF3C28"
+            assert client.patch(colours, json={"body": "#fefa12"}).status_code == 200
+            assert client.patch(colours, json={"left_grip": "#FFFFFF"}).status_code == 400
             assert client.put("/api/bluetooth", json={"pairing": True}).status_code == 200
             device = primary.bluetooth.device
             assert device.name == "Joy-Con (R)"
@@ -370,6 +374,7 @@ def test_joycon_output_changes_radio_identity_and_combined_routing(fx, tmp_path)
             assert client.put("/api/bluetooth", json={"pairing": False}).status_code == 200
             assert client.put(output, json={"controller_type": "pro"}).status_code == 200
             assert device.keystore is pro_keystore
+            assert client.get(colours).json()["controller_colours"]["body"] == "#000000"
 
             response = client.put(output, json={
                 "controller_type": "combined", "companion_id": secondary.id,
@@ -380,6 +385,7 @@ def test_joycon_output_changes_radio_identity_and_combined_routing(fx, tmp_path)
                 ("joycon_l", secondary.id), ("joycon_r", primary.id),
             ]
             reloaded = Config.load().adapter_profiles
+            assert reloaded[0].joycon_colours["joycon_r"]["body"] == "#FEFA12"
             assert (reloaded[0].combined_with, reloaded[1].combined_with) == (1, 0)
             assert primary.mapping_variant() == secondary.mapping_variant() == ControllerVariant.COMBINED
             with client.websocket_connect("/ws") as ws:

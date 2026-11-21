@@ -12,6 +12,7 @@ from pathlib import Path
 
 from lib.colours import (
     DEFAULT_CONTROLLER_COLOURS,
+    default_colours,
     normalize_controller_colours,
 )
 from lib.controller import ControllerVariant
@@ -124,6 +125,13 @@ class AdapterProfile:
     legacy_keystore: bool = False
     controller_type: ControllerVariant = ControllerVariant.PRO
     combined_with: int | None = None
+    joycon_colours: dict[str, dict[str, str]] = field(default_factory=dict)
+
+    def colours_for(self, variant: ControllerVariant) -> dict[str, str]:
+        if variant == ControllerVariant.PRO:
+            return self.colours
+        return self.joycon_colours.get(variant, default_colours(variant))
+
 
 def new_profile_address(used: set[str]) -> str:
     while True:
@@ -168,10 +176,19 @@ def _adapter_profiles(value: object) -> list[AdapterProfile]:
             type(partner) is not int or not 0 <= partner < len(value) or partner == len(profiles)
         ):
             raise ValueError("invalid combined adapter index")
+        if not isinstance(profile.joycon_colours, dict):
+            raise TypeError("joycon_colours must be an object")
+        joycon_colours = {}
+        for side, palette in profile.joycon_colours.items():
+            if side not in (ControllerVariant.LEFT, ControllerVariant.RIGHT):
+                raise ValueError("invalid Joy-Con colour variant")
+            joycon_colours[side] = normalize_controller_colours(
+                palette, default_colours(ControllerVariant(side))
+            )
         addresses.add(address)
         profiles.append(replace(
             profile, address=address, colours=normalize_controller_colours(profile.colours),
-            controller_type=variant,
+            controller_type=variant, joycon_colours=joycon_colours,
         ))
     for index, profile in enumerate(profiles):
         if profile.combined_with is not None:

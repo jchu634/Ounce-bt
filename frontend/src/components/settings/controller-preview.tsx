@@ -1,12 +1,13 @@
 import ColourPreviewController from "@/src/assets/controllers/ColourPreviewController";
+import { JoyCon, JoyConPair } from "@/src/assets/controllers/JoyCon";
 import {
   ControllerSwitchPro,
   SwitchJoycon,
   SwitchJoyconLeft,
   SwitchJoyconRight,
 } from "@/src/assets/input-prompts/switch";
-import { type ControllerColours } from "@/src/lib/controller-colours";
-import { type ControllerVariant } from "@/src/lib/controller-variants";
+import { controllerColourDefaults, type ControllerColours } from "@/src/lib/controller-colours";
+import { CONTROLLER_VARIANT_NAMES, type ControllerVariant } from "@/src/lib/controller-variants";
 
 export function ControllerVariantIcon({ variant }: { variant: ControllerVariant }) {
   switch (variant) {
@@ -17,14 +18,39 @@ export function ControllerVariantIcon({ variant }: { variant: ControllerVariant 
   }
 }
 
-export function ControllerPreview({ colours }: { colours: ControllerColours }) {
+export function ControllerPreview({
+  colours,
+  variant = "pro",
+  upright = false,
+}: {
+  colours?: ControllerColours;
+  variant?: ControllerVariant;
+  upright?: boolean;
+}) {
+  const className = "mx-auto size-full max-w-md";
+  if (variant === "combined") {
+    return <JoyConPair role="img" aria-label="Joycons preview" className={className} />;
+  }
+  const palette = colours ?? controllerColourDefaults(variant);
+  if (variant !== "pro") {
+    return (
+      <JoyCon
+        side={variant}
+        upright={upright}
+        colours={palette}
+        role="img"
+        aria-label={`${CONTROLLER_VARIANT_NAMES[variant]} preview. Main body ${palette.body}, buttons ${palette.buttons}.`}
+        className={className}
+      />
+    );
+  }
   return (
     <ColourPreviewController
-      colours={colours}
+      colours={palette}
       viewBox="5 12 54 39"
       role="img"
-      aria-label={`Pro Controller preview. Main body ${colours.body}, buttons ${colours.buttons}, left grip ${colours.left_grip}, right grip ${colours.right_grip}.`}
-      className="mx-auto size-full max-w-md"
+      aria-label={`Pro Controller preview. Main body ${palette.body}, buttons ${palette.buttons}, left grip ${palette.left_grip}, right grip ${palette.right_grip}.`}
+      className={className}
     />
   );
 }

@@ -78,8 +78,9 @@ async function chooseOption(label: string, name: string) {
   await act(async () => option.click());
 }
 
-it("selects a Joy-Con Bluetooth output in settings", async () => {
+it("selects a Joy-Con Bluetooth output and saves its body and button colours", async () => {
   let controllerType: BluetoothControllerType = "pro";
+  let palette = { body: "#1122AA", buttons: "#000000" };
   const inventory = () => ({
     adapters: [{
       id: "primary",
@@ -94,7 +95,7 @@ it("selects a Joy-Con Bluetooth output in settings", async () => {
     controllers: [],
     controllers_available: true,
   });
-  const fetchRequest = vi.fn(async (path: string) => {
+  const fetchRequest = vi.fn(async (path: string, init?: RequestInit) => {
     if (path === "/api/adapters") return Response.json(inventory());
     if (path === "/api/bluetooth") {
       return Response.json({
@@ -108,6 +109,13 @@ it("selects a Joy-Con Bluetooth output in settings", async () => {
     }
     if (path === "/api/presets") return Response.json({ presets: [], active: null });
     if (path === "/api/config") return Response.json({ vibration_enabled: true });
+    if (path.startsWith("/api/adapters/primary/colours")) {
+      if (init?.method === "PATCH") palette = JSON.parse(String(init.body));
+      return Response.json({
+        controller_colours: controllerType === "pro" ? DEFAULT_CONTROLLER_COLOURS : palette,
+        colours_reconnect_required: false,
+      });
+    }
     return Response.json({}, { status: 404 });
   });
   vi.stubGlobal("fetch", fetchRequest);
@@ -127,6 +135,15 @@ it("selects a Joy-Con Bluetooth output in settings", async () => {
     "/api/adapters/primary/type",
     expect.objectContaining({ body: '{"controller_type":"joycon_l"}' }),
   );
+  await act(async () => button("Close").click());
+  expect(container.querySelector('svg[viewBox="6 19 52 26"]')).not.toBeNull();
+  await act(async () => button("Edit controller colours").click());
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Joy-Con L");
+  expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("Left grip");
+  await act(async () => button("Reset to default").click());
+  await act(async () => button("Save").click());
+  expect(palette).toEqual({ body: "#00B9D6", buttons: "#001E1E" });
+  expect(container.querySelector('[data-region="body"]')?.getAttribute("fill")).toBe("#00B9D6");
 });
 
 it("keeps adapter settings scoped to the card and supports range selection", async () => {

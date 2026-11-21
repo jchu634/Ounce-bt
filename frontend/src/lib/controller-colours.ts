@@ -1,9 +1,13 @@
+import type { BluetoothControllerType } from "./controller-variants";
+
 export type ControllerColours = {
   body: string;
   buttons: string;
   left_grip: string;
   right_grip: string;
 };
+
+export type JoyConColours = Pick<ControllerColours, "body" | "buttons">;
 
 export const DEFAULT_CONTROLLER_COLOURS: ControllerColours = {
   body: "#000000",
@@ -18,6 +22,16 @@ export const COLOUR_FIELDS = [
   { key: "left_grip", label: "Left grip" },
   { key: "right_grip", label: "Right grip" },
 ] satisfies { key: keyof ControllerColours; label: string }[];
+
+export function controllerColourDefaults(variant: BluetoothControllerType): ControllerColours {
+  if (variant === "joycon_l") {
+    return { ...DEFAULT_CONTROLLER_COLOURS, body: "#00B9D6", buttons: "#001E1E" };
+  }
+  if (variant === "joycon_r") {
+    return { ...DEFAULT_CONTROLLER_COLOURS, body: "#FF3C28", buttons: "#1E0A0A" };
+  }
+  return DEFAULT_CONTROLLER_COLOURS;
+}
 
 export const FIXED_COLOURS = ["#000000", "#828282"];
 
@@ -68,14 +82,15 @@ export function recentControllerColours(values: unknown): string[] {
   return recent;
 }
 
-export function parseControllerColours(value: unknown): ControllerColours {
+export function parseControllerColours(
+  value: unknown,
+  variant: BluetoothControllerType = "pro",
+): ControllerColours {
   if (
     typeof value !== "object" ||
     value === null ||
     !("body" in value) ||
-    !("buttons" in value) ||
-    !("left_grip" in value) ||
-    !("right_grip" in value)
+    !("buttons" in value)
   )
     throw new Error("Invalid controller colours from the backend.");
 
@@ -84,9 +99,16 @@ export function parseControllerColours(value: unknown): ControllerColours {
       throw new Error("Invalid controller colour from the backend.");
     return value.toUpperCase();
   }
-  return {
+  const palette = {
+    ...controllerColourDefaults(variant),
     body: colour(value.body),
     buttons: colour(value.buttons),
+  };
+  if (variant !== "pro") return palette;
+  if (!("left_grip" in value) || !("right_grip" in value))
+    throw new Error("Invalid controller colours from the backend.");
+  return {
+    ...palette,
     left_grip: colour(value.left_grip),
     right_grip: colour(value.right_grip),
   };

@@ -29,6 +29,7 @@ from app.input.macro_source import MacroPlayerThread
 from app.input.manager import InputManager
 from app.server import build_app
 from lib.bluetooth_transport import WindowsUsbDevice, open_transport, prepare_hci_socket
+from lib.colours import default_colours
 from lib.config import (
     Config,
     ConfigStore,
@@ -1096,9 +1097,10 @@ async def run_powered_adapter(
             variant = bluetooth.controller_type
             protocol = ControllerProtocol(variant.bluetooth_type, str(device.public_address))
             colours = (
-                config.adapter_profiles[session.profile_index].colours
+                config.adapter_profiles[session.profile_index].colours_for(variant)
                 if session.profile_index is not None
                 else config.colours_for_adapter(session.transport, primary=session.primary)
+                if variant == ControllerVariant.PRO else default_colours(variant)
             )
             protocol.set_colours(**colours)
             owner = session.input_owner

@@ -392,19 +392,33 @@ async def adapter_colours(request: Request) -> Response:
         return _error("Unknown adapter", status=404)
     store: ConfigStore = request.app.state.config_store
     profile_index = slot.profile_index
-    colours = (
-        store.config.adapter_profiles[profile_index].colours if profile_index is not None
-        else store.config.colours_for_adapter(slot.transport, primary=slot.primary)
-    )
+    if request.method == "PATCH":
+        try:
+            body = await request.json()
+        except ValueError:
+            return _error("invalid JSON body")
+    variant = slot.bluetooth.controller_type
+    requested_variant = request.query_params.get("controller_type")
+    if requested_variant is not None and requested_variant != variant:
+        return _error("Controller type changed. Reopen the colour editor.", status=409)
+    profile = store.config.adapter_profiles[profile_index] if profile_index is not None else None
+    if profile is not None:
+        colours = profile.colours_for(variant)
+    else:
+        colours = store.config.colours_for_adapter(slot.transport, primary=slot.primary)
     changed = False
     if request.method == "PATCH":
         try:
-            updated = normalize_controller_colours(await request.json(), colours)
+            updated = normalize_controller_colours(body, colours)
         except (TypeError, ValueError) as error:
             return _error(str(error))
         changed = updated != colours
         if changed:
-            if profile_index is not None:
+            if profile is not None and variant != ControllerVariant.PRO:
+                store.update_adapter_profile(profile_index, joycon_colours={
+                    **profile.joycon_colours, variant: updated,
+                })
+            elif profile_index is not None:
                 store.update_adapter_profile(profile_index, colours=updated)
             elif slot.primary:
                 store.update({"controller_colours": updated})
@@ -416,6 +430,7 @@ async def adapter_colours(request: Request) -> Response:
     radio = slot.bluetooth
     return JSONResponse({
         "controller_colours": colours,
+        "controller_type": variant,
         "colours_reconnect_required": changed and bool(
             radio.connection or radio.connected or radio.reconnecting
         ),
