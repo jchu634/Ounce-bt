@@ -1,7 +1,39 @@
 import pytest
 
-from lib.controller import ControllerTypes
+from lib.controller import ControllerTypes, ControllerVariant
+from lib.input.state import (
+    Button,
+    ControllerState,
+    apply_to_protocol,
+    rotate_joycon_stick,
+)
+from lib.input.stick import PRO_LEFT, PRO_RIGHT, calibrate_stick
 from lib.switch_protocol import ControllerProtocol
+
+
+@pytest.mark.parametrize(
+    "variant, controller_id, button_bytes, stick_bytes",
+    [
+        (ControllerVariant.LEFT, 1, b"\x00\x01\x21", bytes(calibrate_stick((0, -1), PRO_LEFT)) + bytes(3)),
+        (ControllerVariant.RIGHT, 2, b"\x28\x10\x00", bytes(3) + bytes(calibrate_stick((-1, 0), PRO_RIGHT))),
+    ],
+)
+def test_joycon_reports_contain_only_their_own_buttons_and_rotated_stick(
+    variant, controller_id, button_bytes, stick_bytes
+):
+    protocol = ControllerProtocol(variant.bluetooth_type, "98:B6:E9:7E:E9:8D")
+    request = bytes.fromhex("A2 01 00 00 00 00 00 00 00 00 00 02")
+    protocol.process_commands(request.ljust(50, b"\x00"))
+    assert protocol.get_report()[18] == controller_id
+
+    state = ControllerState(
+        Button.A | Button.DOWN | Button.MINUS | Button.HOME | Button.SL_L | Button.SL_R,
+        left=(1, 0), right=(0, 1),
+    )
+    apply_to_protocol(protocol, rotate_joycon_stick(state, variant))
+    report = protocol.get_report()
+    assert report[4:7] == button_bytes
+    assert report[7:13] == stick_bytes
 
 
 @pytest.mark.parametrize(

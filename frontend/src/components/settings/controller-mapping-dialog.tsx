@@ -12,6 +12,7 @@ import {
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -20,6 +21,8 @@ import { listPresets } from "@/src/lib/api";
 import { errorMessage } from "@/src/lib/errors";
 import type { PresetInfo } from "@/src/lib/types";
 import { VibrationSetting } from "./vibration-setting";
+import { ControllerVariantIcon } from "./controller-preview";
+import type { ControllerVariant } from "@/src/lib/controller-variants";
 
 export type MappingSettings = {
   available: boolean;
@@ -39,12 +42,28 @@ export function ControllerMappingDialog({
   controller,
   onEditPreset,
   usbAdapter,
+  bluetoothOutput,
 }: {
-  controller: MappingSettings;
+  controller?: MappingSettings;
   onEditPreset: (preset: PresetInfo) => void;
   usbAdapter?: { transport: string; address: string | null };
+  bluetoothOutput?: {
+    value: string;
+    options: {
+      value: string;
+      label: string;
+      variant: ControllerVariant;
+      disabled?: boolean;
+    }[];
+    disabled: boolean;
+    error: string | null;
+    select: (value: string) => void;
+  };
 }) {
   const [open, setOpen] = useState(false);
+  const selectedOutput = bluetoothOutput?.options.find(
+    (option) => option.value === bluetoothOutput.value,
+  );
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -76,7 +95,50 @@ export function ControllerMappingDialog({
             )}
           </div>
         )}
-        {open && (
+        {bluetoothOutput && (
+          <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1">
+            <p className="text-sm font-medium">Controller type</p>
+            <Select
+              value={bluetoothOutput.value}
+              disabled={bluetoothOutput.disabled}
+              onValueChange={(value) => {
+                if (value !== null) bluetoothOutput.select(value);
+              }}
+            >
+              <SelectTrigger
+                className="w-full min-w-0"
+                aria-label="Bluetooth controller type"
+              >
+                <SelectValue>
+                  {selectedOutput && (
+                    <>
+                      <ControllerVariantIcon variant={selectedOutput.variant} />
+                      <span className="truncate">{selectedOutput.label}</span>
+                    </>
+                  )}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent align="start">
+                <SelectGroup>
+                  {bluetoothOutput.options.map(
+                    ({ value, variant, label, disabled }) => (
+                      <SelectItem key={value} value={value} disabled={disabled}>
+                        <ControllerVariantIcon variant={variant} />
+                        {label}
+                      </SelectItem>
+                    ),
+                  )}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            {bluetoothOutput.error && (
+              <p role="alert" className="col-start-2 text-sm text-destructive">
+                {bluetoothOutput.error}
+              </p>
+            )}
+          </div>
+        )}
+        {open && controller && (
           <MappingControls
             controller={controller}
             onEditPreset={(preset) => {
@@ -112,9 +174,9 @@ function MappingControls({
   } = controller;
   const activeName = options.find((option) => option.id === active)?.name;
   const selection = active ?? (allowUnassign ? "unassigned" : null);
-  const [presets, setPresets] = useState<Effect.Success<ReturnType<typeof listPresets>> | null>(
-    null,
-  );
+  const [presets, setPresets] = useState<Effect.Success<
+    ReturnType<typeof listPresets>
+  > | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
 
@@ -147,21 +209,32 @@ function MappingControls({
           <p className="text-sm font-medium">Controller</p>
           <Select
             value={selection}
-            disabled={!available || options.length === 0 || changing || macroMode}
+            disabled={
+              !available || options.length === 0 || changing || macroMode
+            }
             onValueChange={(value) => {
               if (value !== null && value !== selection)
                 selectController(value === "unassigned" ? null : value);
             }}
           >
-            <SelectTrigger className="w-full min-w-0" aria-label="Select controller">
+            <SelectTrigger
+              className="w-full min-w-0"
+              aria-label="Select controller"
+            >
               <SelectValue placeholder="No controller selected">
                 {activeName ?? (allowUnassign ? "No controller" : null)}
               </SelectValue>
             </SelectTrigger>
             <SelectContent>
-              {allowUnassign && <SelectItem value="unassigned">No controller</SelectItem>}
+              {allowUnassign && (
+                <SelectItem value="unassigned">No controller</SelectItem>
+              )}
               {options.map((entry) => (
-                <SelectItem key={entry.id} value={entry.id} disabled={entry.disabled}>
+                <SelectItem
+                  key={entry.id}
+                  value={entry.id}
+                  disabled={entry.disabled}
+                >
                   {entry.name}
                 </SelectItem>
               ))}
@@ -178,18 +251,29 @@ function MappingControls({
           <div className="flex min-w-0 items-center gap-1">
             <Select
               value={activePreset?.filename ?? null}
-              disabled={changing || macroMode || !!loadError || !presets?.presets.length}
+              disabled={
+                changing || macroMode || !!loadError || !presets?.presets.length
+              }
               onValueChange={(value) => {
                 if (value !== null && value !== activePreset?.filename) {
                   applyPreset(value);
                 }
               }}
             >
-              <SelectTrigger className="w-full min-w-0" aria-label="Mapping preset">
+              <SelectTrigger
+                className="w-full min-w-0"
+                aria-label="Mapping preset"
+              >
                 <SelectValue
-                  placeholder={presets || loadError ? "No preset selected" : "Loading presets…"}
+                  placeholder={
+                    presets || loadError
+                      ? "No preset selected"
+                      : "Loading presets…"
+                  }
                 >
-                  {activePreset ? <span className="truncate">{activePreset.name}</span> : null}
+                  {activePreset ? (
+                    <span className="truncate">{activePreset.name}</span>
+                  ) : null}
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>
@@ -236,7 +320,11 @@ function MappingControls({
       </div>
       <VibrationSetting controllerGuid={controllerGuid} />
       {pending && (
-        <p role="status">{pending === "applying" ? "Applying preset…" : "Switching controller…"}</p>
+        <p role="status">
+          {pending === "applying"
+            ? "Applying preset…"
+            : "Switching controller…"}
+        </p>
       )}
       {error && (
         <p role="alert" className="text-sm text-destructive">

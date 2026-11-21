@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntFlag
 
+from lib.controller import ControllerTypes, ControllerVariant
 from lib.input.stick import PRO_LEFT, PRO_RIGHT, calibrate_stick
 
 
@@ -70,11 +71,38 @@ class ControllerState:
 NEUTRAL = ControllerState()
 
 
+JOYCON_BUTTONS = {
+    ControllerTypes.JOYCON_L: (
+        Button.UP | Button.DOWN | Button.LEFT | Button.RIGHT | Button.MINUS
+        | Button.CAPTURE | Button.STICK_L | Button.L | Button.ZL | Button.SL_L | Button.SR_L
+    ),
+    ControllerTypes.JOYCON_R: (
+        Button.A | Button.B | Button.X | Button.Y | Button.PLUS | Button.HOME
+        | Button.STICK_R | Button.R | Button.ZR | Button.SL_R | Button.SR_R
+    ),
+}
+
+def rotate_joycon_stick(state: ControllerState, variant: ControllerVariant) -> ControllerState:
+    # Input is in the player's horizontal coordinates. HID coordinates use
+    # the upright orientation, with rails facing toward each other.
+    if variant == ControllerVariant.LEFT:
+        x, y = state.left
+        return ControllerState(state.buttons, (y, -x))
+    if variant == ControllerVariant.RIGHT:
+        x, y = state.right
+        return ControllerState(state.buttons, right=(-y, x))
+    return state
+
+
 def apply_to_protocol(protocol, state: ControllerState) -> None:
     """
     Push a controller state onto a Switch ControllerProtocol.
     """
-    b = int(state.buttons)
+    controller_type = getattr(protocol, "controller_type", ControllerTypes.PRO_CONTROLLER)
+    mask = JOYCON_BUTTONS.get(controller_type)
+    b = int(state.buttons if mask is None else state.buttons & mask)
     protocol.set_button_inputs(b & 0xFF, (b >> 8) & 0xFF, (b >> 16) & 0xFF)
-    protocol.set_left_stick_inputs(calibrate_stick(state.left, PRO_LEFT))
-    protocol.set_right_stick_inputs(calibrate_stick(state.right, PRO_RIGHT))
+    if controller_type != ControllerTypes.JOYCON_R:
+        protocol.set_left_stick_inputs(calibrate_stick(state.left, PRO_LEFT))
+    if controller_type != ControllerTypes.JOYCON_L:
+        protocol.set_right_stick_inputs(calibrate_stick(state.right, PRO_RIGHT))

@@ -15,6 +15,8 @@ from bumble.sdp import (
     ServiceAttribute,
 )
 
+from lib.controller import ControllerVariant
+
 SDP_HID_SERVICE_NAME_ATTRIBUTE_ID = 0x0100
 SDP_HID_SERVICE_DESCRIPTION_ATTRIBUTE_ID = 0x0101
 SDP_HID_PROVIDER_NAME_ATTRIBUTE_ID = 0x0102
@@ -152,7 +154,7 @@ HID_REPORT_MAP = bytes(  # Text String, 50 Octet Report Descriptor
     # fmt: on
 
 
-def sdp_record():
+def sdp_record(variant=ControllerVariant.PRO):
     service_record_handle = 0x00010002
     return {
         service_record_handle: [
@@ -234,7 +236,11 @@ def sdp_record():
             # ------------- HID SDP Atrribute Values See HID v1.1.1 "5.3 Service Discovery Protocol (SDP)" --------------
             ServiceAttribute(
                 SDP_HID_SERVICE_NAME_ATTRIBUTE_ID,  # 0x0100
-                DataElement(DataElement.TEXT_STRING, b"Wireless Gamepad"),
+                DataElement(
+                    DataElement.TEXT_STRING,
+                    b"Wireless Gamepad" if variant == ControllerVariant.PRO
+                    else variant.bluetooth_name.encode("ascii"),
+                ),
             ),
             ServiceAttribute(
                 SDP_HID_SERVICE_DESCRIPTION_ATTRIBUTE_ID,  # 0x0101

@@ -23,6 +23,7 @@ import type { BluetoothStatus } from "@/src/lib/bluetooth";
 import { DEFAULT_CONTROLLER_COLOURS } from "@/src/lib/controller-colours";
 import type { AdapterInputStatus, ServerFrame } from "@/src/lib/types";
 import { socket } from "@/src/lib/ws";
+import type { BluetoothControllerType } from "@/src/lib/controller-variants";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 vi.hoisted(() => {
@@ -76,6 +77,57 @@ async function chooseOption(label: string, name: string) {
   if (!option) throw new Error(`Missing option: ${name}`);
   await act(async () => option.click());
 }
+
+it("selects a Joy-Con Bluetooth output in settings", async () => {
+  let controllerType: BluetoothControllerType = "pro";
+  const inventory = () => ({
+    adapters: [{
+      id: "primary",
+      transport: "usb:0",
+      controller_id: null,
+      preset: null,
+      macro_mode: false,
+      local_address: "12:34:56:78:9A:BC",
+      error: null,
+      controller_type: controllerType,
+    }],
+    controllers: [],
+    controllers_available: true,
+  });
+  const fetchRequest = vi.fn(async (path: string) => {
+    if (path === "/api/adapters") return Response.json(inventory());
+    if (path === "/api/bluetooth") {
+      return Response.json({
+        available: true, state: "disconnected", pairing: false, address: null,
+        player_number: null, peers: [], names: {}, failure_id: 0, failure: null,
+      } satisfies BluetoothStatus);
+    }
+    if (path === "/api/adapters/primary/type") {
+      controllerType = "joycon_l";
+      return Response.json(inventory());
+    }
+    if (path === "/api/presets") return Response.json({ presets: [], active: null });
+    if (path === "/api/config") return Response.json({ vibration_enabled: true });
+    return Response.json({}, { status: 404 });
+  });
+  vi.stubGlobal("fetch", fetchRequest);
+  vi.spyOn(socket, "start").mockImplementation(() => {});
+  await act(async () => {
+    root.render(
+      <SocketProvider>
+        <ConnectionPanel onEditPreset={() => {}} />
+      </SocketProvider>,
+    );
+  });
+  expect(container.querySelector('[aria-label="Bluetooth controller type"]')).toBeNull();
+  await act(async () => button("Controller settings").click());
+  expect(document.querySelector('[aria-label="Joy-Con orientation"]')).toBeNull();
+  await chooseOption("Bluetooth controller type", "Joy-Con L");
+  expect(fetchRequest).toHaveBeenCalledWith(
+    "/api/adapters/primary/type",
+    expect.objectContaining({ body: '{"controller_type":"joycon_l"}' }),
+  );
+});
 
 it("keeps adapter settings scoped to the card and supports range selection", async () => {
   const makeAdapter = (

@@ -10,7 +10,11 @@ from dataclasses import asdict, dataclass, field, fields, replace
 from hashlib import sha256
 from pathlib import Path
 
-from lib.colours import DEFAULT_CONTROLLER_COLOURS, normalize_controller_colours
+from lib.colours import (
+    DEFAULT_CONTROLLER_COLOURS,
+    normalize_controller_colours,
+)
+from lib.controller import ControllerVariant
 from lib.device_names import normalize_device_names
 
 logger = logging.getLogger("switch_pair")
@@ -118,7 +122,8 @@ class AdapterProfile:
     preset: str = ""
     colours: dict[str, str] = field(default_factory=dict)
     legacy_keystore: bool = False
-
+    controller_type: ControllerVariant = ControllerVariant.PRO
+    combined_with: int | None = None
 
 def new_profile_address(used: set[str]) -> str:
     while True:
@@ -145,7 +150,7 @@ def _adapter_profiles(value: object) -> list[AdapterProfile]:
         if isinstance(entry, AdapterProfile):
             profile = entry
         elif isinstance(entry, dict):
-            profile = AdapterProfile(**entry)
+            profile = AdapterProfile(**{key: value for key, value in entry.items() if key != "joycon_orientation"})
         else:
             raise TypeError("each adapter profile must be an object")
         if not _valid_profile_address(profile.address) or profile.address.upper() in addresses:
@@ -155,10 +160,28 @@ def _adapter_profiles(value: object) -> list[AdapterProfile]:
             raise TypeError("adapter profile controller and preset must be strings")
         if not isinstance(profile.legacy_keystore, bool):
             raise TypeError("adapter profile legacy_keystore must be a boolean")
+        variant = ControllerVariant(profile.controller_type)
+        if variant == ControllerVariant.COMBINED:
+            raise ValueError("an adapter profile must identify one Bluetooth controller")
+        partner = profile.combined_with
+        if partner is not None and (
+            type(partner) is not int or not 0 <= partner < len(value) or partner == len(profiles)
+        ):
+            raise ValueError("invalid combined adapter index")
         addresses.add(address)
         profiles.append(replace(
-            profile, address=address, colours=normalize_controller_colours(profile.colours)
+            profile, address=address, colours=normalize_controller_colours(profile.colours),
+            controller_type=variant,
         ))
+    for index, profile in enumerate(profiles):
+        if profile.combined_with is not None:
+            partner = profiles[profile.combined_with]
+            if (
+                partner.combined_with != index
+                or {profile.controller_type, partner.controller_type}
+                != {ControllerVariant.LEFT, ControllerVariant.RIGHT}
+            ):
+                raise ValueError("combined adapters must link a left and right Joy-Con")
     return profiles
 
 
@@ -363,11 +386,14 @@ class ConfigStore:
             return profiles[:len(transports)]
 
     def update_adapter_profile(self, index: int, **changes) -> None:
+        self.update_adapter_profiles({index: changes})
+
+    def update_adapter_profiles(self, changes: dict[int, dict]) -> None:
         with self._lock:
             profiles = list(self._config.adapter_profiles)
-            updated = replace(profiles[index], **changes)
-            if updated != profiles[index]:
-                profiles[index] = updated
+            for index, fields in changes.items():
+                profiles[index] = replace(profiles[index], **fields)
+            if profiles != self._config.adapter_profiles:
                 self._save_adapter_profiles(profiles)
 
     def _save_adapter_profiles(self, profiles: list[AdapterProfile], *, persist: bool = True) -> None:

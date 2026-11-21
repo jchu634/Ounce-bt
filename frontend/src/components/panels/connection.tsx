@@ -43,6 +43,12 @@ import {
   type AdapterInventory,
 } from "@/src/lib/adapters";
 import { connectionDetail, deviceName, type BluetoothStatus } from "@/src/lib/bluetooth";
+import {
+  CONTROLLER_VARIANTS,
+  CONTROLLER_VARIANT_NAMES,
+  isBluetoothControllerType,
+  type ControllerVariant,
+} from "@/src/lib/controller-variants";
 import { errorMessage } from "@/src/lib/errors";
 import { useSwitchConnection } from "@/src/lib/switch-connection";
 import { cn } from "cn";
@@ -293,7 +299,11 @@ export function ConnectionPanel({ onEditPreset }: { onEditPreset: (preset: Prese
       <h2 className="text-lg font-semibold">Connection</h2>
       {inventory?.adapters.length ? (
         inventory.adapters.map((adapter) => {
-          const pad = inventory.controllers.find((entry) => entry.id === adapter.controller_id);
+          const follower = adapter.controller_type === "joycon_r" && !!adapter.combined_with;
+          const source = follower
+            ? inventory.adapters.find((item) => item.id === adapter.combined_with) ?? adapter
+            : adapter;
+          const pad = inventory.controllers.find((entry) => entry.id === source.controller_id);
           const multiple = inventory.adapters.length > 1;
           const mapping: MappingSettings = {
             available: inventory.controllers_available,
@@ -311,7 +321,7 @@ export function ConnectionPanel({ onEditPreset }: { onEditPreset: (preset: Prese
             active: adapter.controller_id?.toString() ?? null,
             controllerGuid: pad?.guid ?? null,
             preset: adapter.preset,
-            pending: pending ? (pending.kind === "assign" ? "selecting" : "applying") : null,
+            pending: pending?.kind === "assign" ? "selecting" : pending?.kind === "preset" ? "applying" : null,
             error: settingsError?.id === adapter.id ? settingsError.message : null,
             macroMode: adapter.macro_mode,
             allowUnassign: true,
@@ -330,6 +340,16 @@ export function ConnectionPanel({ onEditPreset }: { onEditPreset: (preset: Prese
               adapter={adapter}
               controllerName={pad?.name}
               mapping={mapping}
+              outputAdapters={inventory.adapters.filter((item) =>
+                item.id === adapter.combined_with || (
+                  item.id !== adapter.id && !item.error && item.local_address && !item.combined_with
+                ))}
+              onChangeOutput={(output) => void saveSettings({
+                kind: "type",
+                adapterId: adapter.id,
+                output,
+              })}
+              changingOutput={pending !== null}
               onEditPreset={onEditPreset}
               inputTarget={
                 multiple
@@ -362,12 +382,18 @@ function ConnectionCard({
   mapping,
   onEditPreset,
   inputTarget,
+  outputAdapters = [],
+  onChangeOutput,
+  changingOutput,
 }: {
   adapter?: Adapter;
   controllerName?: string;
   mapping: MappingSettings;
   onEditPreset: (preset: PresetInfo) => void;
   inputTarget?: { selected: boolean; select: (modifiers: AdapterSelectionModifiers) => void };
+  outputAdapters?: Adapter[];
+  onChangeOutput?: (output: Extract<AdapterChange, { kind: "type" }>["output"]) => void;
+  changingOutput?: boolean;
 }) {
   const connection = useSwitchConnection(adapter?.id === "primary" ? undefined : adapter?.id);
   const {
@@ -388,6 +414,26 @@ function ConnectionCard({
   const [renameError, setRenameError] = useState<string | null>(null);
   const pairing = status?.pairing ?? false;
   const pairingAction = pairing ? "Stop pairing" : "Start pairing";
+  const controllerType = adapter?.controller_type ?? "pro";
+  const combined = !!adapter?.combined_with;
+  const follower = combined && controllerType === "joycon_r";
+  const outputValue = combined
+    ? follower ? "combined-right" : `combined:${adapter?.combined_with}`
+    : controllerType;
+  const outputOptions = [
+    ...CONTROLLER_VARIANTS.filter(isBluetoothControllerType).map((type) => ({
+      value: type,
+      label: CONTROLLER_VARIANT_NAMES[type],
+      variant: type,
+    })),
+    ...(follower
+      ? [{ value: "combined-right", label: "Joycons (right)", variant: controllerType, disabled: true }]
+      : outputAdapters.map((item): { value: string; label: string; variant: ControllerVariant } => ({
+          value: `combined:${item.id}`,
+          label: `Joycons with ${item.transport}`,
+          variant: "combined",
+        }))),
+  ];
 
   async function saveName() {
     if (!renaming || savingName || !renaming.name.trim()) return;
@@ -455,13 +501,26 @@ function ConnectionCard({
           <ConnectionStatus status={status} statusError={statusError} />
           <div className="ms-auto shrink-0">
             <ControllerMappingDialog
-              controller={mapping}
+              controller={follower ? undefined : mapping}
               usbAdapter={
                 adapter
                   ? { transport: adapter.transport, address: adapter.local_address }
                   : undefined
               }
               onEditPreset={onEditPreset}
+              bluetoothOutput={adapter && onChangeOutput ? {
+                value: outputValue,
+                options: outputOptions,
+                disabled: disabled || active || pairing || !!changingOutput || adapter.macro_mode,
+                error: follower ? mapping.error : null,
+                select: (value) => {
+                  if (isBluetoothControllerType(value)) {
+                    onChangeOutput({ controller_type: value });
+                  } else if (value.startsWith("combined:")) {
+                    onChangeOutput({ controller_type: "combined", companion_id: value.slice(9) });
+                  }
+                },
+              } : undefined}
             />
           </div>
         </div>
@@ -579,6 +638,11 @@ function ConnectionCard({
         {pairing && (
           <p className="text-xs text-muted-foreground">
             On the Switch, open Controllers → Change Grip/Order.
+          </p>
+        )}
+        {combined && pairing && (
+          <p className="text-xs text-muted-foreground">
+            Pair both Joy-Cons to the same Switch to register them together.
           </p>
         )}
         {statusError && <p className="text-xs text-destructive">{statusError}</p>}

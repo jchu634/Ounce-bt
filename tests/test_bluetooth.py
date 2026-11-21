@@ -1,4 +1,5 @@
 import asyncio
+import queue
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -11,6 +12,7 @@ from bumble.keys import JsonKeyStore, MemoryKeyStore, PairingKeys
 
 import app.main as application
 from app.bluetooth import (
+    AdapterSession,
     BluetoothDisconnectingError,
     BluetoothPageTimeoutError,
     BluetoothService,
@@ -18,8 +20,53 @@ from app.bluetooth import (
 from app.main import SessionState, make_l2cap_handler, run_until_disconnected
 from lib.bluetooth_transport import WindowsUsbHost
 from lib.config import Config
+from lib.controller import ControllerVariant
+from lib.input.state import NEUTRAL, Button
+from lib.switch_protocol import ControllerProtocol
 
 ADDRESS = "12:34:56:78:90:AB"
+
+
+@pytest.mark.parametrize("variant", [ControllerVariant.LEFT, ControllerVariant.RIGHT])
+def test_solo_joycon_handshake_accepts_manual_input_before_player_lights(variant):
+    async def scenario():
+        slot = AdapterSession("primary", "usb:0", queue.Queue(), None)
+        slot.bluetooth.set_controller_type(variant)
+        slot.reset_grip(pairing=True)
+        protocol = ControllerProtocol(variant.bluetooth_type, ADDRESS)
+        incoming = asyncio.Queue()
+        for subcommand in ("02", "48 01", "03 30"):
+            header = bytes.fromhex("A2 01 00 00 00 00 00 00 00 00 00")
+            incoming.put_nowait((header + bytes.fromhex(subcommand)).ljust(50, b"\0"))
+        reports = []
+        await asyncio.wait_for(application.run_pairing_handshake(
+            protocol, SimpleNamespace(send_pdu=reports.append), incoming, slot.apply_pairing_grip,
+            single_joycon=True,
+        ), 2)
+        assert protocol.player_number is None
+        assert reports
+        assert all(report[4:7] == bytes(3) for report in reports)
+    asyncio.run(scenario())
+
+
+def test_paired_joycons_send_both_shoulders_together_and_release(monkeypatch):
+    left = AdapterSession("primary", "usb:0", queue.Queue(), None)
+    right = AdapterSession("adapter-2", "usb:1", queue.Queue(), None)
+    left.bluetooth.set_controller_type(ControllerVariant.LEFT)
+    right.bluetooth.set_controller_type(ControllerVariant.RIGHT)
+    left.combined_partner, right.combined_partner = right, left
+    for slot in (left, right):
+        slot.bluetooth.connection = SimpleNamespace(peer_address="switch")
+        slot.reset_grip(pairing=True)
+    protocol = SimpleNamespace(device_info_queried=True, mode="standard")
+    monotonic = Mock(return_value=10.0)
+    monkeypatch.setattr("app.bluetooth.monotonic", monotonic)
+    assert left.apply_pairing_grip(protocol, NEUTRAL) == NEUTRAL
+    assert right.apply_pairing_grip(protocol, NEUTRAL).buttons == Button.R
+    assert left.apply_pairing_grip(protocol, NEUTRAL).buttons == Button.L
+    monotonic.return_value = 11.0
+    assert left.apply_pairing_grip(protocol, NEUTRAL) == NEUTRAL
+    assert right.apply_pairing_grip(protocol, NEUTRAL) == NEUTRAL
 
 
 def test_adapter_reopens_after_status_only_capability_response(monkeypatch):

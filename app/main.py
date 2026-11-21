@@ -23,7 +23,7 @@ from bumble.l2cap import ClassicChannelSpec
 from bumble.pairing import PairingConfig, PairingDelegate
 from starlette.applications import Starlette
 
-from app.bluetooth import AdapterSession
+from app.bluetooth import AdapterSession, configure_adapter_outputs
 from app.input.controller_service import ControllerService
 from app.input.macro_source import MacroPlayerThread
 from app.input.manager import InputManager
@@ -37,7 +37,7 @@ from lib.config import (
     resolve_config_file,
     state_dir,
 )
-from lib.controller import ControllerTypes
+from lib.controller import ControllerVariant
 from lib.firmware import (
     CONFIG_NAME,
     FIRMWARE_NAME,
@@ -128,11 +128,13 @@ def build_input_sources(specs, command_queue):
     return threads
 
 
-async def run_pairing_handshake(protocol, interrupt_channel, incoming):
+async def run_pairing_handshake(
+    protocol, interrupt_channel, incoming, pairing_grip=None, *, single_joycon=False,
+):
     """Exchange subcommands with the Switch until the handshake completes.
 
-    The Switch considers the controller ready once vibration has been
-    configured and a player number has been assigned.
+    A solo Joy-Con can send SL + SR only after reports are enabled,
+    and the Switch may wait for that chord before assigning player lights.
     """
     received_first_message = False
     while True:
@@ -146,16 +148,24 @@ async def run_pairing_handshake(protocol, interrupt_channel, incoming):
             logger.debug(f"Switch -> {reply.hex()}")
 
         protocol.process_commands(reply)
+        if pairing_grip is not None:
+            grip = pairing_grip(protocol, NEUTRAL)
+            if grip != NEUTRAL:
+                apply_to_protocol(protocol, grip)
         report = protocol.get_report()
         if report:
             logger.debug(f"Controller -> {report.hex()}")
             interrupt_channel.send_pdu(report)
 
+        ready = (
+            protocol.device_info_queried and protocol.mode == "standard"
+            if single_joycon else bool(protocol.player_number)
+        )
         if (
             reply
             and len(reply) > 45
             and protocol.vibration_configured
-            and protocol.player_number
+            and ready
         ):
             logger.info(f"Handshake complete (player {protocol.player_number})")
             return
@@ -180,6 +190,8 @@ async def run_mainloop(
     player_changed: Callable[[int | None], None] | None = None,
     mix_manual_input: Callable[[ControllerState], ControllerState] | None = None,
     tick_rate_hz: int = TICK_RATE_HZ,
+    output_input: Callable[[ControllerState], ControllerState] | None = None,
+    pairing_grip: Callable[[ControllerProtocol, ControllerState], ControllerState] | None = None,
 ):
     """Steady-state loop: apply the latest controller input, process one
     Switch PDU per tick, forward rumble, and emit reports.
@@ -224,9 +236,12 @@ async def run_mainloop(
                 player_changed(protocol.player_number)
 
             # Apply the latest input state (buttons + sticks) to the report.
-            apply_to_protocol(
-                protocol, mix_manual_input(latest_state) if mix_manual_input else latest_state
-            )
+            state = mix_manual_input(latest_state) if mix_manual_input else latest_state
+            if output_input is not None:
+                state = output_input(state)
+            if pairing_grip is not None:
+                state = pairing_grip(protocol, state)
+            apply_to_protocol(protocol, state)
 
             report = protocol.get_report()
 
@@ -757,6 +772,8 @@ async def run_bluetooth(
             legacy_keystore=profile.legacy_keystore,
         )
 
+    configure_adapter_outputs(sessions, profiles)
+
     if app is not None:
         app.state.bluetooth = primary.bluetooth
         app.state.adapter_sessions = sessions
@@ -925,6 +942,11 @@ async def run_adapter_once(
         )
 
         # Classic / HID service configuration
+        pro_name = device.name
+        variant = bluetooth.controller_type
+        if variant != ControllerVariant.PRO:
+            device.name = variant.bluetooth_name
+            device.inquiry_response = None
         device.classic_enabled = True
         device.class_of_device = DEVICE_CLASS_GAMEPAD
         # Headless mode has no pairing button. Web sessions start idle.
@@ -938,7 +960,7 @@ async def run_adapter_once(
                 io_capability=PairingDelegate.IoCapability.NO_OUTPUT_NO_INPUT
             ),
         )
-        device.sdp_service_records = sdp_record()
+        device.sdp_service_records = sdp_record(variant)
 
         state = SessionState()
 
@@ -992,6 +1014,7 @@ async def run_adapter_once(
                 on_ready,
                 vibration_allowed,
                 getattr(hci_transport.source, "wait_for_termination", None),
+                pro_name=pro_name,
             )
         finally:
             addresses.discard(address)
@@ -1001,7 +1024,8 @@ async def run_adapter_once(
 
 
 async def run_powered_adapter(
-    session, config_store, device, state, on_ready, vibration_allowed, wait_transport
+    session, config_store, device, state, on_ready, vibration_allowed, wait_transport,
+    pro_name=None,
 ):
     config = config_store.config
     bluetooth = session.bluetooth
@@ -1027,7 +1051,7 @@ async def run_powered_adapter(
         )
     )
 
-    bluetooth.attach(device, state, make_l2cap_handler)
+    bluetooth.attach(device, state, make_l2cap_handler, pro_name=pro_name)
     on_ready()
     logger.info("Adapter %s ready at %s", session.transport, session.local_address)
 
@@ -1069,21 +1093,24 @@ async def run_powered_adapter(
 
             logger.info("Both HID channels open; starting controller session.")
             state.hid_opened = True
-            protocol = ControllerProtocol(
-                ControllerTypes.PRO_CONTROLLER, str(device.public_address)
-            )
+            variant = bluetooth.controller_type
+            protocol = ControllerProtocol(variant.bluetooth_type, str(device.public_address))
             colours = (
                 config.adapter_profiles[session.profile_index].colours
                 if session.profile_index is not None
                 else config.colours_for_adapter(session.transport, primary=session.primary)
             )
             protocol.set_colours(**colours)
+            owner = session.input_owner
+            single_joycon = session.mapping_variant().is_single_joycon
+            session.reset_grip(pairing=bluetooth.pairing)
 
             try:
                 if not await run_until_disconnected(
                     asyncio.wait_for(
                         run_pairing_handshake(
-                            protocol, interrupt_channel, state.incoming
+                            protocol, interrupt_channel, state.incoming, session.apply_pairing_grip,
+                            single_joycon=single_joycon,
                         ),
                         timeout=30,
                     ),
@@ -1092,6 +1119,8 @@ async def run_powered_adapter(
                     continue
                 bluetooth.player_number = protocol.player_number
                 bluetooth.connected = True
+                if single_joycon and bluetooth.pairing:
+                    bluetooth.grip_reminder_id += 1
                 if config.web_enabled:
                     await bluetooth.set_pairing(False)
                 await run_mainloop(
@@ -1100,7 +1129,7 @@ async def run_powered_adapter(
                     state.incoming,
                     state.session_stop,
                     command_queue,
-                    controller_service=controller_service,
+                    controller_service=controller_service if owner is session else None,
                     tick_rate_hz=config.tick_rate_hz,
                     vibration_allowed=vibration_allowed,
                     player_changed=lambda number: setattr(
@@ -1108,6 +1137,8 @@ async def run_powered_adapter(
                     ),
                     mix_manual_input=session.input_manager.mix_manual_input
                     if session.input_manager else None,
+                    output_input=session.output_input,
+                    pairing_grip=session.apply_pairing_grip,
                 )
             except asyncio.CancelledError:
                 raise
@@ -1116,6 +1147,8 @@ async def run_powered_adapter(
             else:
                 logger.info("Session ended cleanly")
             finally:
+                session.combined_input = NEUTRAL
+                session.reset_grip()
                 bluetooth.connected = False
                 await cleanup_session(bluetooth)
 

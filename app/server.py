@@ -22,11 +22,13 @@ from app.bluetooth import (
     BluetoothDisconnectingError,
     BluetoothPageTimeoutError,
     BluetoothService,
+    configure_adapter_outputs,
 )
 from app.input.controller_service import ControllerRoute
 from app.input.manager import InputManager, MacroActiveError, state_from_event
 from lib.colours import normalize_controller_colours
 from lib.config import ConfigStore, new_profile_address, normalize_controller_vibration
+from lib.controller import ControllerVariant
 from lib.device_names import normalize_device_names, validate_device_name
 from lib.input.macros import MacroValidationError, validate_macro
 from lib.input.presets import (
@@ -94,10 +96,16 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
     selected = ("primary",)
     manual_targets: set[InputManager] = set()
 
+    def target_for(adapter_id: str) -> str:
+        slot = sessions.get(adapter_id)
+        return slot.input_owner.id if slot else adapter_id
+
     def selection_status() -> dict:
-        if len(selected) == 1:
+        if len(selected) == 1 and target_for(selected[0]) == selected[0]:
             return managers[selected[0]].status_payload()
-        statuses = {adapter_id: managers[adapter_id].status() for adapter_id in selected}
+        statuses = {
+            adapter_id: managers[target_for(adapter_id)].status() for adapter_id in selected
+        }
         return {
             "type": "status",
             "adapter_id": selected[0],
@@ -165,7 +173,7 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
                             if isinstance(message, EventMessage) else message.to_state()
                         )
                         accepted = False
-                        for adapter_id in selected:
+                        for adapter_id in dict.fromkeys(map(target_for, selected)):
                             manager = managers[adapter_id]
                             if manager.submit_state(state):
                                 accepted = True
@@ -176,7 +184,7 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
                             )
                     else:
                         error = None
-                        for adapter_id in selected:
+                        for adapter_id in dict.fromkeys(map(target_for, selected)):
                             failure = _dispatch_macro(message, managers[adapter_id])
                             if failure is not None:
                                 error = failure
@@ -199,10 +207,9 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
                 payload = status_task.result()
                 status_task = asyncio.create_task(status_q.get())
                 if payload["type"] == "status":
-                    if payload.get("adapter_id", "primary") not in selected:
+                    if payload.get("adapter_id", "primary") not in map(target_for, selected):
                         continue
-                    if len(selected) > 1:
-                        payload = selection_status()
+                    payload = selection_status()
                 try:
                     await websocket.send_text(frame_text(payload))
                 except WebSocketDisconnect:
@@ -329,6 +336,8 @@ async def adapter_inventory(sessions: dict[str, AdapterSession]) -> dict:
                 "local_address": session.local_address,
                 "controller_id": assignments.get(session.id),
                 "error": session.error,
+                "controller_type": session.bluetooth.controller_type,
+                "combined_with": session.combined_partner.id if session.combined_partner else None,
                 "preset": (
                     session.controller.preset_name
                     if isinstance(session.controller, ControllerRoute)
@@ -411,6 +420,58 @@ async def adapter_colours(request: Request) -> Response:
             radio.connection or radio.connected or radio.reconnecting
         ),
     })
+
+
+async def adapter_controller_type(request: Request) -> Response:
+    sessions: dict[str, AdapterSession] = request.app.state.adapter_sessions
+    slot = sessions.get(request.path_params["session_id"])
+    if slot is None:
+        return _error("Unknown adapter", status=404)
+    if slot.profile_index is None or slot.bluetooth.device is None or slot.error:
+        return _error("Bluetooth is not ready", status=503)
+    try:
+        body = await request.json()
+        variant = ControllerVariant(body["controller_type"])
+    except (KeyError, TypeError, ValueError):
+        return _error("Select a controller type")
+
+    store: ConfigStore = request.app.state.config_store
+    profiles = store.config.adapter_profiles
+    index = slot.profile_index
+    previous_partner = profiles[index].combined_with
+    changes = {index: {"controller_type": variant, "combined_with": None}}
+    if previous_partner is not None:
+        changes[previous_partner] = {"combined_with": None}
+    if variant == ControllerVariant.COMBINED:
+        companion_id = body.get("companion_id")
+        companion = sessions.get(companion_id) if isinstance(companion_id, str) else None
+        if (
+            companion is None or companion is slot or companion.profile_index is None
+            or companion.bluetooth.device is None or companion.error
+        ):
+            return _error("Select a second Bluetooth adapter for the right Joy-Con")
+        right = companion.profile_index
+        if profiles[right].combined_with not in (None, index):
+            return _error("The second adapter already belongs to a Joycons pair", status=409)
+        changes[index] = {"controller_type": ControllerVariant.LEFT, "combined_with": right}
+        changes[right] = {"controller_type": ControllerVariant.RIGHT, "combined_with": index}
+
+    affected = [item for item in sessions.values() if item.profile_index in changes]
+    try:
+        for item in affected:
+            item.bluetooth.check_output_change()
+            if item.input_manager and item.input_manager.status()["mode"] == "macro":
+                raise ValueError("Stop the macro before changing controller type.")
+        store.update_adapter_profiles(changes)
+        configure_adapter_outputs(sessions, store.config.adapter_profiles)
+        for item in affected:
+            if item.input_manager:
+                item.input_manager.release_manual_input()
+    except ValueError as error:
+        return _error(str(error), status=409)
+    except OSError as error:
+        return _error(f"Could not save controller type: {error}", status=503)
+    return await adapters_get(request)
 
 
 def macro_is_running(request: Request, name: str) -> bool:
@@ -1085,6 +1146,7 @@ def build_app(
         Route("/api/adapters", adapters_get, methods=["GET"]),
         Route("/api/adapters/{session_id}/controller", adapter_assign, methods=["PUT"]),
         Route("/api/adapters/{session_id}/colours", adapter_colours, methods=["GET", "PATCH"]),
+        Route("/api/adapters/{session_id}/type", adapter_controller_type, methods=["PUT"]),
         Route("/api/adapters/{session_id}/preset/{name}", preset_activate, methods=["POST"]),
         Route(
             "/api/adapters/{session_id}/bluetooth",

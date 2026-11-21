@@ -1,3 +1,8 @@
+import {
+  isBluetoothControllerType,
+  type BluetoothControllerType,
+} from "./controller-variants";
+
 export type Adapter = {
   id: string;
   transport: string;
@@ -6,6 +11,8 @@ export type Adapter = {
   error: string | null;
   preset: string | null;
   macro_mode: boolean;
+  controller_type?: BluetoothControllerType;
+  combined_with?: string | null;
 };
 
 type Controller = { id: number; name: string; guid: string };
@@ -34,7 +41,9 @@ function isAdapter(value: unknown): value is Adapter {
     "preset" in value &&
     (value.preset === null || typeof value.preset === "string") &&
     "macro_mode" in value &&
-    typeof value.macro_mode === "boolean"
+    typeof value.macro_mode === "boolean" &&
+    (!("controller_type" in value) || isBluetoothControllerType(value.controller_type)) &&
+    (!("combined_with" in value) || value.combined_with === null || typeof value.combined_with === "string")
   );
 }
 
@@ -62,6 +71,14 @@ export type AdapterChange =
       kind: "preset";
       adapterId: string;
       preset: string;
+    }
+  | {
+      kind: "type";
+      adapterId: string;
+      output: { controller_type: BluetoothControllerType } | {
+        controller_type: "combined";
+        companion_id: string;
+      };
     };
 
 async function readResponse(response: Response): Promise<unknown> {
@@ -90,6 +107,13 @@ export async function requestAdapters(change?: AdapterChange): Promise<AdapterIn
       `/api/adapters/${encodeURIComponent(change.adapterId)}/preset/${encodeURIComponent(change.preset)}`,
       { method: "POST", signal: AbortSignal.timeout(6000) },
     );
+  } else if (change?.kind === "type") {
+    response = await fetch(`/api/adapters/${encodeURIComponent(change.adapterId)}/type`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(change.output),
+      signal: AbortSignal.timeout(6000),
+    });
   } else {
     response = await fetch("/api/adapters", {
       cache: "no-store",
