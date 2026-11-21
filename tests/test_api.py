@@ -367,7 +367,17 @@ def test_joycon_output_changes_radio_identity_colours_and_combined_routing(fx, t
     colours = "/api/adapters/primary/colours"
     try:
         with TestClient(app) as client:
-            assert client.put(output, json={"controller_type": "joycon_r"}).status_code == 200
+            with client.websocket_connect("/ws") as ws:
+                assert "has_joycons" not in ws.receive_json()
+                assert ws.receive_json()["type"] == "controllers"
+                ws.send_json({
+                    "type": "select_adapters", "adapter_ids": [primary.id, secondary.id],
+                })
+                assert "has_joycons" not in ws.receive_json()
+                assert client.put(output, json={"controller_type": "joycon_r"}).status_code == 200
+                assert ws.receive_json()["has_joycons"] is True
+                ws.send_json({"type": "select_adapter", "adapter_id": secondary.id})
+                assert "has_joycons" not in ws.receive_json()
             assert primary.mapping_variant() == ControllerVariant.RIGHT
             assert client.get(colours).json()["controller_colours"]["body"] == "#FF3C28"
             assert client.patch(colours, json={"body": "#fefa12"}).status_code == 200
@@ -396,7 +406,7 @@ def test_joycon_output_changes_radio_identity_colours_and_combined_routing(fx, t
             assert (reloaded[0].combined_with, reloaded[1].combined_with) == (1, 0)
             assert primary.mapping_variant() == secondary.mapping_variant() == ControllerVariant.COMBINED
             with client.websocket_connect("/ws") as ws:
-                assert ws.receive_json()["type"] == "status"
+                assert ws.receive_json()["has_joycons"] is True
                 assert ws.receive_json()["type"] == "controllers"
                 ws.send_json({"type": "select_adapter", "adapter_id": secondary.id})
                 assert ws.receive_json()["adapter_id"] == secondary.id

@@ -225,7 +225,7 @@ const BUTTON_GROUPS = {
 
 export function ManualControl() {
   const { connection, send, status, adapterStatuses } = useSocket();
-  const soloJoycons = status?.solo_joycons === true;
+  const hasJoycons = status?.has_joycons === true;
   const heldButtons = useRef<Set<ButtonName>>(new Set());
   const heldSticks = useRef<Set<StickInput>>(new Set());
   const analogSticks = useRef<Record<StickSide, StickPosition | null>>({
@@ -285,7 +285,7 @@ export function ManualControl() {
     if (clearHeld()) sendState();
   }, [clearHeld, sendState]);
 
-  const selection = JSON.stringify([soloJoycons, ...Object.keys(adapterStatuses)]);
+  const selection = JSON.stringify([hasJoycons, ...Object.keys(adapterStatuses)]);
   const previousSelection = useRef(selection);
   useEffect(() => {
     if (previousSelection.current !== selection) {
@@ -414,7 +414,7 @@ export function ManualControl() {
     <section className="w-full min-w-0">
       {/* The widest row needs 21.5rem: two 7rem pads, two 3rem buttons, and two 0.75rem gaps. */}
       <div className="@container flex max-w-sm flex-col gap-2 rounded-md border border-border bg-card p-3 text-card-foreground shadow-sm [--control-unit:min(1rem,calc(100cqw/21.5))]">
-        {soloJoycons && (
+        {hasJoycons && (
           <div className="grid grid-cols-4 gap-[calc(var(--control-unit)/4)]" aria-label="Joy-Con rail buttons">
             {BUTTON_GROUPS.rails.map(({ button, ...visual }) => (
               <ControlButton

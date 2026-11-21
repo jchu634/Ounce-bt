@@ -107,11 +107,11 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
         return slot.input_owner.id if slot else adapter_id
 
     def selection_status() -> dict:
-        solo_joycons = all(
-            adapter_id in sessions and sessions[adapter_id].mapping_variant().is_single_joycon
+        has_joycons = any(
+            adapter_id in sessions and sessions[adapter_id].mapping_variant() != ControllerVariant.PRO
             for adapter_id in selected
         )
-        output = {"solo_joycons": True} if solo_joycons else {}
+        output = {"has_joycons": True} if has_joycons else {}
         if len(selected) == 1 and target_for(selected[0]) == selected[0]:
             return {**managers[selected[0]].status_payload(), **output}
         statuses = {

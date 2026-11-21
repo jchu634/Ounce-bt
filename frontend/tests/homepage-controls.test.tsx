@@ -156,7 +156,7 @@ it("selects a Joy-Con Bluetooth output and saves its body and button colours", a
   }));
 });
 
-it("places separate solo Joy-Con rail buttons above the triggers", async () => {
+it("shows Joy-Con rail buttons above the triggers only when the selection includes Joy-Cons", async () => {
   vi.spyOn(socket, "start").mockImplementation(() => {});
   vi.spyOn(socket, "getState").mockReturnValue("open");
   const send = vi.spyOn(socket, "send").mockReturnValue(true);
@@ -168,7 +168,7 @@ it("places separate solo Joy-Con rail buttons above the triggers", async () => {
   await act(async () => root.render(<SocketProvider><ManualControl /></SocketProvider>));
   expect(container.querySelector('[aria-label="Joy-Con rail buttons"]')).toBeNull();
   await act(async () => receive?.({
-    type: "status", mode: "manual", macro: null, solo_joycons: true,
+    type: "status", mode: "manual", macro: null, has_joycons: true,
   }));
   const rails = container.querySelector('[aria-label="Joy-Con rail buttons"]');
   expect(rails?.nextElementSibling?.getAttribute("aria-label")).toBe("Triggers");
@@ -184,6 +184,8 @@ it("places separate solo Joy-Con rail buttons above the triggers", async () => {
   expect(send).toHaveBeenLastCalledWith({
     type: "state", buttons: [], left: [0, 0], right: [0, 0],
   });
+  await act(async () => receive?.({ type: "status", mode: "manual", macro: null }));
+  expect(container.querySelector('[aria-label="Joy-Con rail buttons"]')).toBeNull();
 });
 
 it("reports incompatible macro controls through an error toast", async () => {

@@ -58,7 +58,7 @@ export type StatusFrame = AdapterInputStatus & {
   type: "status";
   adapter_id?: string;
   adapter_statuses?: Record<string, AdapterInputStatus>;
-  solo_joycons?: boolean;
+  has_joycons?: boolean;
 };
 
 export type ControllerInfo = {
