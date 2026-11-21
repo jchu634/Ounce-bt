@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "name": "Press SL and SR",
+  "actions": [
+    {
+      "do": "press",
+      "button": "SL"
+    },
+    {
+      "do": "press",
+      "button": "SR"
+    },
+    {
+      "do": "wait",
+      "ms": 350
+    },
+    {
+      "do": "release",
+      "button": "SR"
+    },
+    {
+      "do": "release",
+      "button": "SL"
+    }
+  ]
+}
