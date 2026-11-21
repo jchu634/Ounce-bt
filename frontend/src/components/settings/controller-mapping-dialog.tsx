@@ -72,7 +72,7 @@ export function ControllerMappingDialog({
           <Button
             variant="ghost"
             size="icon-sm"
-            className="rounded-lg"
+            className="action-hover rounded-lg"
             aria-label="Controller settings"
             title="Controller settings"
           />
@@ -288,6 +288,7 @@ function MappingControls({
               type="button"
               size="icon"
               variant="ghost"
+              className="action-hover"
               aria-label="Edit mapping preset"
               title="Edit mapping preset"
               disabled={!activePreset || changing}

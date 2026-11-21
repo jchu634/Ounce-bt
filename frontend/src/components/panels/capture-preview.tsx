@@ -99,7 +99,7 @@ export function CapturePreview() {
               type="button"
               variant="outline"
               size="icon-lg"
-              className="size-12 border-white/20 bg-white/10 text-white hover:bg-white/20 hover:text-white sm:size-14"
+              className="capture-action size-12 border-white/20 bg-white/10 text-white hover:bg-white/20 sm:size-14"
               aria-label="Start capture input"
               title="Start capture input"
               disabled={starting || requestingPermission}

@@ -636,8 +636,9 @@ export const MacroEditor = forwardRef<MacroEditorHandle, MacroEditorProps>(
           }}
         >
           <TabsList aria-label="Macro editor mode">
-            <TabsTrigger value="blocks">Blocks</TabsTrigger>
+            <TabsTrigger value="blocks" className="action-hover">Blocks</TabsTrigger>
             <TabsTrigger
+              className="action-hover"
               value="json"
               disabled={editorMode === "blocks" && !blockValid}
             >
@@ -684,7 +685,7 @@ export const MacroEditor = forwardRef<MacroEditorHandle, MacroEditorProps>(
             if (!renaming) setRenameOpen(open);
           }}
         >
-          <DialogContent>
+          <DialogContent className="action-hover-group">
             <DialogHeader>
               <DialogTitle>
                 {overwriteName === null ? "Rename macro" : "Overwrite macro?"}
@@ -755,7 +756,7 @@ export const MacroEditor = forwardRef<MacroEditorHandle, MacroEditorProps>(
             if (!open && !deleting) setDeletePromptOpen(false);
           }}
         >
-          <DialogContent>
+          <DialogContent className="action-hover-group">
             <DialogHeader>
               <DialogTitle>Delete macro?</DialogTitle>
               <DialogDescription>
@@ -790,7 +791,7 @@ export const MacroEditor = forwardRef<MacroEditorHandle, MacroEditorProps>(
             if (!open) cancelNavigation();
           }}
         >
-          <DialogContent showCloseButton={false}>
+          <DialogContent className="action-hover-group" showCloseButton={false}>
             <DialogHeader>
               <DialogTitle>Leave without saving?</DialogTitle>
               <DialogDescription>

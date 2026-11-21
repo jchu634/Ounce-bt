@@ -73,6 +73,7 @@ export function CapturePreviewSkin({
               onClick={() => setExpanded((current) => !current)}
               aria-label={expanded ? "Exit expanded preview" : "Maximise preview"}
               aria-pressed={expanded}
+              className="capture-action capture-fullscreen"
               title={expanded ? "Exit expanded preview" : "Maximise preview"}
             >
               {expanded ? (

@@ -215,7 +215,7 @@ export function SettingsDialog({ ref }: { ref?: Ref<SettingsDialogHandle> }) {
           General Settings
           <GearSixIcon weight="fill" className="size-5" />
         </DialogTrigger>
-        <DialogContent className="flex h-4/5 min-w-4/5 flex-col bg-background">
+        <DialogContent className="action-hover-group flex h-4/5 min-w-4/5 flex-col bg-background">
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
 
@@ -401,7 +401,7 @@ export function SettingsDialog({ ref }: { ref?: Ref<SettingsDialogHandle> }) {
           if (!nextOpen) pendingDiscard.current = null;
         }}
       >
-        <DialogContent showCloseButton={false}>
+        <DialogContent className="action-hover-group" showCloseButton={false}>
           <DialogHeader>
             <DialogTitle>Leave without saving?</DialogTitle>
             <DialogDescription>

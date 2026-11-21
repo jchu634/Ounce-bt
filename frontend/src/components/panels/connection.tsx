@@ -542,7 +542,7 @@ function ConnectionCard({
             <Button
               variant="outline"
               size="icon-sm"
-              className="rounded-lg"
+              className="action-hover rounded-lg"
               aria-label={pairingAction}
               aria-pressed={pairing}
               title={pairingAction}
@@ -580,6 +580,7 @@ function ConnectionCard({
           <Button
             variant="ghost"
             size="icon-sm"
+            className="action-hover"
             aria-label="Rename Switch profile"
             title="Rename Switch profile"
             disabled={disabled || !address}
@@ -601,7 +602,7 @@ function ConnectionCard({
                   <Button
                     variant="outline"
                     size="icon-sm"
-                    className="rounded-lg text-destructive hover:text-destructive"
+                    className="switch-delete rounded-lg text-destructive dark:text-red-400"
                     aria-label="Delete Switch profile"
                     title="Delete Switch profile"
                     disabled={disabled || !address || status?.state === "reconnecting"}

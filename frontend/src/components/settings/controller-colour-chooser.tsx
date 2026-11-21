@@ -136,7 +136,7 @@ export function ControllerColourChooser({
                 <Button
                   variant="ghost"
                   size="icon-xs"
-                  className="size-7 rounded-md"
+                  className="action-hover size-7 rounded-md"
                 />
               }
               aria-label={`Custom ${label.toLowerCase()} colour`}
@@ -162,7 +162,7 @@ export function ControllerColourChooser({
       <button
         key={swatch}
         type="button"
-        className="size-6 shrink-0 rounded-md border border-white/25 ring-1 ring-border outline-none hover:ring-2 focus-visible:ring-2 focus-visible:ring-ring aria-pressed:ring-2 aria-pressed:ring-primary aria-pressed:ring-offset-2 aria-pressed:ring-offset-background"
+        className="size-6 shrink-0 rounded-md border border-white/25 ring-1 ring-border outline-none hover:ring-2 hover:ring-[color:var(--action-hover-color)] focus-visible:ring-2 focus-visible:ring-ring aria-pressed:ring-2 aria-pressed:ring-primary aria-pressed:ring-offset-2 aria-pressed:ring-offset-background"
         style={{ backgroundColor: swatch }}
         aria-label={`${label}: ${name} ${swatch}`}
         aria-pressed={colour === swatch}

@@ -1311,7 +1311,7 @@ function PresetMappingEditor({
             }}
           >
             <SelectTrigger className="h-8 rounded-md border-border bg-background px-2 text-xs text-foreground">
-              <SelectValue>{controller.label}</SelectValue>
+              <SelectValue className="ps-1">{controller.label}</SelectValue>
             </SelectTrigger>
             <SelectContent align="start" alignItemWithTrigger={false} className="w-60 min-w-(--anchor-width)">
               <SelectGroup>

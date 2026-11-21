@@ -169,7 +169,7 @@ export function ControllerColoursDialog({
           <ControllerPreview colours={saved ?? defaults} variant={controllerType} upright={upright} />
         </span>
       </DialogTrigger>
-      <DialogContent className="app-scrollbar max-h-[calc(100dvh-2rem)] gap-4 overflow-y-auto bg-background sm:max-w-2xl">
+      <DialogContent className="action-hover-group app-scrollbar max-h-[calc(100dvh-2rem)] gap-4 overflow-y-auto bg-background sm:max-w-2xl">
         <DialogHeader className="pr-8">
           <DialogTitle>Controller colours</DialogTitle>
           <DialogDescription>
@@ -274,7 +274,7 @@ export function ControllerColoursDialog({
           </DialogFooter>
         )}
         <Dialog open={discardOpen} onOpenChange={setDiscardOpen}>
-          <DialogContent showCloseButton={false}>
+          <DialogContent className="action-hover-group" showCloseButton={false}>
             <DialogHeader>
               <DialogTitle>Discard colour changes?</DialogTitle>
               <DialogDescription>
