@@ -56,7 +56,7 @@ try
             '--include-data-dir=frontend/dist=frontend/dist',
             '--include-data-files=presets/xbox.json=presets/xbox.json',
             '--include-data-files=presets/playstation.json=presets/playstation.json',
-            '--include-data-files=presets/switch_pro.json=presets/switch_pro.json',
+            '--include-data-files=presets/switch.json=presets/switch.json',
             '--report=build/windows/nuitka-report.xml',
             'main.py'
         )

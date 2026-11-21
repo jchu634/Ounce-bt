@@ -46,6 +46,7 @@ from lib.server.files import (
     JsonDocStore,
     UnsafeNameError,
     parse_json_text,
+    validate_name,
 )
 from lib.server.protocol import (
     EventMessage,
@@ -649,7 +650,10 @@ async def preset_get(request: Request) -> Response:
 
 
 async def preset_put(request: Request) -> Response:
-    name = request.path_params["name"]
+    try:
+        name = validate_name(request.path_params["name"])
+    except UnsafeNameError as error:
+        return _error(str(error), status=403)
     if preset_name_is_builtin(name):
         return _error(
             f"'{name}' is a built-in preset; duplicate it under a new "

@@ -572,10 +572,19 @@ def test_presets_list(fx):
     with fx.client() as c:
         r = c.get("/api/presets").json()
         names = {p["name"] for p in r["presets"]}
-        assert {"Xbox", "PlayStation", "Switch Pro Controller"} <= names
+        assert {"Xbox", "PlayStation", "Switch"} <= names
         filenames = {p["filename"] for p in r["presets"]}
-        assert {"xbox", "playstation", "switch_pro"} <= filenames
+        assert {"xbox", "playstation", "switch"} <= filenames
         assert r["active"] == "xbox"
+
+
+def test_switch_metadata_comes_from_bundled_preset_when_custom_directory_is_empty(fx):
+    (fx.presets_dir / "switch.json").unlink()
+    with fx.client() as client:
+        presets = client.get("/api/presets").json()["presets"]
+    switch = next(preset for preset in presets if preset["filename"] == "switch")
+    assert switch["name"] == "Switch"
+    assert switch["description"] == "Default Switch Pro Controller / Joycon mapping"
 
 
 def test_preset_builtin_guards(fx):
@@ -585,10 +594,10 @@ def test_preset_builtin_guards(fx):
 
 
 def test_preset_custom_crud_and_activate(fx):
-    contents = (
-        '{"name": "Custom", "buttons": {"0": "A"}, '
-        '"left_stick": {"x_axis": 0, "y_axis": 1}}'
-    )
+    contents = json.dumps({
+        "name": "Custom", "version": 2,
+        "mappings": {"pro": {"buttons": {"0": "A"}}, "joycon_l": {}, "joycon_r": {}, "combined": {}},
+    })
     with fx.client() as c:
         assert c.put("/api/presets/my-pad", json={"contents": contents}).status_code == 200
         listed = c.get("/api/presets").json()["presets"]
@@ -622,10 +631,13 @@ def test_preset_validation_path(fx):
     with fx.client() as c:
         r = c.put(
             "/api/presets/bad-pad",
-            json={"contents": '{"buttons": {"0": "NOT_A_BUTTON"}}'},
+            json={"contents": json.dumps({
+                "version": 2,
+                "mappings": {"pro": {"buttons": {"0": "NOT_A_BUTTON"}}, "joycon_l": {}, "joycon_r": {}, "combined": {}},
+            })},
         )
         assert r.status_code == 400
-        assert r.json()["path"] == ["buttons", "0"]
+        assert r.json()["path"] == ["mappings", "pro", "buttons", "0"]
 
 
 def test_preset_name_rejects_path_traversal(fx):

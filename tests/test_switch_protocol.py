@@ -1,6 +1,7 @@
 import pytest
 
 from lib.controller import ControllerTypes, ControllerVariant
+from lib.input.presets import PresetValidationError, validate_preset
 from lib.input.state import (
     Button,
     ControllerState,
@@ -34,6 +35,29 @@ def test_joycon_reports_contain_only_their_own_buttons_and_rotated_stick(
     report = protocol.get_report()
     assert report[4:7] == button_bytes
     assert report[7:13] == stick_bytes
+
+
+def test_v2_controller_mappings_resolve_independently():
+    data = {
+        "version": 2,
+        "mappings": {
+            "pro": {"buttons": {"0": "A", "4": "L"}, "left_stick": {"x_axis": 3, "y_axis": 4}},
+            "joycon_l": {"buttons": {"7": "SR_L"}, "dpad": {"hat": None}},
+            "joycon_r": {"buttons": {"0": "X", "4": "SL_R"}, "right_stick": {"x_axis": 3, "y_axis": 4}},
+            "combined": {"buttons": {"0": "B"}},
+        },
+    }
+    preset = validate_preset(data)
+    assert preset.mapping_for(ControllerVariant.PRO).button_map == {0: Button.A, 4: Button.L}
+    assert preset.mapping_for(ControllerVariant.LEFT).button_map == {7: Button.SR_L}
+    assert preset.mapping_for(ControllerVariant.RIGHT).button_map == {0: Button.X, 4: Button.SL_R}
+    assert preset.mapping_for(ControllerVariant.RIGHT).right_stick == (3, 4)
+    assert preset.mapping_for(ControllerVariant.COMBINED).button_map == {0: Button.B}
+
+    data["mappings"]["joycon_l"]["buttons"]["7"] = "invalid"
+    with pytest.raises(PresetValidationError) as invalid:
+        validate_preset(data)
+    assert invalid.value.path == ["mappings", "joycon_l", "buttons", "7"]
 
 
 @pytest.mark.parametrize(

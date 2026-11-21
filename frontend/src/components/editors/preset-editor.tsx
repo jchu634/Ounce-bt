@@ -838,17 +838,6 @@ const isControllerLayout = (value: unknown): value is ControllerLayout =>
   value === "xbox" ||
   value === "playstation";
 
-const SIDEWAYS_BUTTONS: Record<"joycon_l" | "joycon_r", Partial<Record<ButtonName, ButtonName>>> = {
-  joycon_l: {
-    A: "DOWN", B: "LEFT", X: "RIGHT", Y: "UP", L: "SL_L", R: "SR_L",
-    ZR: "L", PLUS: "MINUS", HOME: "CAPTURE",
-  },
-  joycon_r: {
-    A: "X", B: "A", X: "Y", Y: "B", L: "SL_R", R: "SR_R",
-    ZL: "R", MINUS: "PLUS", STICK_L: "STICK_R",
-  },
-};
-
 const MAPPING_FIELDS: ReadonlyArray<"buttons" | "triggers"> = [
   "buttons",
   "triggers",
@@ -861,36 +850,6 @@ function isMappingObject(value: unknown): value is Record<string, unknown> {
 function stickMapping(value: unknown, offset: number) {
   const stick = isMappingObject(value) ? value : {};
   return { x_axis: offset, y_axis: offset + 1, ...stick };
-}
-
-function defaultOutputMapping(
-  document: Record<string, unknown>,
-  variant: Exclude<ControllerVariant, "pro">,
-): Record<string, unknown> {
-  const mapping = {
-    buttons: document.buttons ?? {},
-    triggers: document.triggers ?? {},
-    left_stick: stickMapping(document.left_stick, 0),
-    right_stick: stickMapping(document.right_stick, 2),
-    dpad: document.dpad ?? { hat: 0 },
-  };
-  if (variant === "combined") return mapping;
-  const translate = (entries: unknown) => {
-    if (!isMappingObject(entries)) return entries;
-    return Object.fromEntries(Object.entries(entries).flatMap(([index, target]) => {
-      if (!isButtonName(target)) return [[index, target]];
-      const output = SIDEWAYS_BUTTONS[variant][target] ?? target;
-      return JOYCON_BUTTONS[variant].includes(output) ? [[index, output]] : [];
-    }));
-  };
-
-  return {
-    ...mapping,
-    buttons: translate(mapping.buttons),
-    triggers: translate(mapping.triggers),
-    right_stick: variant === "joycon_r" ? mapping.left_stick : mapping.right_stick,
-    dpad: { hat: null },
-  };
 }
 
 function parsePreset(value: string, variant: ControllerVariant): ParsedPreset {
@@ -908,17 +867,14 @@ function parsePreset(value: string, variant: ControllerVariant): ParsedPreset {
   }
 
   const document = parsed;
-  const variants = document.mappings ?? {};
-  if (!isMappingObject(variants)) {
-    return { kind: "invalid", message: 'The preset "mappings" field must be an object.' };
+  if (document.version !== 2) {
+    return { kind: "invalid", message: "This editor requires a version 2 preset." };
   }
-  const mappings = {
-    joycon_l: defaultOutputMapping(document, "joycon_l"),
-    joycon_r: defaultOutputMapping(document, "joycon_r"),
-    combined: defaultOutputMapping(document, "combined"),
-    ...variants,
-  };
-  const mapping = variant === "pro" ? document : mappings[variant];
+  const mappings = document.mappings;
+  if (!isMappingObject(mappings) || !CONTROLLER_VARIANTS.every((item) => isMappingObject(mappings[item]))) {
+    return { kind: "invalid", message: "Version 2 presets require mappings for all four controllers." };
+  }
+  const mapping = mappings[variant];
   if (!isMappingObject(mapping)) {
     return { kind: "invalid", message: "The selected controller mapping must be an object." };
   }
@@ -1041,9 +997,7 @@ function PresetMappingEditor({
   const updateMapping = useCallback((changes: Record<string, unknown>) => {
     if (disabled || parsed.kind === "invalid") return;
     const mapping = { ...parsed.mapping, ...changes };
-    const nextDocument = variant === "pro"
-      ? { ...mapping, mappings: parsed.mappings }
-      : { ...parsed.document, mappings: { ...parsed.mappings, [variant]: mapping } };
+    const nextDocument = { ...parsed.document, mappings: { ...parsed.mappings, [variant]: mapping } };
     onChange(`${JSON.stringify(nextDocument, null, 2)}\n`);
   }, [disabled, parsed, variant, onChange]);
 
@@ -1400,7 +1354,7 @@ function PresetMappingEditor({
             <SelectTrigger className="h-8 rounded-md border-border bg-background px-2 text-xs text-foreground">
               <SelectValue>{controller.label}</SelectValue>
             </SelectTrigger>
-            <SelectContent align="start" className="w-48">
+            <SelectContent align="start" alignItemWithTrigger={false} className="w-60 min-w-(--anchor-width)">
               <SelectGroup>
                 {CONTROLLER_LAYOUTS.map(({ value, label, image: Icon }) => (
                   <SelectItem key={value} value={value}>

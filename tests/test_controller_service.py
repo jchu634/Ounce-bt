@@ -22,7 +22,7 @@ def test_controller_type_detection_uses_name_and_sdl_vendor_guid():
     assert detect_controller_preset("Xbox Wireless Controller") == "xbox"
     assert detect_controller_preset("DualSense Wireless Controller") == "playstation"
     assert detect_controller_preset("Sony Interactive Entertainment Pad") == "playstation"
-    assert detect_controller_preset("Nintendo Switch Pro Controller") == "switch_pro"
+    assert detect_controller_preset("Nintendo Switch Pro Controller") == "switch"
     assert (
         detect_controller_preset(
             "Wireless Controller", "030000004c050000cc09000000000000"

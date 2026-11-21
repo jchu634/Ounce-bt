@@ -154,13 +154,19 @@ def test_validate_macro_deep_nesting():
 
 def _ok_preset():
     return {
+        "version": 2,
         "name": "T",
         "rumble_enabled": False,
-        "buttons": {"0": "B", "1": "A"},
-        "triggers": {"4": "ZL"},
-        "left_stick": {"x_axis": 0, "y_axis": 1},
-        "right_stick": {"x_axis": 3, "y_axis": 4},
-        "dpad": {"hat": 0},
+        "mappings": {
+            "pro": {
+                "buttons": {"0": "B", "1": "A"},
+                "triggers": {"4": "ZL"},
+                "left_stick": {"x_axis": 0, "y_axis": 1},
+                "right_stick": {"x_axis": 3, "y_axis": 4},
+                "dpad": {"hat": 0},
+            },
+            "joycon_l": {}, "joycon_r": {}, "combined": {},
+        },
     }
 
 
@@ -173,12 +179,16 @@ def test_validate_preset_ok():
 @pytest.mark.parametrize(
     ("mutate", "path"),
     [
-        (lambda p: p["buttons"].update({"2": "QQ"}), ["buttons", "2"]),
-        (lambda p: p["buttons"].update({"x": "A"}), ["buttons", "x"]),
-        (lambda p: p["triggers"].update({"9": 5}), ["triggers", "9"]),
-        (lambda p: p["left_stick"].update(x_axis=-1), ["left_stick", "x_axis"]),
-        (lambda p: p["dpad"].update(hat="zero"), ["dpad", "hat"]),
+        (lambda p: p["mappings"]["pro"]["buttons"].update({"2": "QQ"}), ["mappings", "pro", "buttons", "2"]),
+        (lambda p: p["mappings"]["pro"]["buttons"].update({"x": "A"}), ["mappings", "pro", "buttons", "x"]),
+        (lambda p: p["mappings"]["pro"]["triggers"].update({"9": 5}), ["mappings", "pro", "triggers", "9"]),
+        (lambda p: p["mappings"]["pro"]["left_stick"].update(x_axis=-1), ["mappings", "pro", "left_stick", "x_axis"]),
+        (lambda p: p["mappings"]["pro"]["dpad"].update(hat="zero"), ["mappings", "pro", "dpad", "hat"]),
         (lambda p: p.update(rumble_enabled="yes"), ["rumble_enabled"]),
+        (lambda p: p.update(version=1), ["version"]),
+        (lambda p: p.pop("version"), ["version"]),
+        (lambda p: p["mappings"].pop("pro"), ["mappings", "pro"]),
+        (lambda p: p["mappings"].pop("joycon_r"), ["mappings", "joycon_r"]),
     ],
 )
 def test_validate_preset_failures(mutate, path):

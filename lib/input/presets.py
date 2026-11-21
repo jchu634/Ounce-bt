@@ -16,7 +16,8 @@ logger = logging.getLogger("switch_pair")
 
 BUILTIN_PRESETS_DIR = Path(__file__).resolve().parents[2] / "presets"
 PRESETS_DIR = BUILTIN_PRESETS_DIR
-BUILTIN_PRESETS = frozenset({"xbox", "playstation", "switch_pro"})
+BUILTIN_PRESETS = frozenset({"xbox", "playstation", "switch"})
+PRESET_VERSION = 2
 
 # SDL GUIDs store the USB vendor ID as a little-endian 16-bit value at
 # bytes 4-5. These are the vendors for Microsoft's, Sony's, and Nintendo's
@@ -24,7 +25,7 @@ BUILTIN_PRESETS = frozenset({"xbox", "playstation", "switch_pro"})
 _VENDOR_PRESETS = {
     "5e04": "xbox",
     "4c05": "playstation",
-    "7e05": "switch_pro",
+    "7e05": "switch",
 }
 
 _WRITE_LOCK = threading.Lock()
@@ -142,27 +143,33 @@ def validate_preset(data: dict, *, standard_gamepad: bool = False) -> PresetConf
     """
     if not isinstance(data, dict):
         raise PresetValidationError([], "must be a JSON object")
+    version = data.get("version")
+    if type(version) is not int or version != PRESET_VERSION:
+        raise PresetValidationError(["version"], f"must be {PRESET_VERSION}")
     if "name" in data and not isinstance(data["name"], str):
         raise PresetValidationError(["name"], "must be a string")
     if "rumble_enabled" in data and not isinstance(data["rumble_enabled"], bool):
         raise PresetValidationError(["rumble_enabled"], "must be a boolean")
 
-    _validate_mapping(data)
-    mappings = data.get("mappings", {})
+    mappings = data.get("mappings")
     if not isinstance(mappings, dict):
         raise PresetValidationError(["mappings"], "must be an object")
-    pro = _build_preset(data, data, standard_gamepad=standard_gamepad)
-    resolved = {}
-    for key, mapping in mappings.items():
-        if key not in (ControllerVariant.LEFT, ControllerVariant.RIGHT, ControllerVariant.COMBINED):
+    for key in mappings:
+        if key not in tuple(ControllerVariant):
             raise PresetValidationError(["mappings", key], "unknown controller variant")
+    resolved = {}
+    for variant in ControllerVariant:
+        if variant not in mappings:
+            raise PresetValidationError(["mappings", variant], "missing controller mapping")
+        mapping = mappings[variant]
         if not isinstance(mapping, dict):
-            raise PresetValidationError(["mappings", key], "must be an object")
+            raise PresetValidationError(["mappings", variant], "must be an object")
         try:
             _validate_mapping(mapping)
         except PresetValidationError as error:
-            raise PresetValidationError(["mappings", key, *error.path], error.message) from None
-        resolved[ControllerVariant(key)] = _build_preset(mapping, data, standard_gamepad=standard_gamepad)
+            raise PresetValidationError(["mappings", variant, *error.path], error.message) from None
+        resolved[variant] = _build_preset(mapping, data, standard_gamepad=standard_gamepad)
+    pro = resolved.pop(ControllerVariant.PRO)
     return replace(pro, mappings=resolved)
 
 
@@ -303,9 +310,9 @@ def detect_controller_preset(name: str, guid: str = "") -> str:
         return "playstation"
     if any(
         marker in normalized_name
-        for marker in ("switch_pro", "joy-con", "joycon", "nintendo")
+        for marker in ("switch", "joy-con", "joycon", "nintendo")
     ):
-        return "switch_pro"
+        return "switch"
     if any(marker in normalized_name for marker in ("xbox", "x-box", "xinput")):
         return "xbox"
 

@@ -24,7 +24,7 @@ export const CONTROLLER_LAYOUTS: readonly ControllerLayoutDefinition[] = [
   GENERIC_CONTROLLER_LAYOUT,
   {
     value: "switch",
-    label: "Switch Pro",
+    label: "Switch",
     image: SwitchProController,
     buttonNames: [
       "A",
@@ -55,7 +55,7 @@ export const CONTROLLER_LAYOUTS: readonly ControllerLayoutDefinition[] = [
   },
   {
     value: "xbox",
-    label: "Xbox Series",
+    label: "Xbox",
     image: XboxSeriesController,
     buttonNames: [
       "A",
