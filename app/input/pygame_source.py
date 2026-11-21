@@ -4,6 +4,7 @@ import logging
 import sys
 import threading
 import time
+from collections.abc import Callable
 
 # TODO Make Lazy for python 3.15
 from pygame import event, joystick
@@ -11,6 +12,7 @@ from pygame import init as pygame_init
 from pygame._sdl2 import controller as sdl_controller
 
 from app.input.switch2_pro import Switch2ProInput, is_wired_switch2_pro
+from lib.controller import ControllerVariant
 from lib.input.presets import PresetConfig
 from lib.input.rumble import RumbleData
 from lib.input.state import Button, ControllerState
@@ -116,6 +118,7 @@ class PygameInputThread(threading.Thread):
         pump: bool = True,
         start_paused: bool = False,
         instance_id: int | None = None,
+        mapping_variant: Callable[[], ControllerVariant] | None = None,
     ):
         super().__init__(name="pygame-input", daemon=True)
         self._queue = command_queue
@@ -125,6 +128,10 @@ class PygameInputThread(threading.Thread):
         self._deadzone = deadzone
         self._trigger_threshold = trigger_threshold
         self._pump = pump
+        self._mappings = {
+            variant: preset.mapping_for(variant) for variant in ControllerVariant
+        } if preset is not None and mapping_variant is not None else {}
+        self._mapping_variant = mapping_variant
 
         self._standard_gamepad = (
             preset.standard_gamepad if preset is not None else button_map is None
@@ -281,6 +288,7 @@ class PygameInputThread(threading.Thread):
         n_axes = stick.get_numaxes()
         n_buttons = stick.get_numbuttons()
         n_hats = stick.get_numhats()
+        variant = None
 
         while not self._stop_event.is_set():
             # Some SDL drivers accumulate state internally and can stall if
@@ -295,6 +303,17 @@ class PygameInputThread(threading.Thread):
             if not self._pause.is_set():
                 time.sleep(self._period)
                 continue
+
+            if self._mappings and self._mapping_variant is not None:
+                current_variant = self._mapping_variant()
+                if current_variant != variant:
+                    variant = current_variant
+                    mapping = self._mappings[variant]
+                    self._button_map = mapping.button_map
+                    self._trigger_map = mapping.trigger_map
+                    self._left_stick = mapping.left_stick
+                    self._right_stick = mapping.right_stick
+                    self._dpad_hat = mapping.dpad_hat
 
             buttons = Button(0)
 

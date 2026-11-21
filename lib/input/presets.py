@@ -9,7 +9,8 @@ import threading
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from lib.input.state import Button
+from lib.controller import ControllerVariant
+from lib.input.state import HORIZONTAL_BUTTONS, JOYCON_BUTTONS, Button
 
 logger = logging.getLogger("switch_pair")
 
@@ -47,6 +48,7 @@ class PresetValidationError(ValueError):
 
     def __init__(self, path: list[str | int], message: str):
         self.path = path
+        self.message = message
         where = "".join(
             f"[{p}]" if isinstance(p, int) else f".{p}" for p in path
         ).lstrip(".")
@@ -74,6 +76,15 @@ class PresetConfig:
     # Internal choice for the built-in Xbox preset, never inferred for a custom
     # preset whose raw indices may have been deliberately edited by the user.
     standard_gamepad: bool = False
+    mappings: dict[ControllerVariant, PresetConfig] = field(default_factory=dict)
+
+    def mapping_for(self, variant: ControllerVariant) -> PresetConfig:
+        if variant == ControllerVariant.PRO:
+            return self
+        mapping = self.mappings.get(variant)
+        if mapping is None:
+            mapping = _default_mapping(self, variant)
+        return mapping
 
     @classmethod
     def default(cls) -> PresetConfig:
@@ -82,7 +93,7 @@ class PresetConfig:
         Used when a named preset cannot be loaded so the controller remains
         usable.
         """
-        return cls(
+        preset = cls(
             name="Default",
             standard_gamepad=True,
             rumble_enabled=True,
@@ -104,6 +115,7 @@ class PresetConfig:
             right_stick=(2, 3),
             dpad_hat=0,
         )
+        return preset
 
 
 def load_preset(source: str | Path) -> PresetConfig:
@@ -119,13 +131,10 @@ def load_preset(source: str | Path) -> PresetConfig:
         data = json.load(f)
     if not isinstance(data, dict):
         raise TypeError(f"Preset {path} must be a JSON object")
-    preset = _build_preset(data)
-    if path == BUILTIN_PRESETS_DIR / "xbox.json":
-        preset = replace(preset, standard_gamepad=True)
-    return preset
+    return validate_preset(data, standard_gamepad=path == BUILTIN_PRESETS_DIR / "xbox.json")
 
 
-def validate_preset(data: dict) -> PresetConfig:
+def validate_preset(data: dict, *, standard_gamepad: bool = False) -> PresetConfig:
     """Validate a parsed preset document and build its config.
 
     Raises :class:`PresetValidationError` (with a JSON path) on problems,
@@ -138,8 +147,28 @@ def validate_preset(data: dict) -> PresetConfig:
     if "rumble_enabled" in data and not isinstance(data["rumble_enabled"], bool):
         raise PresetValidationError(["rumble_enabled"], "must be a boolean")
 
+    _validate_mapping(data)
+    mappings = data.get("mappings", {})
+    if not isinstance(mappings, dict):
+        raise PresetValidationError(["mappings"], "must be an object")
+    pro = _build_preset(data, data, standard_gamepad=standard_gamepad)
+    resolved = {}
+    for key, mapping in mappings.items():
+        if key not in (ControllerVariant.LEFT, ControllerVariant.RIGHT, ControllerVariant.COMBINED):
+            raise PresetValidationError(["mappings", key], "unknown controller variant")
+        if not isinstance(mapping, dict):
+            raise PresetValidationError(["mappings", key], "must be an object")
+        try:
+            _validate_mapping(mapping)
+        except PresetValidationError as error:
+            raise PresetValidationError(["mappings", key, *error.path], error.message) from None
+        resolved[ControllerVariant(key)] = _build_preset(mapping, data, standard_gamepad=standard_gamepad)
+    return replace(pro, mappings=resolved)
+
+
+def _validate_mapping(data: dict) -> None:
     for key in ("buttons", "triggers"):
-        raw = data.get(key) or {}
+        raw = data.get(key, {})
         if not isinstance(raw, dict):
             raise PresetValidationError([key], "must be an object")
         for idx, value in raw.items():
@@ -161,7 +190,7 @@ def validate_preset(data: dict) -> PresetConfig:
                 ) from None
 
     for key in ("left_stick", "right_stick"):
-        raw = data.get(key) or {}
+        raw = data.get(key, {})
         if not isinstance(raw, dict):
             raise PresetValidationError([key], "must be an object")
         for axis in ("x_axis", "y_axis"):
@@ -172,7 +201,7 @@ def validate_preset(data: dict) -> PresetConfig:
                         [key, axis], "must be a non-negative integer axis index"
                     )
 
-    dpad = data.get("dpad") or {}
+    dpad = data.get("dpad", {})
     if not isinstance(dpad, dict):
         raise PresetValidationError(["dpad"], "must be an object")
     if "hat" in dpad and dpad["hat"] is not None:
@@ -181,9 +210,6 @@ def validate_preset(data: dict) -> PresetConfig:
             raise PresetValidationError(
                 ["dpad", "hat"], "must be a non-negative integer or null"
             )
-
-    return _build_preset(data)
-
 
 def preset_name_is_builtin(name: str) -> bool:
     return name in BUILTIN_PRESETS
@@ -225,38 +251,25 @@ def delete_preset(name: str) -> None:
 
 def list_preset_infos() -> list[dict]:
     """Metadata for every available preset (builtins + customs)."""
-    infos: dict[str, dict] = {}
-    if PRESETS_DIR.is_dir():
-        for path in sorted(PRESETS_DIR.glob("*.json")):
-            if not path.is_file():
-                continue
-            filename = path.stem
-            name = filename
-            description = ""
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    name = str(data.get("name"))
-                    description = str(data.get("description", ""))
-            except (json.JSONDecodeError, OSError):
-                description = "(unreadable)"
-            infos[filename] = {
-                "name": name,
-                "filename": filename,
-                "builtin": filename in BUILTIN_PRESETS,
-                "description": description,
-            }
-    for filename in sorted(BUILTIN_PRESETS):
-        infos.setdefault(
-            filename,
-            {
-                "name": filename,
-                "filename": filename,
-                "builtin": True,
-                "description": "",
-            },
-        )
-    return [infos[k] for k in sorted(infos)]
+    filenames = BUILTIN_PRESETS | {path.stem for path in PRESETS_DIR.glob("*.json") if path.is_file()}
+    infos = []
+    for filename in sorted(filenames):
+        name = filename
+        description = ""
+        try:
+            data = json.loads(read_preset_text(filename))
+            if isinstance(data, dict):
+                name = str(data.get("name", filename))
+                description = str(data.get("description", ""))
+        except (ValueError, OSError):
+            description = "(unreadable)"
+        infos.append({
+            "name": name,
+            "filename": filename,
+            "builtin": filename in BUILTIN_PRESETS,
+            "description": description,
+        })
+    return infos
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,7 +303,7 @@ def detect_controller_preset(name: str, guid: str = "") -> str:
         return "playstation"
     if any(
         marker in normalized_name
-        for marker in ("switch", "joy-con", "joycon", "nintendo")
+        for marker in ("switch_pro", "joy-con", "joycon", "nintendo")
     ):
         return "switch_pro"
     if any(marker in normalized_name for marker in ("xbox", "x-box", "xinput")):
@@ -361,10 +374,7 @@ def _resolve_preset_path(source: str | Path) -> Path:
     return path
 
 
-def _build_preset(data: dict) -> PresetConfig:
-    name = str(data.get("name", "Unnamed"))
-    rumble_enabled = bool(data.get("rumble_enabled", True))
-
+def _build_preset(data: dict, metadata: dict, *, standard_gamepad: bool) -> PresetConfig:
     button_map = _parse_button_map(data.get("buttons") or {}, "buttons")
     trigger_map = _parse_button_map(data.get("triggers") or {}, "triggers")
 
@@ -378,13 +388,34 @@ def _build_preset(data: dict) -> PresetConfig:
     dpad_hat = int(dpad_hat_raw) if dpad_hat_raw is not None else None
 
     return PresetConfig(
-        name=name,
-        rumble_enabled=rumble_enabled,
+        name=metadata.get("name", "Unnamed"),
+        rumble_enabled=metadata.get("rumble_enabled", True),
+        standard_gamepad=standard_gamepad,
         button_map=button_map,
         trigger_map=trigger_map,
         left_stick=left_stick,
         right_stick=right_stick,
         dpad_hat=dpad_hat,
+    )
+
+
+def _default_mapping(pro: PresetConfig, variant: ControllerVariant) -> PresetConfig:
+    if variant == ControllerVariant.COMBINED:
+        return replace(pro, mappings={})
+    targets = HORIZONTAL_BUTTONS[variant]
+    mask = JOYCON_BUTTONS[variant.bluetooth_type]
+
+    def translate(mapping: dict[int, Button]) -> dict[int, Button]:
+        translated = {index: targets.get(button, button) for index, button in mapping.items()}
+        return {index: button for index, button in translated.items() if button & mask}
+
+    return replace(
+        pro,
+        button_map=translate(pro.button_map),
+        trigger_map=translate(pro.trigger_map),
+        right_stick=pro.left_stick if variant == ControllerVariant.RIGHT else pro.right_stick,
+        dpad_hat=None,
+        mappings={},
     )
 
 

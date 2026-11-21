@@ -780,6 +780,8 @@ async def run_bluetooth(
     configure_adapter_outputs(sessions, profiles)
     for session in sessions.values():
         session.input_manager.map_manual_input = session.map_manual_input
+        if session.controller is not None:
+            session.controller.mapping_variant = session.mapping_variant
 
     if app is not None:
         app.state.bluetooth = primary.bluetooth

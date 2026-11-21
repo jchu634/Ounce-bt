@@ -15,6 +15,7 @@ from typing import Any
 from app.input.pygame_source import PygameInputThread
 from app.input.switch2_pro import NAME as SWITCH2_PRO_NAME
 from app.input.switch2_pro import is_wired_switch2_pro
+from lib.controller import ControllerVariant
 from lib.input.presets import PresetConfig, PresetSelection
 from lib.input.rumble import RumbleData
 from lib.input.state import NEUTRAL, ControllerState
@@ -132,6 +133,7 @@ class ControllerRoute:
         self.capture: PygameInputThread | None = None
         self.paused = False
         self.preset_override: PresetSelection | None = None
+        self.mapping_variant: Callable[[], ControllerVariant] | None = None
         self._capture_lock = threading.Lock()
 
     def pause(self) -> None:
@@ -218,6 +220,7 @@ class ControllerService(threading.Thread):
         # Mirrors the manager's macro pause state so threads created while
         # a macro runs start paused.
         self._captures_paused = False
+        self.mapping_variant: Callable[[], ControllerVariant] | None = None
 
     @property
     def active_guid(self) -> str | None:
@@ -586,6 +589,7 @@ class ControllerService(threading.Thread):
             start_paused=self._captures_paused,
             rate_hz=self._rate_hz,
             instance_id=match.instance_id,
+            mapping_variant=self.mapping_variant,
         )
         self._capture.start()
         logger.info(f"Controller selected: '{match.name}' ({match.guid})")
@@ -651,6 +655,7 @@ class ControllerService(threading.Thread):
             pump=False,
             rate_hz=self._rate_hz,
             instance_id=match.instance_id,
+            mapping_variant=route.mapping_variant,
         )
         route.start(capture)
 
@@ -670,6 +675,7 @@ class ControllerService(threading.Thread):
                 start_paused=self._captures_paused,
                 rate_hz=self._rate_hz,
                 instance_id=active.instance_id,
+                mapping_variant=self.mapping_variant,
             )
             self._capture.start()
             logger.info(f"Applied preset '{preset.name}' to '{active.name}'")

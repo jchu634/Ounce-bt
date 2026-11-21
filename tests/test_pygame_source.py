@@ -4,6 +4,7 @@ from unittest.mock import Mock
 import pytest
 
 from app.input.pygame_source import PygameInputThread, XboxGamepad
+from lib.controller import ControllerVariant
 from lib.input.presets import load_preset
 from lib.input.state import NEUTRAL, Button, ControllerState
 
@@ -64,6 +65,30 @@ def test_xbox_inputs_and_release(monkeypatch, axes, hat, expected):
     assert states.get_nowait() == expected
     assert states.get_nowait() == NEUTRAL
     assert states.empty()
+
+
+def test_capture_switches_mapping_when_adapter_output_changes(monkeypatch):
+    states = queue.Queue()
+    variants = iter(ControllerVariant)
+    capture = PygameInputThread(
+        states, preset=load_preset("xbox"), pump=False,
+        mapping_variant=lambda: next(variants),
+    )
+    stick = Mock(wraps=XboxJoystick([1, 0, 0, 0, -1, -1], (0, 1)))
+    stick.get_button.side_effect = lambda index: index in (0, 4)
+
+    def next_frame(_period):
+        if states.qsize() == len(ControllerVariant):
+            capture.stop()
+
+    monkeypatch.setattr("app.input.pygame_source.time.sleep", next_frame)
+    capture._loop(stick)
+
+    pro = ControllerState(Button.B | Button.L | Button.UP, left=(1, 0))
+    assert states.get_nowait() == pro
+    assert states.get_nowait() == ControllerState(Button.LEFT | Button.SL_L, left=(1, 0))
+    assert states.get_nowait() == ControllerState(Button.A | Button.SL_R, left=(1, 0), right=(1, 0))
+    assert states.get_nowait() == pro
 
 
 @pytest.mark.parametrize("driver", ["linux", "windows"])

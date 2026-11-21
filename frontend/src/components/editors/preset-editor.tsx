@@ -31,6 +31,8 @@ import {
   SwitchButtonMinus,
   SwitchButtonPlus,
   SwitchButtonR,
+  SwitchButtonSl,
+  SwitchButtonSr,
   SwitchButtonSync,
   SwitchButtonX,
   SwitchButtonY,
@@ -41,9 +43,11 @@ import {
   SwitchDpadRight,
   SwitchDpadUp,
   SwitchStickLPress,
+  SwitchStickL,
   SwitchStickLHorizontal,
   SwitchStickLVertical,
   SwitchStickRPress,
+  SwitchStickR,
   SwitchStickRHorizontal,
   SwitchStickRVertical,
   SwitchDpadUpOutline,
@@ -66,8 +70,10 @@ import {
   XboxRs,
   XboxRt,
   XboxStickLHorizontal,
+  XboxStickL,
   XboxStickLVertical,
   XboxStickRHorizontal,
+  XboxStickR,
   XboxStickRVertical,
 } from "@/src/assets/input-prompts/xbox";
 import {
@@ -84,19 +90,30 @@ import {
   PlaystationDpadRight,
   PlaystationDpadUp,
   PlaystationStickLHorizontal,
+  PlaystationStickL,
   PlaystationStickLVertical,
   PlaystationStickRHorizontal,
+  PlaystationStickR,
   PlaystationStickRVertical,
   PlaystationTriggerL1,
   PlaystationTriggerL2,
   PlaystationTriggerR1,
   PlaystationTriggerR2,
 } from "@/src/assets/input-prompts/playstation";
+import { GenericStick } from "@/src/assets/input-prompts/generic";
 import { errorMessage } from "@/src/lib/errors";
 import { Button } from "@/src/components/ui/button";
 import { JsonExportButtons } from "@/src/components/editors/json-export-buttons";
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
+import { ToggleGroup, ToggleGroupItem } from "@/src/components/ui/toggle-group";
+import { ControllerPreview, ControllerVariantIcon } from "@/src/components/settings/controller-preview";
+import {
+  CONTROLLER_VARIANTS,
+  CONTROLLER_VARIANT_NAMES,
+  JOYCON_BUTTONS,
+  type ControllerVariant,
+} from "@/src/lib/controller-variants";
 import {
   Select,
   SelectContent,
@@ -621,6 +638,8 @@ type ParsedPreset =
   | {
       kind: "valid";
       document: Record<string, unknown>;
+      mapping: Record<string, unknown>;
+      mappings: Record<string, unknown>;
       buttons: Record<string, ButtonName>;
       triggers: Record<string, ButtonName>;
     }
@@ -629,13 +648,9 @@ type ParsedPreset =
 type PhysicalSource =
   { kind: "button"; index: string } | { kind: "trigger"; index: string };
 
-type SupportedButtonName = Exclude<
-  ButtonName,
-  "SL_L" | "SR_L" | "SL_R" | "SR_R" | "SL" | "SR"
->;
-
-const MAPPING_GROUPS = [
+const MAPPING_GROUPS: readonly { title: string; controls: readonly ButtonName[] }[] = [
   { title: "Shoulder controls", controls: ["ZL", "ZR", "L", "R"] },
+  { title: "Rail buttons", controls: ["SL_L", "SR_L", "SL_R", "SR_R"] },
   {
     title: "System controls",
     controls: ["MINUS", "PLUS", "CAPTURE", "HOME"],
@@ -643,12 +658,9 @@ const MAPPING_GROUPS = [
   { title: "D-pad", controls: ["UP", "RIGHT", "DOWN", "LEFT"] },
   { title: "Sticks", controls: ["STICK_L", "STICK_R"] },
   { title: "Face buttons", controls: ["A", "B", "X", "Y"] },
-] satisfies readonly {
-  title: string;
-  controls: readonly SupportedButtonName[];
-}[];
+];
 
-const BUTTON_LABELS: Record<SupportedButtonName, string> = {
+const BUTTON_LABELS: Record<ButtonName, string> = {
   A: "A",
   B: "B",
   X: "X",
@@ -667,10 +679,16 @@ const BUTTON_LABELS: Record<SupportedButtonName, string> = {
   CAPTURE: "Capture",
   STICK_L: "Left stick click",
   STICK_R: "Right stick click",
+  SL_L: "Left Joy-Con SL",
+  SR_L: "Left Joy-Con SR",
+  SL_R: "Right Joy-Con SL",
+  SR_R: "Right Joy-Con SR",
+  SL: "SL",
+  SR: "SR",
 };
 
 const BUTTON_ICONS: Record<
-  SupportedButtonName,
+  ButtonName,
   ComponentType<SVGProps<SVGSVGElement>>
 > = {
   A: SwitchButtonA,
@@ -691,9 +709,31 @@ const BUTTON_ICONS: Record<
   CAPTURE: SwitchButtonSync,
   STICK_L: SwitchStickLPress,
   STICK_R: SwitchStickRPress,
+  SL_L: SwitchButtonSl,
+  SR_L: SwitchButtonSr,
+  SL_R: SwitchButtonSl,
+  SR_R: SwitchButtonSr,
+  SL: SwitchButtonSl,
+  SR: SwitchButtonSr,
 };
 
 type InputIcon = ComponentType<SVGProps<SVGSVGElement>>;
+
+const MAPPING_TRIGGER_CLASS =
+  "w-auto shrink-0 rounded-md border-primary-foreground/30 bg-primary-foreground px-2 text-primary";
+const STICK_SIDES = ["left", "right"] as const;
+type StickSide = (typeof STICK_SIDES)[number];
+const STICK_NAMES: Record<StickSide, string> = { left: "Left stick", right: "Right stick" };
+const STICK_AXES = {
+  left: { x_axis: 0, y_axis: 1 },
+  right: { x_axis: 2, y_axis: 3 },
+};
+const STICK_ICONS: Record<ControllerLayout, Record<StickSide, InputIcon>> = {
+  generic: { left: GenericStick, right: GenericStick },
+  switch: { left: SwitchStickL, right: SwitchStickR },
+  xbox: { left: XboxStickL, right: XboxStickR },
+  playstation: { left: PlaystationStickL, right: PlaystationStickR },
+};
 
 const CONTROLLER_BUTTON_ICONS: Partial<
   Record<ControllerLayout, readonly InputIcon[]>
@@ -798,12 +838,62 @@ const isControllerLayout = (value: unknown): value is ControllerLayout =>
   value === "xbox" ||
   value === "playstation";
 
+const SIDEWAYS_BUTTONS: Record<"joycon_l" | "joycon_r", Partial<Record<ButtonName, ButtonName>>> = {
+  joycon_l: {
+    A: "DOWN", B: "LEFT", X: "RIGHT", Y: "UP", L: "SL_L", R: "SR_L",
+    ZR: "L", PLUS: "MINUS", HOME: "CAPTURE",
+  },
+  joycon_r: {
+    A: "X", B: "A", X: "Y", Y: "B", L: "SL_R", R: "SR_R",
+    ZL: "R", MINUS: "PLUS", STICK_L: "STICK_R",
+  },
+};
+
 const MAPPING_FIELDS: ReadonlyArray<"buttons" | "triggers"> = [
   "buttons",
   "triggers",
 ];
 
-function parsePreset(value: string): ParsedPreset {
+function isMappingObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stickMapping(value: unknown, offset: number) {
+  const stick = isMappingObject(value) ? value : {};
+  return { x_axis: offset, y_axis: offset + 1, ...stick };
+}
+
+function defaultOutputMapping(
+  document: Record<string, unknown>,
+  variant: Exclude<ControllerVariant, "pro">,
+): Record<string, unknown> {
+  const mapping = {
+    buttons: document.buttons ?? {},
+    triggers: document.triggers ?? {},
+    left_stick: stickMapping(document.left_stick, 0),
+    right_stick: stickMapping(document.right_stick, 2),
+    dpad: document.dpad ?? { hat: 0 },
+  };
+  if (variant === "combined") return mapping;
+  const translate = (entries: unknown) => {
+    if (!isMappingObject(entries)) return entries;
+    return Object.fromEntries(Object.entries(entries).flatMap(([index, target]) => {
+      if (!isButtonName(target)) return [[index, target]];
+      const output = SIDEWAYS_BUTTONS[variant][target] ?? target;
+      return JOYCON_BUTTONS[variant].includes(output) ? [[index, output]] : [];
+    }));
+  };
+
+  return {
+    ...mapping,
+    buttons: translate(mapping.buttons),
+    triggers: translate(mapping.triggers),
+    right_stick: variant === "joycon_r" ? mapping.left_stick : mapping.right_stick,
+    dpad: { hat: null },
+  };
+}
+
+function parsePreset(value: string, variant: ControllerVariant): ParsedPreset {
   let parsed: unknown;
   try {
     parsed = JSON.parse(value);
@@ -813,17 +903,31 @@ function parsePreset(value: string): ParsedPreset {
       message: "Fix the JSON in Advanced mode before using the mapping editor.",
     };
   }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+  if (!isMappingObject(parsed)) {
     return { kind: "invalid", message: "Preset JSON must be an object." };
   }
 
-  const document = Object.fromEntries(Object.entries(parsed));
-  const mappings: Record<"buttons" | "triggers", Record<string, ButtonName>> = {
+  const document = parsed;
+  const variants = document.mappings ?? {};
+  if (!isMappingObject(variants)) {
+    return { kind: "invalid", message: 'The preset "mappings" field must be an object.' };
+  }
+  const mappings = {
+    joycon_l: defaultOutputMapping(document, "joycon_l"),
+    joycon_r: defaultOutputMapping(document, "joycon_r"),
+    combined: defaultOutputMapping(document, "combined"),
+    ...variants,
+  };
+  const mapping = variant === "pro" ? document : mappings[variant];
+  if (!isMappingObject(mapping)) {
+    return { kind: "invalid", message: "The selected controller mapping must be an object." };
+  }
+  const controls: Record<"buttons" | "triggers", Record<string, ButtonName>> = {
     buttons: {},
     triggers: {},
   };
   for (const field of MAPPING_FIELDS) {
-    const rawMappings = document[field];
+    const rawMappings = mapping[field];
     if (rawMappings === undefined) continue;
     if (
       typeof rawMappings !== "object" ||
@@ -842,10 +946,10 @@ function parsePreset(value: string): ParsedPreset {
           message: `A ${field === "buttons" ? "button" : "trigger"} mapping is not valid. Open Advanced mode to fix it.`,
         };
       }
-      mappings[field][index] = button;
+      controls[field][index] = button;
     }
   }
-  return { kind: "valid", document, ...mappings };
+  return { kind: "valid", document, mapping, mappings, ...controls };
 }
 
 function sourceFor(
@@ -926,12 +1030,22 @@ function PresetMappingEditor({
   onChange,
   disabled,
 }: PresetMappingEditorProps) {
-  const parsed = useMemo(() => parsePreset(value), [value]);
+  const [variant, setVariant] = useState<ControllerVariant>("pro");
+  const parsed = useMemo(() => parsePreset(value, variant), [value, variant]);
   const [listeningTarget, setListeningTarget] =
-    useState<SupportedButtonName | null>(null);
+    useState<ButtonName | null>(null);
   const [gamepadButtonCount, setGamepadButtonCount] = useState(16);
   const [gamepadAxisCount, setGamepadAxisCount] = useState(6);
   const pressedAtStart = useRef<Set<number>>(new Set());
+
+  const updateMapping = useCallback((changes: Record<string, unknown>) => {
+    if (disabled || parsed.kind === "invalid") return;
+    const mapping = { ...parsed.mapping, ...changes };
+    const nextDocument = variant === "pro"
+      ? { ...mapping, mappings: parsed.mappings }
+      : { ...parsed.document, mappings: { ...parsed.mappings, [variant]: mapping } };
+    onChange(`${JSON.stringify(nextDocument, null, 2)}\n`);
+  }, [disabled, parsed, variant, onChange]);
 
   const assign = useCallback(
     (target: ButtonName, source: PhysicalSource | null) => {
@@ -952,14 +1066,9 @@ function PresetMappingEditor({
       );
       if (source?.kind === "button") nextButtons[source.index] = target;
       if (source?.kind === "trigger") nextTriggers[source.index] = target;
-      const nextDocument = {
-        ...parsed.document,
-        buttons: nextButtons,
-        triggers: nextTriggers,
-      };
-      onChange(`${JSON.stringify(nextDocument, null, 2)}\n`);
+      updateMapping({ buttons: nextButtons, triggers: nextTriggers });
     },
-    [disabled, onChange, parsed],
+    [disabled, parsed, updateMapping],
   );
 
   useEffect(() => {
@@ -995,7 +1104,7 @@ function PresetMappingEditor({
     return () => cancelAnimationFrame(animationFrame);
   }, [assign, listeningTarget]);
 
-  const startListening = (target: SupportedButtonName) => {
+  const startListening = (target: ButtonName) => {
     const gamepad = Array.from(navigator.getGamepads()).find(
       (item) => item !== null,
     );
@@ -1030,6 +1139,72 @@ function PresetMappingEditor({
   const controllerLayout = inferControllerLayout(parsed.document);
   const controller = controllerLayoutDefinition(controllerLayout);
   const ControllerImage = controller.image;
+  const groups = MAPPING_GROUPS.flatMap(({ title, controls }) => {
+    const visible = variant === "joycon_l" || variant === "joycon_r"
+      ? controls.filter((button) => JOYCON_BUTTONS[variant].includes(button))
+      : controls;
+    if (visible.length === 0 || (variant === "pro" && title === "Rail buttons")) return [];
+    return [{ title, controls: visible }];
+  });
+  function stickRow(side: StickSide) {
+    if (parsed.kind !== "valid") return null;
+    const key = `${side}_stick`;
+    const stick = stickMapping(parsed.mapping[key], STICK_AXES[side].x_axis);
+    const source = STICK_SIDES.find((option) =>
+      stick.x_axis === STICK_AXES[option].x_axis && stick.y_axis === STICK_AXES[option].y_axis,
+    );
+    const OutputIcon = STICK_ICONS.switch[side];
+    const SourceIcon = source ? STICK_ICONS[controllerLayout][source] : GenericStick;
+    const label = STICK_NAMES[side];
+
+    return (
+      <div key={key} className="flex w-fit items-center gap-2 rounded-lg p-1.5">
+        <span title={label} className="flex size-8 shrink-0 items-center justify-center text-primary-foreground">
+          <OutputIcon className="size-7" aria-hidden="true" />
+        </span>
+        <ArrowLeftIcon aria-hidden="true" weight="bold" className="size-4 shrink-0 text-primary-foreground" />
+        <Select
+          value={source ?? "custom"}
+          disabled={disabled || listeningTarget !== null}
+          onValueChange={(value) => {
+            const next = STICK_SIDES.find((option) => option === value);
+            if (next) updateMapping({ [key]: { ...stick, ...STICK_AXES[next] } });
+          }}
+        >
+          <SelectTrigger
+            size="sm"
+            aria-label={`Physical stick for ${label.toLowerCase()}`}
+            title={`${label} maps to ${source ? STICK_NAMES[source].toLowerCase() : "a custom stick"}`}
+            className={MAPPING_TRIGGER_CLASS}
+          >
+            <SelectValue>
+              <SourceIcon className="size-5" aria-hidden="true" />
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent align="start" className="w-50">
+            <SelectGroup>
+              <SelectLabel>Sticks</SelectLabel>
+              {STICK_SIDES.map((option) => {
+                const OptionIcon = STICK_ICONS[controllerLayout][option];
+                return (
+                  <SelectItem key={option} value={option}>
+                    <OptionIcon className="size-5" aria-hidden="true" />
+                    {STICK_NAMES[option]}
+                  </SelectItem>
+                );
+              })}
+              {!source && (
+                <SelectItem value="custom">
+                  <GenericStick className="size-5" aria-hidden="true" />
+                  Custom stick
+                </SelectItem>
+              )}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </div>
+    );
+  }
 
   const setControllerLayout = (layout: ControllerLayout) => {
     if (disabled) return;
@@ -1038,7 +1213,15 @@ function PresetMappingEditor({
     );
   };
 
-  const mappingRow = (target: SupportedButtonName) => {
+  function selectVariant(value: string | null) {
+    const next = CONTROLLER_VARIANTS.find((item) => item === value);
+    if (next) {
+      setListeningTarget(null);
+      setVariant(next);
+    }
+  }
+
+  const mappingRow = (target: ButtonName) => {
     const source = sourceFor(parsed.buttons, parsed.triggers, target);
     const listening = listeningTarget === target;
     const Icon = BUTTON_ICONS[target];
@@ -1080,7 +1263,7 @@ function PresetMappingEditor({
                     controller,
                   )}`
             }
-            className="w-auto shrink-0 rounded-md border-primary-foreground/30 bg-primary-foreground px-2 text-primary"
+            className={MAPPING_TRIGGER_CLASS}
           >
             <SelectValue>
               {source === null || SelectedInputIcon === null ? (
@@ -1167,6 +1350,45 @@ function PresetMappingEditor({
             <h3 className="text-sm font-semibold">Controller mapping</h3>
           </div>
         </div>
+        <ToggleGroup
+          value={[variant]}
+          onValueChange={(values) => selectVariant(values[0] ?? null)}
+          aria-label="Output controller"
+          size="sm"
+          variant="outline"
+          spacing={0}
+          className="hidden shrink-0 gap-0 @min-[52rem]/mapping:flex"
+        >
+          {CONTROLLER_VARIANTS.map((item) => (
+            <ToggleGroupItem key={item} value={item} className="aria-pressed:bg-primary/15 aria-pressed:text-primary">
+              {CONTROLLER_VARIANT_NAMES[item]}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+        <div className="@min-[52rem]/mapping:hidden">
+          <Select value={variant} onValueChange={selectVariant}>
+            <SelectTrigger
+              size="sm"
+              aria-label="Output controller"
+              className="rounded-md border-border bg-background"
+            >
+              <SelectValue>
+                <ControllerVariantIcon variant={variant} />
+                {CONTROLLER_VARIANT_NAMES[variant]}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent align="start" className="w-48">
+              <SelectGroup>
+                {CONTROLLER_VARIANTS.map((item) => (
+                  <SelectItem key={item} value={item}>
+                    <ControllerVariantIcon variant={item} />
+                    {CONTROLLER_VARIANT_NAMES[item]}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </div>
         <Label className="ms-auto flex items-center gap-2 text-xs text-muted-foreground">
           Controller layout
           <Select
@@ -1176,14 +1398,17 @@ function PresetMappingEditor({
             }}
           >
             <SelectTrigger className="h-8 rounded-md border-border bg-background px-2 text-xs text-foreground">
-              <SelectValue />
+              <SelectValue>{controller.label}</SelectValue>
             </SelectTrigger>
-            <SelectContent align="start">
-              {CONTROLLER_LAYOUTS.map((layout) => (
-                <SelectItem key={layout.value} value={layout.value}>
-                  {layout.label}
-                </SelectItem>
-              ))}
+            <SelectContent align="start" className="w-48">
+              <SelectGroup>
+                {CONTROLLER_LAYOUTS.map(({ value, label, image: Icon }) => (
+                  <SelectItem key={value} value={value}>
+                    {Icon ? <Icon className="size-5" /> : <GameControllerIcon className="size-5" />}
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
             </SelectContent>
           </Select>
         </Label>
@@ -1191,7 +1416,7 @@ function PresetMappingEditor({
 
       <div className="flex flex-col gap-4 p-3 @sm/mapping:p-4 mapping-preview:flex-row mapping-preview:gap-6">
         <div className="flex min-w-0 flex-wrap items-start gap-3 mapping-preview:shrink-0 mapping-preview:flex-col">
-          {MAPPING_GROUPS.map((group) => (
+          {groups.map((group) => (
             <section
               key={group.title}
               className="w-fit max-w-full rounded-xl border bg-primary p-2"
@@ -1200,13 +1425,20 @@ function PresetMappingEditor({
                 {group.title}
               </h4>
               <div className="grid grid-cols-[max-content] @md/mapping:grid-cols-[repeat(2,max-content)]">
+                {group.title === "Sticks" && group.controls.map((button) =>
+                  stickRow(button === "STICK_L" ? "left" : "right"),
+                )}
                 {group.controls.map(mappingRow)}
               </div>
             </section>
           ))}
         </div>
         <div className="order-first flex min-w-0 flex-wrap items-center gap-3 rounded-lg bg-muted/30 px-3 py-2.5 mapping-preview:sticky mapping-preview:top-4 mapping-preview:order-last mapping-preview:flex-1 mapping-preview:flex-col mapping-preview:flex-nowrap mapping-preview:self-start mapping-preview:gap-0 mapping-preview:bg-transparent mapping-preview:p-4 mapping-preview:text-center">
-          {ControllerImage === null ? (
+          {variant !== "pro" ? (
+            <div className="h-10 w-16 shrink-0 mapping-preview:h-40 mapping-preview:w-full mapping-preview:max-w-80">
+              <ControllerPreview variant={variant} />
+            </div>
+          ) : ControllerImage === null ? (
             <GameControllerIcon
               weight="light"
               className="size-10 shrink-0 text-muted-foreground mapping-preview:mb-3 mapping-preview:h-56 mapping-preview:w-full mapping-preview:max-w-112"
@@ -1222,7 +1454,9 @@ function PresetMappingEditor({
             />
           )}
           <div className="min-w-0 flex-1 mapping-preview:flex-none">
-            <p className="text-sm font-semibold">{controller.label}</p>
+            <p className="text-sm font-semibold">
+              {variant === "pro" ? controller.label : CONTROLLER_VARIANT_NAMES[variant]}
+            </p>
             <p className="mt-1 text-xs text-muted-foreground mapping-preview:max-w-64">
               Use the dropdowns or the controller buttons beside each mapping.
             </p>
