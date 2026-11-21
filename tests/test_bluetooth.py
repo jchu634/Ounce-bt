@@ -17,6 +17,7 @@ from app.bluetooth import (
     BluetoothPageTimeoutError,
     BluetoothService,
 )
+from app.input.macro_source import MacroPlayerThread
 from app.main import SessionState, make_l2cap_handler, run_until_disconnected
 from lib.bluetooth_transport import WindowsUsbHost
 from lib.config import Config
@@ -75,6 +76,40 @@ def test_paired_joycons_send_both_shoulders_together_and_release(monkeypatch):
     monotonic.return_value = 11.0
     assert left.apply_pairing_grip(protocol, NEUTRAL) == NEUTRAL
     assert right.apply_pairing_grip(protocol, NEUTRAL) == NEUTRAL
+
+
+def test_universal_rail_macro_reaches_both_combined_joycon_reports():
+    left = AdapterSession("primary", "usb:0", queue.Queue(), None)
+    right = AdapterSession("adapter-2", "usb:1", queue.Queue(), None)
+    left.bluetooth.set_controller_type(ControllerVariant.LEFT)
+    right.bluetooth.set_controller_type(ControllerVariant.RIGHT)
+    left.combined_partner, right.combined_partner = right, left
+    protocols = [
+        ControllerProtocol(slot.bluetooth.controller_type.bluetooth_type, ADDRESS)
+        for slot in (left, right)
+    ]
+    for protocol in protocols:
+        protocol.process_commands(None)
+
+    states = queue.Queue()
+    MacroPlayerThread({"actions": [
+        {"do": "press", "button": "SL"},
+        {"do": "press", "button": "SR"},
+        {"do": "release", "button": "SL"},
+        {"do": "release", "button": "SR"},
+    ]}, states).run()
+    for left_buttons, right_buttons in [
+        (Button.SL_L, Button.SL_R),
+        (Button.SL_L | Button.SR_L, Button.SL_R | Button.SR_R),
+        (Button.SR_L, Button.SR_R),
+        (Button.NONE, Button.NONE),
+    ]:
+        apply_to_protocol(protocols[0], left.output_input(states.get_nowait()))
+        apply_to_protocol(protocols[1], right.output_input(NEUTRAL))
+        assert [protocol.get_report()[4:7] for protocol in protocols] == [
+            int(left_buttons).to_bytes(3, "little"),
+            int(right_buttons).to_bytes(3, "little"),
+        ]
 
 
 def test_adapter_reopens_after_status_only_capability_response(monkeypatch):

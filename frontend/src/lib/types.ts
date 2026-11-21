@@ -17,10 +17,6 @@ export const BUTTON_NAMES = [
   "CAPTURE",
   "STICK_L",
   "STICK_R",
-  "SR_R",
-  "SL_R",
-  "SR_L",
-  "SL_L",
   "SL",
   "SR",
 ] as const;

@@ -1,4 +1,7 @@
 import * as Blockly from "blockly/core";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { BUTTON_ICONS } from "@/src/assets/input-prompts/switch/button-icons";
 import { BUTTON_NAMES } from "@/src/lib/types";
 
 export const MACRO_BLOCK_TYPES = {
@@ -11,6 +14,36 @@ export const MACRO_BLOCK_TYPES = {
 } as const;
 
 const ACTION_CONNECTION = "MacroAction";
+const BUTTON_ICON_SIZE = 22;
+const BUTTON_ICON_FRAGMENT = "#macro-button-icon";
+
+const buttonOptions = BUTTON_NAMES.map((button) => {
+  const svg = renderToStaticMarkup(
+    createElement(BUTTON_ICONS[button], {
+      color: "#fff",
+      width: BUTTON_ICON_SIZE,
+      height: BUTTON_ICON_SIZE,
+    }),
+  );
+  return [
+    {
+      src: `data:image/svg+xml,${encodeURIComponent(svg)}${BUTTON_ICON_FRAGMENT}`,
+      width: BUTTON_ICON_SIZE,
+      height: BUTTON_ICON_SIZE,
+      alt: button,
+    },
+    button,
+  ];
+});
+
+Blockly.Css.register(`
+  .blocklyDropdownMenu .blocklyMenuItem:has(img[src$="${BUTTON_ICON_FRAGMENT}"]) {
+    padding-inline: 10px;
+  }
+  .blocklyDropdownMenu .blocklyMenuItem:has(img[src$="${BUTTON_ICON_FRAGMENT}"]) .blocklyMenuItemCheckbox {
+    display: none;
+  }
+`);
 
 const durationUnitField = {
   type: "field_dropdown",
@@ -60,7 +93,7 @@ const blockDefinitions = [
       {
         type: "field_dropdown",
         name: "BUTTON",
-        options: BUTTON_NAMES.map((button) => [button, button]),
+        options: buttonOptions,
       },
     ],
     previousStatement: ACTION_CONNECTION,
@@ -76,7 +109,7 @@ const blockDefinitions = [
       {
         type: "field_dropdown",
         name: "BUTTON",
-        options: BUTTON_NAMES.map((button) => [button, button]),
+        options: buttonOptions,
       },
       { type: "field_number", name: "MS", value: 50, min: 0 },
       durationUnitField,

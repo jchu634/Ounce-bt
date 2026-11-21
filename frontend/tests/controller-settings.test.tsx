@@ -99,18 +99,21 @@ describe("active preset selection", () => {
     const control = (label: string) => container.querySelector(
       `[aria-label="Physical input for ${label}"]`,
     );
-    expect(control("Left Joy-Con SL")).toBeNull();
+    expect(control("SL")).toBeNull();
+    expect(control("SR")).toBeNull();
     await choose("Joy-Con L");
-    expect(control("Left Joy-Con SL")).not.toBeNull();
-    expect(control("Right Joy-Con SL")).toBeNull();
+    expect(control("SL")).not.toBeNull();
+    expect(control("SR")).not.toBeNull();
     expect(control("A")).toBeNull();
     await choose("Joy-Con R");
-    expect(control("Right Joy-Con SL")).not.toBeNull();
-    expect(control("Left Joy-Con SL")).toBeNull();
+    expect(control("SL")).not.toBeNull();
+    expect(control("SR")).not.toBeNull();
     expect(control("D-pad up")).toBeNull();
     await choose("Joycons");
-    expect(control("Left Joy-Con SL")).not.toBeNull();
-    expect(control("Right Joy-Con SL")).not.toBeNull();
+    expect(control("SL")).not.toBeNull();
+    expect(control("SR")).not.toBeNull();
+    expect(control("Left Joy-Con SL")).toBeNull();
+    expect(control("Right Joy-Con SL")).toBeNull();
     expect(control("A")).not.toBeNull();
     expect(control("D-pad up")).not.toBeNull();
   });

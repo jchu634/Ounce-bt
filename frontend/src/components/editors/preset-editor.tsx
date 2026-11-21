@@ -31,8 +31,6 @@ import {
   SwitchButtonMinus,
   SwitchButtonPlus,
   SwitchButtonR,
-  SwitchButtonSl,
-  SwitchButtonSr,
   SwitchButtonSync,
   SwitchButtonX,
   SwitchButtonY,
@@ -50,10 +48,6 @@ import {
   SwitchStickR,
   SwitchStickRHorizontal,
   SwitchStickRVertical,
-  SwitchDpadUpOutline,
-  SwitchDpadDownOutline,
-  SwitchDpadLeftOutline,
-  SwitchDpadRightOutline,
 } from "@/src/assets/input-prompts/switch";
 import {
   XboxButtonA,
@@ -100,6 +94,8 @@ import {
   PlaystationTriggerR1,
   PlaystationTriggerR2,
 } from "@/src/assets/input-prompts/playstation";
+import { parseButtonName } from "@/src/lib/button-names";
+import { BUTTON_ICONS } from "@/src/assets/input-prompts/switch/button-icons";
 import { GenericStick } from "@/src/assets/input-prompts/generic";
 import { errorMessage } from "@/src/lib/errors";
 import { Button } from "@/src/components/ui/button";
@@ -140,7 +136,6 @@ import {
 import { getPreset, putPreset } from "@/src/lib/api";
 import { ApiError } from "@/src/lib/api";
 import {
-  BUTTON_NAMES,
   type ButtonName,
   type ValidationBody,
 } from "@/src/lib/types";
@@ -650,7 +645,7 @@ type PhysicalSource =
 
 const MAPPING_GROUPS: readonly { title: string; controls: readonly ButtonName[] }[] = [
   { title: "Shoulder controls", controls: ["ZL", "ZR", "L", "R"] },
-  { title: "Rail buttons", controls: ["SL_L", "SR_L", "SL_R", "SR_R"] },
+  { title: "Rail buttons", controls: ["SL", "SR"] },
   {
     title: "System controls",
     controls: ["MINUS", "PLUS", "CAPTURE", "HOME"],
@@ -679,42 +674,8 @@ const BUTTON_LABELS: Record<ButtonName, string> = {
   CAPTURE: "Capture",
   STICK_L: "Left stick click",
   STICK_R: "Right stick click",
-  SL_L: "Left Joy-Con SL",
-  SR_L: "Left Joy-Con SR",
-  SL_R: "Right Joy-Con SL",
-  SR_R: "Right Joy-Con SR",
   SL: "SL",
   SR: "SR",
-};
-
-const BUTTON_ICONS: Record<
-  ButtonName,
-  ComponentType<SVGProps<SVGSVGElement>>
-> = {
-  A: SwitchButtonA,
-  B: SwitchButtonB,
-  X: SwitchButtonX,
-  Y: SwitchButtonY,
-  L: SwitchButtonL,
-  R: SwitchButtonR,
-  ZL: SwitchButtonZl,
-  ZR: SwitchButtonZr,
-  UP: SwitchDpadUpOutline,
-  DOWN: SwitchDpadDownOutline,
-  LEFT: SwitchDpadLeftOutline,
-  RIGHT: SwitchDpadRightOutline,
-  PLUS: SwitchButtonPlus,
-  MINUS: SwitchButtonMinus,
-  HOME: SwitchButtonHome,
-  CAPTURE: SwitchButtonSync,
-  STICK_L: SwitchStickLPress,
-  STICK_R: SwitchStickRPress,
-  SL_L: SwitchButtonSl,
-  SR_L: SwitchButtonSr,
-  SL_R: SwitchButtonSl,
-  SR_R: SwitchButtonSr,
-  SL: SwitchButtonSl,
-  SR: SwitchButtonSr,
 };
 
 type InputIcon = ComponentType<SVGProps<SVGSVGElement>>;
@@ -829,9 +790,6 @@ function physicalInputIcon(
   return icons?.[Number(source.index)] ?? GameControllerIcon;
 }
 
-const isButtonName = (value: unknown): value is ButtonName =>
-  typeof value === "string" && BUTTON_NAMES.some((name) => name === value);
-
 const isControllerLayout = (value: unknown): value is ControllerLayout =>
   value === "generic" ||
   value === "switch" ||
@@ -895,8 +853,9 @@ function parsePreset(value: string, variant: ControllerVariant): ParsedPreset {
         message: `The preset "${field}" field must be an object.`,
       };
     }
-    for (const [index, button] of Object.entries(rawMappings)) {
-      if (!/^\d+$/.test(index) || !isButtonName(button)) {
+    for (const [index, value] of Object.entries(rawMappings)) {
+      const button = parseButtonName(value);
+      if (!/^\d+$/.test(index) || button === undefined) {
         return {
           kind: "invalid",
           message: `A ${field === "buttons" ? "button" : "trigger"} mapping is not valid. Open Advanced mode to fix it.`,

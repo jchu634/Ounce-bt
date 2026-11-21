@@ -86,8 +86,8 @@ def test_capture_switches_mapping_when_adapter_output_changes(monkeypatch):
 
     pro = ControllerState(Button.B | Button.L | Button.UP, left=(1, 0))
     assert states.get_nowait() == pro
-    assert states.get_nowait() == ControllerState(Button.LEFT | Button.SL_L, left=(1, 0))
-    assert states.get_nowait() == ControllerState(Button.A | Button.SL_R, left=(1, 0), right=(1, 0))
+    assert states.get_nowait() == ControllerState(Button.LEFT | Button.SL, left=(1, 0))
+    assert states.get_nowait() == ControllerState(Button.A | Button.SL, left=(1, 0), right=(1, 0))
     assert states.get_nowait() == pro
 
 

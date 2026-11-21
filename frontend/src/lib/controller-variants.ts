@@ -19,7 +19,7 @@ export function isBluetoothControllerType(value: unknown): value is BluetoothCon
   return value === "pro" || value === "joycon_l" || value === "joycon_r";
 }
 export const JOYCON_BUTTONS: Record<JoyConSide, readonly ButtonName[]> = {
-  joycon_l: ["UP", "RIGHT", "DOWN", "LEFT", "MINUS", "CAPTURE", "STICK_L", "L", "ZL", "SL_L", "SR_L"],
-  joycon_r: ["A", "B", "X", "Y", "PLUS", "HOME", "STICK_R", "R", "ZR", "SL_R", "SR_R"],
+  joycon_l: ["UP", "RIGHT", "DOWN", "LEFT", "MINUS", "CAPTURE", "STICK_L", "L", "ZL", "SL", "SR"],
+  joycon_r: ["A", "B", "X", "Y", "PLUS", "HOME", "STICK_R", "R", "ZR", "SL", "SR"],
 };
 import type { ButtonName } from "./types";
