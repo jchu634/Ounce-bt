@@ -107,7 +107,8 @@ def test_linux_starts_without_realtek_files_and_reports_transport_failure(
         "stage_adapter_firmware",
         Mock(side_effect=AssertionError("Firmware patched")),
     )
-    config = Config(web_host=None if headless else "127.0.0.1", input_specs=[])
+    config = Config(web_host=None if headless else "127.0.0.1", input_specs=[],
+                    macros_dir=str(tmp_path / "macros"))
     monkeypatch.setattr(Config, "save", lambda self: None)
     opened = []
     open_attempted = asyncio.Event()

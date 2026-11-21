@@ -21,6 +21,8 @@ export const BUTTON_NAMES = [
   "SL_R",
   "SR_L",
   "SL_L",
+  "SL",
+  "SR",
 ] as const;
 
 export type ButtonName = (typeof BUTTON_NAMES)[number];
@@ -56,6 +58,7 @@ export type StatusFrame = AdapterInputStatus & {
   type: "status";
   adapter_id?: string;
   adapter_statuses?: Record<string, AdapterInputStatus>;
+  solo_joycons?: boolean;
 };
 
 export type ControllerInfo = {

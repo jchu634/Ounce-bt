@@ -7,8 +7,35 @@ from typing import Any
 
 from lib.input.state import Button
 
-VALID_BUTTONS = frozenset(b.name for b in Button if b.name)
+VALID_BUTTONS = frozenset(Button.__members__) - {"NONE"}
 MACRO_VERSION = 1
+
+
+def seed_default_macros(directory: Path) -> None:
+    """Install the editable grip macro once in each macro directory."""
+    marker = directory / ".grip-macro-initialized"
+    if marker.exists():
+        return
+    directory.mkdir(parents=True, exist_ok=True)
+    try:
+        file = (directory / "Press SL and SR.json").open("x", encoding="utf-8")
+    except FileExistsError:
+        pass
+    else:
+        with file:
+            json.dump({
+                "version": MACRO_VERSION,
+                "name": "Press SL and SR",
+                "actions": [
+                    {"do": "press", "button": "SL"},
+                    {"do": "press", "button": "SR"},
+                    {"do": "wait", "ms": 350},
+                    {"do": "release", "button": "SR"},
+                    {"do": "release", "button": "SL"},
+                ],
+            }, file, indent=2)
+            file.write("\n")
+    marker.touch()
 
 
 def load_macro(path: str | Path) -> dict:

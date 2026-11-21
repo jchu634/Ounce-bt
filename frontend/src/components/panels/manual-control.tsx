@@ -7,6 +7,10 @@ import {
   SwitchButtonLOutline,
   SwitchButtonR,
   SwitchButtonROutline,
+  SwitchButtonSl,
+  SwitchButtonSlOutline,
+  SwitchButtonSr,
+  SwitchButtonSrOutline,
   SwitchButtonSync,
   SwitchButtonSyncOutline,
   SwitchButtonZl,
@@ -163,6 +167,20 @@ function ControlButton({
 }
 
 const BUTTON_GROUPS = {
+  rails: [
+    {
+      button: "SL",
+      accessibleLabel: "SL",
+      icon: <SwitchButtonSlOutline className="size-full" />,
+      pressedIcon: <SwitchButtonSl className="size-full" />,
+    },
+    {
+      button: "SR",
+      accessibleLabel: "SR",
+      icon: <SwitchButtonSrOutline className="size-full" />,
+      pressedIcon: <SwitchButtonSr className="size-full" />,
+    },
+  ],
   shoulders: [
     {
       button: "ZL",
@@ -206,7 +224,8 @@ const BUTTON_GROUPS = {
 } satisfies Record<string, ReadonlyArray<ButtonVisual>>;
 
 export function ManualControl() {
-  const { connection, send, adapterStatuses } = useSocket();
+  const { connection, send, status, adapterStatuses } = useSocket();
+  const soloJoycons = status?.solo_joycons === true;
   const heldButtons = useRef<Set<ButtonName>>(new Set());
   const heldSticks = useRef<Set<StickInput>>(new Set());
   const analogSticks = useRef<Record<StickSide, StickPosition | null>>({
@@ -266,7 +285,7 @@ export function ManualControl() {
     if (clearHeld()) sendState();
   }, [clearHeld, sendState]);
 
-  const selection = JSON.stringify(Object.keys(adapterStatuses));
+  const selection = JSON.stringify([soloJoycons, ...Object.keys(adapterStatuses)]);
   const previousSelection = useRef(selection);
   useEffect(() => {
     if (previousSelection.current !== selection) {
@@ -318,6 +337,7 @@ export function ManualControl() {
     onPress: () => press(button),
     onRelease: () => release(button),
   });
+
 
   const changeAnalogStick = useCallback(
     (side: StickSide, position: StickPosition | null) => {
@@ -394,6 +414,18 @@ export function ManualControl() {
     <section className="w-full min-w-0">
       {/* The widest row needs 21.5rem: two 7rem pads, two 3rem buttons, and two 0.75rem gaps. */}
       <div className="@container flex max-w-sm flex-col gap-2 rounded-md border border-border bg-card p-3 text-card-foreground shadow-sm [--control-unit:min(1rem,calc(100cqw/21.5))]">
+        {soloJoycons && (
+          <div className="grid grid-cols-4 gap-[calc(var(--control-unit)/4)]" aria-label="Joy-Con rail buttons">
+            {BUTTON_GROUPS.rails.map(({ button, ...visual }) => (
+              <ControlButton
+                key={button}
+                {...controlProps(button)}
+                {...visual}
+                className="h-[calc(var(--control-unit)*3)] w-full first:col-start-2"
+              />
+            ))}
+          </div>
+        )}
         <div
           className="grid grid-cols-4 gap-[calc(var(--control-unit)/4)]"
           aria-label="Triggers"

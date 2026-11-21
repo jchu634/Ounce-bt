@@ -13,6 +13,7 @@ export function useSwitchConnection(sessionId?: string) {
   const [busy, setBusy] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
   const lastFailureId = useRef<number | null>(null);
+  const lastGripReminderId = useRef<number | null>(null);
 
   function acceptStatus(next: BluetoothStatus) {
     if (lastFailureId.current !== null && next.failure_id > lastFailureId.current && next.failure) {
@@ -25,6 +26,16 @@ export function useSwitchConnection(sessionId?: string) {
       });
     }
     lastFailureId.current = Math.max(lastFailureId.current ?? next.failure_id, next.failure_id);
+    const gripReminderId = next.grip_reminder_id ?? 0;
+    if (lastGripReminderId.current !== null && gripReminderId > lastGripReminderId.current) {
+      toast.add({
+        type: "info",
+        title: "Register your Joy-Con grip",
+        description: "Press SL and SR in Change Grip/Order, or run the Press SL and SR macro.",
+        timeout: 8000,
+      });
+    }
+    lastGripReminderId.current = Math.max(lastGripReminderId.current ?? 0, gripReminderId);
     setStatus(next);
   }
 

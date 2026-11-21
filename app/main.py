@@ -47,7 +47,7 @@ from lib.firmware import (
 )
 from lib.input import NEUTRAL, apply_to_protocol, parse_rumble
 from lib.input import presets as presets_module
-from lib.input.macros import load_macro
+from lib.input.macros import load_macro, seed_default_macros
 from lib.input.presets import (
     PresetConfig,
     PresetSelection,
@@ -574,6 +574,10 @@ async def main(
         return
 
     stop_event = shutdown_event or asyncio.Event()
+    try:
+        seed_default_macros(manager.macros_dir)
+    except OSError:
+        logger.exception("Could not install the default macro")
     app = build_app(
         manager,
         config_store,
@@ -734,7 +738,7 @@ async def run_bluetooth(
         input_threads.append(controller_service)
     manager.attach_pygame_threads(input_threads)
 
-    manager.adapter_id = "primary" if len(transports) > 1 else None
+    manager.adapter_id = "primary"
     primary = AdapterSession(
         "primary",
         transports[0],
@@ -774,6 +778,8 @@ async def run_bluetooth(
         )
 
     configure_adapter_outputs(sessions, profiles)
+    for session in sessions.values():
+        session.input_manager.map_manual_input = session.map_manual_input
 
     if app is not None:
         app.state.bluetooth = primary.bluetooth

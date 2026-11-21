@@ -132,7 +132,7 @@ def test_web_server_serves_startup_while_adapter_discovery_is_blocked(
         frontend = tmp_path / "frontend" / "dist"
         frontend.mkdir(parents=True)
         (frontend / "index.html").write_text("<title>Ounce-bt</title>", encoding="utf-8")
-        config = Config(input_specs=[])
+        config = Config(input_specs=[], macros_dir=str(tmp_path / "macros"))
         args = SimpleNamespace(nolog=False, auto_adapters=True)
         task = asyncio.create_task(application.main(config, args, ready=desktop_ready))
         try:

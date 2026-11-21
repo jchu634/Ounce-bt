@@ -21,7 +21,7 @@ from app.main import SessionState, make_l2cap_handler, run_until_disconnected
 from lib.bluetooth_transport import WindowsUsbHost
 from lib.config import Config
 from lib.controller import ControllerVariant
-from lib.input.state import NEUTRAL, Button
+from lib.input.state import NEUTRAL, Button, ControllerState, apply_to_protocol
 from lib.switch_protocol import ControllerProtocol
 
 ADDRESS = "12:34:56:78:90:AB"
@@ -46,6 +46,14 @@ def test_solo_joycon_handshake_accepts_manual_input_before_player_lights(variant
         assert protocol.player_number is None
         assert reports
         assert all(report[4:7] == bytes(3) for report in reports)
+        protocol.process_commands(None)
+        apply_to_protocol(protocol, slot.map_manual_input(ControllerState(Button.SL | Button.SR)))
+        expected = (
+            Button.SL_L | Button.SR_L if variant == ControllerVariant.LEFT
+            else Button.SL_R | Button.SR_R
+        )
+        assert int.from_bytes(protocol.get_report()[4:7], "little") == int(expected)
+
     asyncio.run(scenario())
 
 
@@ -151,7 +159,7 @@ def test_old_channel_callbacks_cannot_stop_a_new_session():
 @pytest.mark.parametrize("headless", [False, True])
 @pytest.mark.parametrize("realtek", [False, True])
 def test_startup_pairing_requires_ui_action_unless_headless(
-    monkeypatch, headless, realtek
+    monkeypatch, tmp_path, headless, realtek
 ):
     async def scenario():
         powered = asyncio.Event()
@@ -204,6 +212,7 @@ def test_startup_pairing_requires_ui_action_unless_headless(
             "load",
             lambda _: Config(
                 input_specs=[],
+                macros_dir=str(tmp_path / "macros"),
                 transport_spec="usb:0" if realtek else "hci-socket:0",
                 bt_address=ADDRESS if realtek else "98:B6:E9:12:34:57",
                 web_host=None if headless else "127.0.0.1",

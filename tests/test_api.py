@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import queue
 import shutil
 import threading
@@ -20,6 +21,10 @@ from app.main import SessionState
 from app.server import build_app
 from lib.config import Config, ConfigStore
 from lib.controller import ControllerVariant
+from lib.input.macros import (
+    load_macro,
+    seed_default_macros,
+)
 from lib.input.state import NEUTRAL, Button, ControllerState
 from lib.server.files import JsonDocStore
 
@@ -350,6 +355,7 @@ def test_joycon_output_changes_radio_identity_colours_and_combined_routing(fx, t
             keystore=JsonKeyStore(filename=str(tmp_path / f"{slot.id}.json")),
         )
         slot.bluetooth.attach(device, SessionState(), None, pro_name=device.name)
+        slot.input_manager.map_manual_input = slot.map_manual_input
     primary, secondary = sessions.values()
     pro_keystore = primary.bluetooth.device.keystore
     app = build_app(
@@ -427,6 +433,21 @@ def test_macro_list_get(fx):
         r = c.get("/api/macros/example")
         assert r.status_code == 200
         assert "press" in r.json()["contents"]
+
+
+def test_default_grip_macro_is_editable_and_stays_deleted(fx):
+    seed_default_macros(fx.macros_dir)
+    path = fx.macros_dir / "Press SL and SR.json"
+    macro = load_macro(path)
+    with fx.client() as client:
+        url = "/api/macros/Press%20SL%20and%20SR"
+        macro["actions"][2]["ms"] = 500
+        assert client.put(url, json={"contents": json.dumps(macro)}).status_code == 200
+        seed_default_macros(fx.macros_dir)
+        assert load_macro(path)["actions"][2]["ms"] == 500
+        assert client.delete(url).status_code == 200
+        seed_default_macros(fx.macros_dir)
+        assert client.get(url).status_code == 404
 
 
 def test_bluetooth_unavailable_and_validation(fx):
@@ -769,9 +790,9 @@ def test_ws_handshake_and_status(fx):
 def test_ws_threadsafety_of_broadcast(fx):
     """Broadcasts from a foreign thread must not raise even without a
     bound asyncio loop."""
-    fx.manager._emit_status()  # no subscribers: no-op path
+    fx.manager.broadcast_status()  # no subscribers: no-op path
     fx.manager.subscribe()
-    thread = threading.Thread(target=fx.manager._emit_status)
+    thread = threading.Thread(target=fx.manager.broadcast_status)
     thread.start()
     thread.join()
 

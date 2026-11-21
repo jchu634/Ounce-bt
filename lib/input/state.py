@@ -46,6 +46,10 @@ class Button(IntFlag):
     L = 1 << 22
     ZL = 1 << 23
 
+    # Side-independent aliases for macros and on-screen rail buttons.
+    SL = SL_L | SL_R
+    SR = SR_L | SR_R
+
     NONE = 0
 
     @staticmethod
@@ -81,6 +85,42 @@ JOYCON_BUTTONS = {
         | Button.STICK_R | Button.R | Button.ZR | Button.SL_R | Button.SR_R
     ),
 }
+
+# Position on a horizontal gamepad -> the Joy-Con's native HID button.
+HORIZONTAL_BUTTONS = {
+    ControllerVariant.LEFT: {
+        Button.A: Button.DOWN, Button.B: Button.LEFT,
+        Button.X: Button.RIGHT, Button.Y: Button.UP,
+        Button.L: Button.SL_L, Button.R: Button.SR_L,
+        Button.ZR: Button.L, Button.PLUS: Button.MINUS,
+        Button.HOME: Button.CAPTURE,
+    },
+    ControllerVariant.RIGHT: {
+        Button.A: Button.X, Button.B: Button.A,
+        Button.X: Button.Y, Button.Y: Button.B,
+        Button.L: Button.SL_R, Button.R: Button.SR_R,
+        Button.ZL: Button.R, Button.MINUS: Button.PLUS,
+        Button.STICK_L: Button.STICK_R,
+    },
+}
+
+
+def horizontal_manual_input(state: ControllerState, variant: ControllerVariant) -> ControllerState:
+    targets = HORIZONTAL_BUTTONS.get(variant)
+    if targets is None:
+        return state
+    buttons = Button.NONE
+    for button in Button:
+        if button & state.buttons:
+            if button in (Button.L, Button.R, Button.ZL, Button.ZR):
+                buttons |= button
+            else:
+                buttons |= targets.get(button, button)
+    right = state.right
+    if variant == ControllerVariant.RIGHT and right == NEUTRAL.right:
+        right = state.left
+    return ControllerState(buttons, state.left, right)
+
 
 def rotate_joycon_stick(state: ControllerState, variant: ControllerVariant) -> ControllerState:
     # Input is in the player's horizontal coordinates. HID coordinates use

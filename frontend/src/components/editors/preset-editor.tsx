@@ -631,7 +631,7 @@ type PhysicalSource =
 
 type SupportedButtonName = Exclude<
   ButtonName,
-  "SL_L" | "SR_L" | "SL_R" | "SR_R"
+  "SL_L" | "SR_L" | "SL_R" | "SR_R" | "SL" | "SR"
 >;
 
 const MAPPING_GROUPS = [

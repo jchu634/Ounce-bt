@@ -173,6 +173,7 @@ def test_missing_firmware_never_opens_transport(
         web_host=None if headless else "127.0.0.1",
         transport_spec="usb:0",
         firmware_dir=str(tmp_path),
+        macros_dir=str(tmp_path / "macros"),
     )
     monkeypatch.setattr(application.Config, "load", lambda _: config)
     monkeypatch.setattr(application, "application_dir", lambda: tmp_path)

@@ -101,8 +101,13 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
         return slot.input_owner.id if slot else adapter_id
 
     def selection_status() -> dict:
+        solo_joycons = all(
+            adapter_id in sessions and sessions[adapter_id].mapping_variant().is_single_joycon
+            for adapter_id in selected
+        )
+        output = {"solo_joycons": True} if solo_joycons else {}
         if len(selected) == 1 and target_for(selected[0]) == selected[0]:
-            return managers[selected[0]].status_payload()
+            return {**managers[selected[0]].status_payload(), **output}
         statuses = {
             adapter_id: managers[target_for(adapter_id)].status() for adapter_id in selected
         }
@@ -111,6 +116,7 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
             "adapter_id": selected[0],
             **statuses[selected[0]],
             "adapter_statuses": statuses,
+            **output,
         }
 
     status_q: asyncio.Queue = asyncio.Queue()
@@ -482,6 +488,7 @@ async def adapter_controller_type(request: Request) -> Response:
         for item in affected:
             if item.input_manager:
                 item.input_manager.release_manual_input()
+                item.input_manager.broadcast_status()
     except ValueError as error:
         return _error(str(error), status=409)
     except OSError as error:

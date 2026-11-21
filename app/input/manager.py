@@ -45,6 +45,7 @@ class InputManager:
         self.macro_rate_hz = macro_rate_hz
         self.adapter_id = adapter_id
         self._manual_state = NEUTRAL
+        self.map_manual_input: Callable[[ControllerState], ControllerState] | None = None
         self._pause_capture = pause_capture
         self._resume_capture = resume_capture
         self.mode: Mode = "manual"
@@ -102,7 +103,7 @@ class InputManager:
                 except Exception:
                     logger.exception("status broadcast failed")
 
-    def _emit_status(self) -> None:
+    def broadcast_status(self) -> None:
         self._emit_frame(self.status_payload())
 
     def status_payload(self) -> dict:
@@ -248,7 +249,7 @@ class InputManager:
                 if self._resume_capture:
                     self._resume_capture()
                 self.mode = "manual"
-        self._emit_status()
+        self.broadcast_status()
 
     def start_macro(self, macro: dict) -> None:
         """Start a macro if this adapter has no active playback."""
@@ -275,7 +276,7 @@ class InputManager:
                 self.mode = "macro"
             thread.start()
         logger.info(f"Started macro '{name}'")
-        self._emit_status()
+        self.broadcast_status()
 
     def start_macro_by_name(self, name: str) -> None:
         with self._lock:
@@ -295,19 +296,19 @@ class InputManager:
                 if self._resume_capture:
                     self._resume_capture()
                 self.mode = "manual"
-        self._emit_status()
+        self.broadcast_status()
 
     def pause_macro(self) -> None:
         with self._lock:
             if self._macro is not None and not self._macro.is_paused():
                 self._macro.pause()
-        self._emit_status()
+        self.broadcast_status()
 
     def resume_macro(self) -> None:
         with self._lock:
             if self._macro is not None and self._macro.is_paused():
                 self._macro.resume()
-        self._emit_status()
+        self.broadcast_status()
 
     def submit_state(self, state: ControllerState) -> bool:
         """Enqueue an ad-hoc state. Returns True if accepted, False if the
@@ -315,6 +316,8 @@ class InputManager:
         with self._lock:
             if self.mode == "macro":
                 return False
+            if self.map_manual_input is not None:
+                state = self.map_manual_input(state)
             if self.adapter_id is None:
                 self.command_queue.put_nowait(state)
             else:
@@ -397,7 +400,7 @@ class InputManager:
                     self._resume_capture()
                 self.mode = "manual"
         logger.info(f"Macro '{name}' finished; returning to manual mode")
-        self._emit_status()
+        self.broadcast_status()
 
 
 

@@ -24,6 +24,7 @@ import { DEFAULT_CONTROLLER_COLOURS } from "@/src/lib/controller-colours";
 import type { AdapterInputStatus, ServerFrame } from "@/src/lib/types";
 import { socket } from "@/src/lib/ws";
 import type { BluetoothControllerType } from "@/src/lib/controller-variants";
+import { toast, Toaster } from "@/src/components/ui/toast";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 vi.hoisted(() => {
@@ -98,9 +99,11 @@ it("selects a Joy-Con Bluetooth output and saves its body and button colours", a
   const fetchRequest = vi.fn(async (path: string, init?: RequestInit) => {
     if (path === "/api/adapters") return Response.json(inventory());
     if (path === "/api/bluetooth") {
+      const paired = init?.method === "PUT";
       return Response.json({
-        available: true, state: "disconnected", pairing: false, address: null,
+        available: true, state: paired ? "connected" : "disconnected", pairing: false, address: null,
         player_number: null, peers: [], names: {}, failure_id: 0, failure: null,
+        grip_reminder_id: paired ? 1 : 0,
       } satisfies BluetoothStatus);
     }
     if (path === "/api/adapters/primary/type") {
@@ -120,6 +123,7 @@ it("selects a Joy-Con Bluetooth output and saves its body and button colours", a
   });
   vi.stubGlobal("fetch", fetchRequest);
   vi.spyOn(socket, "start").mockImplementation(() => {});
+  const addToast = vi.spyOn(toast, "add");
   await act(async () => {
     root.render(
       <SocketProvider>
@@ -144,6 +148,42 @@ it("selects a Joy-Con Bluetooth output and saves its body and button colours", a
   await act(async () => button("Save").click());
   expect(palette).toEqual({ body: "#00B9D6", buttons: "#001E1E" });
   expect(container.querySelector('[data-region="body"]')?.getAttribute("fill")).toBe("#00B9D6");
+  await act(async () => button("Close").click());
+  await act(async () => button("Start pairing").click());
+  expect(addToast).toHaveBeenCalledWith(expect.objectContaining({
+    type: "info",
+    description: expect.stringContaining("Press SL and SR macro"),
+  }));
+});
+
+it("places separate solo Joy-Con rail buttons above the triggers", async () => {
+  vi.spyOn(socket, "start").mockImplementation(() => {});
+  vi.spyOn(socket, "getState").mockReturnValue("open");
+  const send = vi.spyOn(socket, "send").mockReturnValue(true);
+  let receive: ((frame: ServerFrame) => void) | undefined;
+  vi.spyOn(socket, "onFrame").mockImplementation((handler) => {
+    receive = handler;
+    return () => {};
+  });
+  await act(async () => root.render(<SocketProvider><ManualControl /></SocketProvider>));
+  expect(container.querySelector('[aria-label="Joy-Con rail buttons"]')).toBeNull();
+  await act(async () => receive?.({
+    type: "status", mode: "manual", macro: null, solo_joycons: true,
+  }));
+  const rails = container.querySelector('[aria-label="Joy-Con rail buttons"]');
+  expect(rails?.nextElementSibling?.getAttribute("aria-label")).toBe("Triggers");
+  expect(container.querySelector('[aria-label="SL + SR"]')).toBeNull();
+  const grip = button("SL");
+  expect(rails?.contains(button("SR"))).toBe(true);
+  expect(rails?.contains(button("L"))).toBe(false);
+  await act(async () => grip.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  expect(send).toHaveBeenLastCalledWith({
+    type: "state", buttons: ["SL"], left: [0, 0], right: [0, 0],
+  });
+  await act(async () => grip.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true })));
+  expect(send).toHaveBeenLastCalledWith({
+    type: "state", buttons: [], left: [0, 0], right: [0, 0],
+  });
 });
 
 it("keeps adapter settings scoped to the card and supports range selection", async () => {

@@ -4,6 +4,7 @@ export type BluetoothStatus = {
   state: "disconnected" | "disconnecting" | "connecting" | "reconnecting" | "connected";
   address: string | null;
   player_number?: number | null;
+  grip_reminder_id?: number;
   peers: string[];
   names: Record<string, string>;
   failure_id: number;
@@ -38,6 +39,7 @@ function isBluetoothStatus(value: unknown): value is BluetoothStatus {
     (!("player_number" in value) ||
       value.player_number === null ||
       (typeof value.player_number === "number" && Number.isInteger(value.player_number))) &&
+    (!("grip_reminder_id" in value) || Number.isInteger(value.grip_reminder_id)) &&
     "peers" in value &&
     Array.isArray(value.peers) &&
     value.peers.every((peer: unknown) => typeof peer === "string") &&

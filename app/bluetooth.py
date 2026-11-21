@@ -25,6 +25,7 @@ from lib.input.state import (
     NEUTRAL,
     Button,
     ControllerState,
+    horizontal_manual_input,
     rotate_joycon_stick,
 )
 from lib.sdp_records import sdp_record
@@ -349,6 +350,9 @@ class AdapterSession:
 
     def mapping_variant(self) -> ControllerVariant:
         return ControllerVariant.COMBINED if self.combined_partner else self.bluetooth.controller_type
+
+    def map_manual_input(self, state: ControllerState) -> ControllerState:
+        return horizontal_manual_input(state, self.mapping_variant())
 
     def output_input(self, state: ControllerState) -> ControllerState:
         if not self.combined_partner:
