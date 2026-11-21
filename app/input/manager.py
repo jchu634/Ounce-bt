@@ -282,10 +282,12 @@ class InputManager:
         with self._lock:
             if self._macro is not None:
                 return
-        path = self.macros_dir / f"{name}.json"
-        macro = load_macro(path)
+        self.start_macro(self.read_named_macro(name))
+
+    def read_named_macro(self, name: str) -> dict:
+        macro = load_macro(self.macros_dir / f"{name}.json")
         macro["name"] = name
-        self.start_macro(macro)
+        return macro
 
     def cancel_macro(self) -> None:
         with self._lock:

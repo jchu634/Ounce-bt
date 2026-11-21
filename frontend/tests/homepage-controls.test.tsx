@@ -186,6 +186,29 @@ it("places separate solo Joy-Con rail buttons above the triggers", async () => {
   });
 });
 
+it("reports incompatible macro controls through an error toast", async () => {
+  vi.spyOn(socket, "start").mockImplementation(() => {});
+  const addToast = vi.spyOn(toast, "add");
+  let receive: ((frame: ServerFrame) => void) | undefined;
+  vi.spyOn(socket, "onFrame").mockImplementation((handler) => {
+    receive = handler;
+    return () => {};
+  });
+  await act(async () => root.render(<SocketProvider><Toaster /></SocketProvider>));
+  await act(async () => receive?.({
+    type: "error",
+    code: "macro_capability",
+    message: "Macro is incompatible with the selected controller",
+    detail: "Joy-Con (L) has no right stick.",
+  }));
+  expect(addToast).toHaveBeenCalledWith(expect.objectContaining({
+    type: "error",
+    description: "Joy-Con (L) has no right stick.",
+  }));
+  expect(document.querySelector('[data-slot="toast-description"]')?.textContent)
+    .toBe("Joy-Con (L) has no right stick.");
+});
+
 it("keeps adapter settings scoped to the card and supports range selection", async () => {
   const makeAdapter = (
     id: string,

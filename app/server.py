@@ -30,7 +30,12 @@ from lib.colours import normalize_controller_colours
 from lib.config import ConfigStore, new_profile_address, normalize_controller_vibration
 from lib.controller import ControllerVariant
 from lib.device_names import normalize_device_names, validate_device_name
-from lib.input.macros import MacroValidationError, validate_macro
+from lib.input.macros import (
+    MacroCapabilityError,
+    MacroValidationError,
+    validate_macro,
+    validate_macro_capabilities,
+)
 from lib.input.presets import (
     PresetValidationError,
     delete_preset,
@@ -190,11 +195,12 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
                                 error_frame("manual input disabled while macro running")
                             )
                     else:
-                        error = None
-                        for adapter_id in dict.fromkeys(map(target_for, selected)):
-                            failure = _dispatch_macro(message, managers[adapter_id])
-                            if failure is not None:
-                                error = failure
+                        targets = tuple(dict.fromkeys(map(target_for, selected)))
+                        error = _dispatch_macro(
+                            message, [managers[target] for target in targets],
+                            {sessions[target].mapping_variant() if target in sessions
+                             else ControllerVariant.PRO for target in targets},
+                        )
                         if error is not None:
                             await websocket.send_text(error)
                 except ProtocolError as e:
@@ -237,23 +243,32 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
                 manager.release_manual_input()
 
 
-def _dispatch_macro(msg: InboundMessage, manager: InputManager) -> str | None:
-    if isinstance(msg, MacroStartInline):
+def _dispatch_macro(
+    msg: InboundMessage, managers: list[InputManager], variants: set[ControllerVariant],
+) -> str | None:
+    if isinstance(msg, (MacroStartInline, MacroStartByName)):
         try:
-            manager.start_macro(msg.macro)
-        except MacroValidationError as e:
-            return error_frame("invalid macro", detail=str(e))
-    elif isinstance(msg, MacroStartByName):
-        try:
-            manager.start_macro_by_name(msg.name)
+            macro = msg.macro if isinstance(msg, MacroStartInline) else managers[0].read_named_macro(msg.name)
+            validate_macro(macro)
+            for variant in sorted(variants):
+                validate_macro_capabilities(macro, variant)
+        except MacroCapabilityError as error:
+            return error_frame("Macro is incompatible with the selected controller", detail=error.message,
+                               code="macro_capability")
         except (FileNotFoundError, ValueError) as e:
+            if isinstance(msg, MacroStartInline):
+                return error_frame("invalid macro", detail=str(e))
             return error_frame(f"could not load macro: {e}")
-    elif isinstance(msg, MacroCancel):
-        manager.cancel_macro()
-    elif isinstance(msg, MacroPause):
-        manager.pause_macro()
-    elif isinstance(msg, MacroResume):
-        manager.resume_macro()
+        for manager in managers:
+            manager.start_macro(macro)
+    else:
+        for manager in managers:
+            if isinstance(msg, MacroCancel):
+                manager.cancel_macro()
+            elif isinstance(msg, MacroPause):
+                manager.pause_macro()
+            elif isinstance(msg, MacroResume):
+                manager.resume_macro()
     return None
 
 

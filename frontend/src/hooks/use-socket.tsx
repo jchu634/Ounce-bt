@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { socket, type ConnectionState } from "@/src/lib/ws";
+import { toast } from "@/src/components/ui/toast";
 import type {
   AdapterInputStatus,
   ControllersFrame,
@@ -41,7 +42,18 @@ export function SocketProvider({ children }: { children: ReactNode }) {
           setControllers(frame);
           break;
         case "error":
-          setLastError(frame);
+          if (frame.code === "macro_capability") {
+            setLastError(null);
+            toast.add({
+              type: "error",
+              title: frame.message,
+              description: frame.detail,
+              priority: "high",
+              timeout: 6000,
+            });
+          } else {
+            setLastError(frame);
+          }
           break;
       }
     });

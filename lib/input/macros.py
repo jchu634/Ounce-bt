@@ -5,7 +5,8 @@ import math
 from pathlib import Path
 from typing import Any
 
-from lib.input.state import Button
+from lib.controller import ControllerVariant
+from lib.input.state import JOYCON_BUTTONS, Button
 
 VALID_BUTTONS = frozenset(Button.__members__) - {"NONE"}
 MACRO_VERSION = 1
@@ -59,10 +60,56 @@ class MacroValidationError(ValueError):
 
     def __init__(self, path: list[str | int], message: str):
         self.path = path
+        self.message = message
         where = "".join(
             f"[{p}]" if isinstance(p, int) else f".{p}" for p in path
         ).lstrip(".")
         super().__init__(f"{where or '<root>'}: {message}" if where else message)
+
+
+class MacroCapabilityError(MacroValidationError):
+    """A valid macro uses a control missing from the selected controller."""
+
+
+def validate_macro_capabilities(macro: dict, variant: ControllerVariant) -> None:
+    """Check a structurally validated macro against the controller's native controls."""
+    if variant == ControllerVariant.COMBINED:
+        return
+    if variant.is_single_joycon:
+        buttons = JOYCON_BUTTONS[variant.bluetooth_type]
+        sticks = {"left" if variant == ControllerVariant.LEFT else "right"}
+    else:
+        buttons = ~(Button.SL_L | Button.SR_L | Button.SL_R | Button.SR_R)
+        sticks = {"left", "right"}
+
+    def visit(actions: list, path: list[str | int]) -> None:
+        for index, action in enumerate(actions):
+            here = [*path, index]
+            kind = action["do"]
+            if kind in ("press", "release"):
+                button = Button.by_name(action["button"])
+                if not button & buttons:
+                    label = {
+                        Button.STICK_L: "left stick click",
+                        Button.STICK_R: "right stick click",
+                        Button.SL_L: "left SL button",
+                        Button.SR_L: "left SR button",
+                        Button.SL_R: "right SL button",
+                        Button.SR_R: "right SR button",
+                    }.get(button, f"{button.name} button")
+                    raise MacroCapabilityError(
+                        [*here, "button"], f"{variant.bluetooth_name} has no {label}.",
+                    )
+            elif kind == "stick":
+                side = action.get("side", "left")
+                if side not in sticks:
+                    raise MacroCapabilityError(
+                        [*here, "side"], f"{variant.bluetooth_name} has no {side} stick.",
+                    )
+            elif kind == "loop":
+                visit(action.get("actions", []), [*here, "actions"])
+
+    visit(macro["actions"], ["actions"])
 
 
 def _expect_number(value: Any, path: list[str | int], key: str) -> float:

@@ -24,6 +24,7 @@ from lib.controller import ControllerVariant
 from lib.input.macros import (
     load_macro,
     seed_default_macros,
+    validate_macro_capabilities,
 )
 from lib.input.state import NEUTRAL, Button, ControllerState
 from lib.server.files import JsonDocStore
@@ -422,6 +423,25 @@ def test_joycon_output_changes_radio_identity_colours_and_combined_routing(fx, t
             assert client.put(output, json={"controller_type": "joycon_l"}).status_code == 200
             assert primary.combined_partner is secondary.combined_partner is None
             assert secondary.output_input(NEUTRAL) == NEUTRAL
+            incompatible_macro = {
+                "version": 1, "actions": [{
+                    "do": "loop", "count": 2,
+                    "actions": [{"do": "stick", "side": "right", "x": 1, "y": 0}],
+                }],
+            }
+            assert client.put(
+                "/api/macros/right-stick",
+                json={"contents": json.dumps(incompatible_macro)},
+            ).status_code == 200
+            with client.websocket_connect("/ws") as ws:
+                assert ws.receive_json()["type"] == "status"
+                assert ws.receive_json()["type"] == "controllers"
+                for payload in ({"macro": incompatible_macro}, {"name": "right-stick"}):
+                    ws.send_json({"type": "macro", "op": "start", **payload})
+                    error = ws.receive_json()
+                    assert error["code"] == "macro_capability"
+                    assert error["detail"] == "Joy-Con (L) has no right stick."
+                    assert fx.manager.status()["mode"] == "manual"
     finally:
         other.shutdown()
 
@@ -439,6 +459,8 @@ def test_default_grip_macro_is_editable_and_stays_deleted(fx):
     seed_default_macros(fx.macros_dir)
     path = fx.macros_dir / "Press SL and SR.json"
     macro = load_macro(path)
+    for variant in (ControllerVariant.LEFT, ControllerVariant.RIGHT):
+        validate_macro_capabilities(macro, variant)
     with fx.client() as client:
         url = "/api/macros/Press%20SL%20and%20SR"
         macro["actions"][2]["ms"] = 500

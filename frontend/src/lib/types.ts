@@ -82,6 +82,7 @@ export type ErrorFrame = {
   type: "error";
   message: string;
   detail?: string;
+  code?: "macro_capability";
 };
 
 export type ServerFrame = StatusFrame | ControllersFrame | ErrorFrame;
