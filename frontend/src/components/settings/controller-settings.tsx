@@ -1,5 +1,5 @@
 import { useImperativeHandle, useRef, useState, type Ref } from "react";
-import { VibrationSetting } from "@/src/components/settings/vibration-setting";
+import { MotionSetting, VibrationSetting } from "@/src/components/settings/vibration-setting";
 import { PresetEditor, type PresetEditorHandle } from "@/src/components/editors/preset-editor";
 import { PresetPicker } from "@/src/components/settings/controller-preset-picker";
 import type { PresetInfo } from "@/src/lib/types";
@@ -56,7 +56,10 @@ export function ControllerSettings({
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      <VibrationSetting />
+      <div className="flex flex-wrap items-center gap-6">
+        <VibrationSetting />
+        <MotionSetting />
+      </div>
 
       <div className="space-y-4 2xl:flex 2xl:space-y-0 2xl:gap-x-4">
         <PresetPicker

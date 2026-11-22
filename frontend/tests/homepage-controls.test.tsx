@@ -111,7 +111,7 @@ it("selects a Joy-Con Bluetooth output and saves its body and button colours", a
       return Response.json(inventory());
     }
     if (path === "/api/presets") return Response.json({ presets: [], active: null });
-    if (path === "/api/config") return Response.json({ vibration_enabled: true });
+    if (path === "/api/config") return Response.json({ vibration_enabled: true, motion_enabled: true });
     if (path.startsWith("/api/adapters/primary/colours")) {
       if (init?.method === "PATCH") palette = JSON.parse(String(init.body));
       return Response.json({
@@ -578,13 +578,15 @@ it("opens controller settings and sends actions for the card’s saved profile",
   let colours = { ...DEFAULT_CONTROLLER_COLOURS, body: "#FF3344" };
   let preset = "xbox";
   let vibrationEnabled = true;
+  let motionEnabled = true;
   const controllerVibration: Record<string, boolean> = {};
+  const controllerMotion: Record<string, boolean> = {};
   const controllerStatus = {
     available: true,
     active: "test-pad",
     controllers: [
-      { instance_id: 1, guid: "test-pad", name: "Test Gamepad" },
-      { instance_id: 2, guid: "second-pad", name: "Second Gamepad" },
+      { instance_id: 1, guid: "test-pad", name: "Test Gamepad", has_gyro: true },
+      { instance_id: 2, guid: "second-pad", name: "Second Gamepad", has_gyro: true },
     ],
   };
   const status: BluetoothStatus = {
@@ -604,12 +606,17 @@ it("opens controller settings and sends actions for the card’s saved profile",
         if (change.controller_colours) colours = DEFAULT_CONTROLLER_COLOURS;
         if (typeof change.vibration_enabled === "boolean")
           vibrationEnabled = change.vibration_enabled;
+        if (typeof change.motion_enabled === "boolean")
+          motionEnabled = change.motion_enabled;
         Object.assign(controllerVibration, change.controller_vibration);
+        Object.assign(controllerMotion, change.controller_motion);
         return Response.json({
           config: {
             controller_colours: colours,
             vibration_enabled: vibrationEnabled,
             controller_vibration: controllerVibration,
+            motion_enabled: motionEnabled,
+            controller_motion: controllerMotion,
           },
           colours_reconnect_required: true,
         });
@@ -618,6 +625,8 @@ it("opens controller settings and sends actions for the card’s saved profile",
         controller_colours: colours,
         vibration_enabled: vibrationEnabled,
         controller_vibration: controllerVibration,
+        motion_enabled: motionEnabled,
+        controller_motion: controllerMotion,
       });
     }
     if (path === "/api/bluetooth") {
@@ -639,6 +648,7 @@ it("opens controller settings and sends actions for the card’s saved profile",
           id: c.instance_id,
           name: c.name,
           guid: c.guid,
+          has_gyro: c.has_gyro,
         })),
         controllers_available: true,
       });

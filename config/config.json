@@ -10,6 +10,7 @@
     "right_grip": "#00E7A6"
   },
   "controller_guid": "",
+  "controller_motion": {},
   "controller_presets": {},
   "controller_vibration": {},
   "debug_enabled": false,
@@ -21,6 +22,7 @@
   "last_camera_device_id": "",
   "macro_rate_hz": 120,
   "macros_dir": "macros",
+  "motion_enabled": true,
   "nolog": false,
   "pairing_dir": null,
   "preset": "xbox",

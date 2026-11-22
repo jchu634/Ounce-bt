@@ -85,6 +85,8 @@ class Fixture:
                         "guid": "g1",
                         "name": "Pad One",
                         "gamepad_type": "switch_pro",
+                        "has_gyro": True,
+                        "has_accel": True,
                         "has_rumble": True,
                     },
                     {
@@ -92,6 +94,8 @@ class Fixture:
                         "guid": "g2",
                         "name": "Pad Two",
                         "gamepad_type": "xboxone",
+                        "has_gyro": False,
+                        "has_accel": False,
                         "has_rumble": True,
                     },
                 ],
@@ -571,13 +575,33 @@ def test_macro_delete_running_conflict(fx, monkeypatch):
 
 
 
-def test_controllers_get_and_removed_active_endpoint(fx):
+def test_controllers_get_and_motion_config(fx):
     with fx.client() as c:
         r = c.get("/api/controllers").json()
         assert r["active"] == "g1"
         assert len(r["controllers"]) == 2
+        assert r["controllers"][0]["has_gyro"] is True
+        assert r["controllers"][1]["has_gyro"] is False
         # Deprecated single-controller select endpoint removed.
         assert c.put("/api/controllers/active", json={"guid": "g2"}).status_code == 404
+
+        patched = c.patch("/api/config", json={"motion_enabled": False})
+        assert patched.status_code == 200
+        assert fx.config_store.config.motion_enabled is False
+        assert not fx.config_store.config.allows_controller_motion("g1")
+
+        patched = c.patch(
+            "/api/config",
+            json={"motion_enabled": True, "controller_motion": {"g1": False}},
+        )
+        assert patched.status_code == 200
+        assert not fx.config_store.config.allows_controller_motion("g1")
+        assert fx.config_store.config.allows_controller_motion("g2")
+        assert c.patch("/api/config", json={"motion_enabled": "yes"}).status_code == 400
+        assert (
+            c.patch("/api/config", json={"controller_motion": {"g1": "no"}}).status_code
+            == 400
+        )
 
 
 

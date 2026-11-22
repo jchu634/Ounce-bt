@@ -340,6 +340,7 @@ class AdapterSession:
     legacy_keystore: bool = False
     combined_partner: "AdapterSession | None" = field(default=None, repr=False, compare=False)
     combined_input: ControllerState = NEUTRAL
+    imu_active: bool = False
     _grip_pending: bool = field(default=False, init=False)
     _grip_ready: bool = field(default=False, init=False)
     _grip_until: float = field(default=0.0, init=False)
@@ -347,6 +348,11 @@ class AdapterSession:
     @property
     def primary(self) -> bool:
         return self.id == "primary"
+
+    def imu_requested(self) -> bool:
+        return self.imu_active or bool(
+            self.combined_partner and self.combined_partner.imu_active
+        )
 
     def mapping_variant(self) -> ControllerVariant:
         return ControllerVariant.COMBINED if self.combined_partner else self.bluetooth.controller_type

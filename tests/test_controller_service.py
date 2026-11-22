@@ -15,6 +15,7 @@ from lib.input.presets import (
     load_preset,
     resolve_controller_preset,
 )
+from lib.input.sdl3_backend import STANDARD_GRAVITY, ImuSample
 from lib.input.state import NEUTRAL, Button, ControllerState
 
 
@@ -25,12 +26,21 @@ class FakeDevice:
         self.triggers: dict[str, float] = {}
         self.left = (0.0, 0.0)
         self.right = (0.0, 0.0)
+        self.imu: list[ImuSample] = []
+        self.sensors_enabled = False
         self.closed = False
         self.rumble_calls: list[tuple[float, float, int]] = []
         self.stop_rumble_calls = 0
 
     def read_state(self):
         return self.pressed, self.triggers, self.left, self.right
+
+    def set_sensors_enabled(self, enabled: bool) -> None:
+        self.sensors_enabled = enabled
+
+    def drain_imu(self) -> list[ImuSample]:
+        out, self.imu = list(self.imu), []
+        return out
 
     def rumble(self, low: float, high: float, duration_ms: int) -> bool:
         self.rumble_calls.append((low, high, duration_ms))
@@ -108,7 +118,7 @@ def test_saved_guid_preset_overrides_detected_default(monkeypatch):
 def test_assign_resolves_and_reports_controller_preset():
     reported = []
     preset = PresetConfig(name="PlayStation")
-    controller = ControllerInfo(10, "guid-1", "DualSense", "ps5")
+    controller = ControllerInfo(10, "guid-1", "DualSense", "ps5", has_gyro=True)
     host = FakeHost([controller])
     service = ControllerService(
         queue.Queue(),
@@ -198,6 +208,8 @@ def test_hotplug_connect_disconnect_reconnect():
         "0300b7e67e0500000920000000006803",
         "Nintendo Switch Pro Controller",
         "switch_pro",
+        has_gyro=True,
+        has_accel=True,
         has_rumble=True,
     )
     host = FakeHost([])
@@ -231,12 +243,14 @@ def test_hotplug_connect_disconnect_reconnect():
     assert service.active_guid is None
 
 
-def test_live_variant_switching():
-    controller = ControllerInfo(5, "guid-pro", "Switch Pro", "switch_pro")
+def test_on_demand_imu_sensors_and_live_variant_switching():
+    controller = ControllerInfo(5, "guid-pro", "Switch Pro", "switch_pro", has_gyro=True, has_accel=True)
     host = FakeHost([controller])
     out = queue.Queue()
     service = ControllerService(out, preset=load_preset("switch"), host=host)
+    imu_on = [False]
     variant = [ControllerVariant.PRO]
+    service.imu_requested = lambda: imu_on[0]
     service.mapping_variant = lambda: variant[0]
 
     service._refresh_controllers()
@@ -245,11 +259,23 @@ def test_live_variant_switching():
     device.pressed = frozenset({"south"})
 
     service._tick_sdl()
+    assert not device.sensors_enabled
     assert out.get_nowait() == ControllerState(Button.B)
 
+    imu_on[0] = True
+    sample = ImuSample((0.0, STANDARD_GRAVITY, 0.0), (0.5, 0.0, 0.0), 100)
+    device.imu = [sample]
     variant[0] = ControllerVariant.LEFT
     service._tick_sdl()
+    assert device.sensors_enabled
     assert out.get_nowait() == ControllerState(Button.LEFT)
+    cursor, read = service.read_imu_since(0)
+    assert cursor == 1
+    assert read == [sample]
+
+    imu_on[0] = False
+    service._tick_sdl()
+    assert not device.sensors_enabled
 
 
 def test_service_can_stop_and_join_without_controllers():

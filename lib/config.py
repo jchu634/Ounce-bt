@@ -107,13 +107,21 @@ def config_path() -> Path:
     return resolve_config_file("config.json")
 
 
-def normalize_controller_vibration(value: object) -> dict[str, bool]:
+def normalize_controller_bool_map(value: object, *, label: str = "controller_vibration") -> dict[str, bool]:
     if not isinstance(value, dict) or any(
         not isinstance(key, str) or not key.strip() or not isinstance(enabled, bool)
         for key, enabled in value.items()
     ):
-        raise ValueError("controller_vibration must map controller IDs to booleans")
+        raise ValueError(f"{label} must map controller IDs to booleans")
     return {key.strip().casefold(): enabled for key, enabled in value.items()}
+
+
+def normalize_controller_vibration(value: object) -> dict[str, bool]:
+    return normalize_controller_bool_map(value, label="controller_vibration")
+
+
+def normalize_controller_motion(value: object) -> dict[str, bool]:
+    return normalize_controller_bool_map(value, label="controller_motion")
 
 
 @dataclass(frozen=True)
@@ -231,6 +239,8 @@ class Config:
     preset: str = "xbox"
     vibration_enabled: bool = True
     controller_vibration: dict[str, bool] = field(default_factory=dict)
+    motion_enabled: bool = True
+    controller_motion: dict[str, bool] = field(default_factory=dict)
     controller_guid: str = ""
     controller_presets: dict[str, str] = field(default_factory=dict)
     controller_colours: dict[str, str] = field(default_factory=dict)
@@ -241,8 +251,11 @@ class Config:
     def __post_init__(self) -> None:
         if not isinstance(self.vibration_enabled, bool):
             raise TypeError("vibration_enabled must be a boolean")
+        if not isinstance(self.motion_enabled, bool):
+            raise TypeError("motion_enabled must be a boolean")
         self.controller_presets = _normalize_controller_presets(self.controller_presets)
         self.controller_vibration = normalize_controller_vibration(self.controller_vibration)
+        self.controller_motion = normalize_controller_motion(self.controller_motion)
         self.controller_colours = normalize_controller_colours(self.controller_colours)
         self.adapter_colours = _normalize_adapter_colours(self.adapter_colours)
         self.adapter_presets = _normalize_controller_presets(self.adapter_presets)
@@ -254,8 +267,21 @@ class Config:
     def web_enabled(self) -> bool:
         return bool(self.web_host and self.web_port)
 
+    @staticmethod
+    def _allows_controller_feature(
+        global_enabled: bool, per_controller: dict[str, bool], guid: str | None
+    ) -> bool:
+        return global_enabled and per_controller.get((guid or "").casefold(), True)
+
     def allows_controller_vibration(self, guid: str | None) -> bool:
-        return self.vibration_enabled and self.controller_vibration.get((guid or "").casefold(), True)
+        return self._allows_controller_feature(
+            self.vibration_enabled, self.controller_vibration, guid
+        )
+
+    def allows_controller_motion(self, guid: str | None) -> bool:
+        return self._allows_controller_feature(
+            self.motion_enabled, self.controller_motion, guid
+        )
 
     def colours_for_adapter(self, transport: str, *, primary: bool) -> dict[str, str]:
         return self.controller_colours if primary else self.adapter_colours.get(
@@ -309,6 +335,7 @@ class Config:
             ("adapter_colours", _normalize_adapter_colours),
             ("adapter_profiles", _adapter_profiles),
             ("controller_vibration", normalize_controller_vibration),
+            ("controller_motion", normalize_controller_motion),
             ("switch_device_names", normalize_device_names),
         ):
             if key not in filtered:
@@ -318,11 +345,10 @@ class Config:
             except (TypeError, ValueError) as e:
                 logger.warning(f"Invalid {key}: {e}; using defaults")
                 del filtered[key]
-        if "vibration_enabled" in filtered and not isinstance(
-            filtered["vibration_enabled"], bool
-        ):
-            logger.warning("Invalid vibration_enabled; using default")
-            del filtered["vibration_enabled"]
+        for flag in ("vibration_enabled", "motion_enabled"):
+            if flag in filtered and not isinstance(filtered[flag], bool):
+                logger.warning(f"Invalid {flag}; using default")
+                del filtered[flag]
         config = cls(**filtered)
         config._path = path
         return config
@@ -426,20 +452,23 @@ class ConfigStore:
     def update(self, changes: dict) -> dict:
         """Apply a partial update and persist. Returns the actually-changed
         key/value pairs (keys that were unknown or unchanged are skipped)."""
-        if "vibration_enabled" in changes and not isinstance(
-            changes["vibration_enabled"], bool
-        ):
-            raise TypeError("vibration_enabled must be a boolean")
+        for flag in ("vibration_enabled", "motion_enabled"):
+            if flag in changes and not isinstance(changes[flag], bool):
+                raise TypeError(f"{flag} must be a boolean")
         valid = Config._valid_keys()
         with self._lock:
-            if "controller_vibration" in changes:
-                changes = {
-                    **changes,
-                    "controller_vibration": {
-                        **self._config.controller_vibration,
-                        **normalize_controller_vibration(changes["controller_vibration"]),
-                    },
-                }
+            for key, normalize in (
+                ("controller_vibration", normalize_controller_vibration),
+                ("controller_motion", normalize_controller_motion),
+            ):
+                if key in changes:
+                    changes = {
+                        **changes,
+                        key: {
+                            **getattr(self._config, key),
+                            **normalize(changes[key]),
+                        },
+                    }
             if "switch_device_names" in changes:
                 changes = {
                     **changes,

@@ -31,6 +31,7 @@ from bumble.hci import Address
 
 from lib.colours import normalize_controller_colours
 from lib.controller import ControllerTypes
+from lib.input.imu import pack_imu_frames
 
 
 def replace_subarray(arr, start_idx, length, value=None, replace_arr=None):
@@ -169,6 +170,7 @@ class ControllerProtocol:
 
         # IMU (Six Axis Sensor) State
         self.imu_enabled = False
+        self._imu_payload: bytes | None = None
 
         # Preserve the constructor's RGB-byte interface; setters use #RRGGBB.
         colours = {}
@@ -433,49 +435,20 @@ class ControllerProtocol:
         # Subcommand reply
         self.report[15] = 0x40
 
+    def set_imu_inputs(self, payload: bytes | None) -> None:
+        self._imu_payload = payload
+        if self.imu_enabled and len(self.report) >= 50 and self.report[1] == 0x30:
+            self.set_imu_data()
+
     def set_imu_data(self):
         if not self.imu_enabled:
             return
-
-        imu_data = [
-            0x75,
-            0xFD,
-            0xFD,
-            0xFF,
-            0x09,
-            0x10,
-            0x21,
-            0x00,
-            0xD5,
-            0xFF,
-            0xE0,
-            0xFF,
-            0x72,
-            0xFD,
-            0xF9,
-            0xFF,
-            0x0A,
-            0x10,
-            0x22,
-            0x00,
-            0xD5,
-            0xFF,
-            0xE0,
-            0xFF,
-            0x76,
-            0xFD,
-            0xFC,
-            0xFF,
-            0x09,
-            0x10,
-            0x23,
-            0x00,
-            0xD5,
-            0xFF,
-            0xE0,
-            0xFF,
-        ]
-        replace_subarray(self.report, 14, 49, replace_arr=imu_data)
+        payload = (
+            self._imu_payload
+            if self._imu_payload is not None and len(self._imu_payload) == 36
+            else pack_imu_frames((), self.controller_type)
+        )
+        replace_subarray(self.report, 14, 36, replace_arr=payload)
 
     def spi_read(self, message):
         address = int.from_bytes(message.subcommand[1:5], "little")
@@ -586,38 +559,35 @@ class ControllerProtocol:
             # Spacer byte
             self.report[39] = 0xFF
 
-        # Six-Axis motion sensor factor calibration
+        # Six-Axis motion sensor factory calibration (zero origin so live IMU
+        # samples encoded in lib/input/imu.py map directly with standard scale).
         elif addr_top == 0x60 and addr_bottom == 0x20:
-            # 1: Acceleration origin position
-            # 2: Acceleration sensitivity coefficient
-            # 3: Gyro origin when still
-            # 4: Gyro sensitivity coefficient
             sa_calibration = [
-                0xD3,
-                0xFF,
-                0xD5,
-                0xFF,
-                0x55,
-                0x01,  # 1
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,  # Accel origin (0, 0, 0)
                 0x00,
                 0x40,
                 0x00,
                 0x40,
                 0x00,
-                0x40,  # 2
-                0x19,
+                0x40,  # Accel sensitivity (0x4000 = 4096 LSB/g)
                 0x00,
-                0xDD,
-                0xFF,
-                0xDC,
-                0xFF,  # 3
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,  # Gyro origin (0, 0, 0)
                 0x3B,
                 0x34,
                 0x3B,
                 0x34,
                 0x3B,
-                0x34,
-            ]  # 4
+                0x34,  # Gyro sensitivity (0x343B = 13371 LSB / 936 dps)
+            ]
 
             replace_subarray(self.report, 21, 24, replace_arr=sa_calibration)
 

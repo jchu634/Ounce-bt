@@ -80,6 +80,7 @@ class PresetConfig:
 
     name: str = "Default"
     rumble_enabled: bool = True
+    motion_enabled: bool = True
     button_map: dict[str, Button] = field(default_factory=dict)
     trigger_map: dict[str, Button] = field(default_factory=dict)
     left_stick: StickSide | None = "left"
@@ -100,6 +101,7 @@ class PresetConfig:
         return cls(
             name="Default",
             rumble_enabled=True,
+            motion_enabled=True,
             button_map={
                 "south": Button.B,
                 "east": Button.A,
@@ -146,8 +148,9 @@ def validate_preset(data: dict) -> PresetConfig:
         raise PresetValidationError(["version"], f"must be {PRESET_VERSION}")
     if "name" in data and not isinstance(data["name"], str):
         raise PresetValidationError(["name"], "must be a string")
-    if "rumble_enabled" in data and not isinstance(data["rumble_enabled"], bool):
-        raise PresetValidationError(["rumble_enabled"], "must be a boolean")
+    for flag in ("rumble_enabled", "motion_enabled"):
+        if flag in data and not isinstance(data[flag], bool):
+            raise PresetValidationError([flag], "must be a boolean")
 
     mappings = data.get("mappings")
     if not isinstance(mappings, dict):
@@ -377,6 +380,7 @@ def _build_preset(data: dict, metadata: dict) -> PresetConfig:
     return PresetConfig(
         name=metadata.get("name", "Unnamed"),
         rumble_enabled=metadata.get("rumble_enabled", True),
+        motion_enabled=metadata.get("motion_enabled", True),
         button_map=button_map,
         trigger_map=trigger_map,
         left_stick=left_stick,

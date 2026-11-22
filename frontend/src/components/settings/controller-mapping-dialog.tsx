@@ -20,7 +20,7 @@ import {
 import { listPresets } from "@/src/lib/api";
 import { errorMessage } from "@/src/lib/errors";
 import type { PresetInfo } from "@/src/lib/types";
-import { VibrationSetting } from "./vibration-setting";
+import { MotionSetting, VibrationSetting } from "./vibration-setting";
 import { ControllerVariantIcon } from "./controller-preview";
 import type { ControllerVariant } from "@/src/lib/controller-variants";
 
@@ -29,6 +29,7 @@ export type MappingSettings = {
   options: { id: string; name: string; disabled?: boolean }[];
   active: string | null;
   controllerGuid: string | null;
+  hasGyro?: boolean;
   preset: string | null;
   pending: "selecting" | "applying" | null;
   error: string | null;
@@ -164,6 +165,7 @@ function MappingControls({
     options,
     active,
     controllerGuid,
+    hasGyro,
     preset,
     pending,
     error,
@@ -319,7 +321,13 @@ function MappingControls({
           )}
         </div>
       </div>
-      <VibrationSetting controllerGuid={controllerGuid} />
+      <div className="space-y-3">
+        <VibrationSetting controllerGuid={controllerGuid} />
+        <MotionSetting
+          controllerGuid={controllerGuid}
+          supported={hasGyro ?? true}
+        />
+      </div>
       {pending && (
         <p role="status">
           {pending === "applying"

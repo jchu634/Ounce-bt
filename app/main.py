@@ -47,6 +47,7 @@ from lib.firmware import (
 )
 from lib.input import NEUTRAL, apply_to_protocol, parse_rumble
 from lib.input import presets as presets_module
+from lib.input.imu import pack_imu_frames
 from lib.input.macros import load_macro, seed_default_macros
 from lib.input.presets import (
     PresetConfig,
@@ -62,6 +63,7 @@ from lib.windows_adapters import discover_winusb_adapters
 HID_CONTROL_PSM = 0x0011
 HID_INTERRUPT_PSM = 0x0013
 TICK_RATE_HZ = 132
+IMU_REPORT_INTERVAL_SECONDS = 0.015
 
 logger = logging.getLogger("switch_pair")
 
@@ -178,6 +180,10 @@ async def run_mainloop(
     rumble_enabled: bool = True,
     controller_service: ControllerService | None = None,
     vibration_allowed: Callable[[], bool] | None = None,
+    motion_allowed: Callable[[], bool] | None = None,
+    imu_source=None,
+    on_imu_active: Callable[[bool], None] | None = None,
+    horizontal_imu: bool = False,
     player_changed: Callable[[int | None], None] | None = None,
     mix_manual_input: Callable[[ControllerState], ControllerState] | None = None,
     tick_rate_hz: int = TICK_RATE_HZ,
@@ -185,18 +191,21 @@ async def run_mainloop(
     pairing_grip: Callable[[ControllerProtocol, ControllerState], ControllerState] | None = None,
 ):
     """Steady-state loop: apply the latest controller input, process one
-    Switch PDU per tick, forward rumble, and emit reports.
+    Switch PDU per tick, forward rumble and IMU motion, and emit reports.
 
     Caches the last report payload so we don't flood the Switch with
     identical packets (important on the "Change Grip/Order" menu), and
     sends a keepalive every 132 ticks (~1 s) regardless.
 
-    Console vibration state, the current preset and the saved setting gate playback.
+    Console vibration/IMU state, the current preset and saved settings gate playback.
     """
     tick = 0
     cached = None
     latest_state: ControllerState = NEUTRAL
     duration_start = perf_counter()
+    imu_cursor = 0
+    next_imu_at = 0.0
+    last_imu_active: bool | None = None
 
     try:
         while not stop_event.is_set():
@@ -225,6 +234,29 @@ async def run_mainloop(
             protocol.process_commands(reply)
             if player_changed and protocol.player_number != previous_player:
                 player_changed(protocol.player_number)
+
+            # Update IMU payload on a 15 ms (~66.7 Hz) cadence matching Switch 3x5ms framing.
+            imu_on = protocol.imu_enabled and (
+                motion_allowed() if motion_allowed is not None else True
+            )
+            if on_imu_active is not None and imu_on != last_imu_active:
+                on_imu_active(imu_on)
+                last_imu_active = imu_on
+            if imu_on and imu_source is not None:
+                now = perf_counter()
+                if now >= next_imu_at:
+                    imu_cursor, samples = imu_source.read_imu_since(imu_cursor)
+                    if samples:
+                        protocol.set_imu_inputs(
+                            pack_imu_frames(
+                                samples,
+                                protocol.controller_type,
+                                horizontal=horizontal_imu,
+                            )
+                        )
+                    next_imu_at = now + IMU_REPORT_INTERVAL_SECONDS
+            elif not imu_on:
+                protocol.set_imu_inputs(None)
 
             # Apply the latest input state (buttons + sticks) to the report.
             state = mix_manual_input(latest_state) if mix_manual_input else latest_state
@@ -269,6 +301,8 @@ async def run_mainloop(
             await asyncio.sleep(sleep_time)
 
     finally:
+        if on_imu_active is not None:
+            on_imu_active(False)
         if controller_service is not None:
             controller_service.set_rumble(None)
 
@@ -774,6 +808,7 @@ async def run_bluetooth(
         session.input_manager.map_manual_input = session.map_manual_input
         if session.controller is not None:
             session.controller.mapping_variant = session.mapping_variant
+            session.controller.imu_requested = session.imu_requested
 
     if app is not None:
         app.state.bluetooth = primary.bluetooth
@@ -792,19 +827,32 @@ async def run_bluetooth(
                     thread.start()
 
     async def supervise(session, firmware_dir):
+        def _selected_preset(target):
+            controller = target.controller
+            return (
+                (manager.current_preset or preset)
+                if target.primary
+                else (controller.preset if controller else preset)
+            )
+
         def vibration_allowed():
             owner = session.input_owner
             controller = owner.controller
-            selected = (
-                (manager.current_preset or preset)
-                if owner.primary
-                else (controller.preset if controller else preset)
-            )
             return (
                 config_store.config.allows_controller_vibration(
                     controller.active_guid if controller else None
                 )
-                and selected.rumble_enabled
+                and _selected_preset(owner).rumble_enabled
+            )
+
+        def motion_allowed():
+            owner = session.input_owner
+            controller = owner.controller
+            return (
+                config_store.config.allows_controller_motion(
+                    controller.active_guid if controller else None
+                )
+                and _selected_preset(owner).motion_enabled
             )
 
         try:
@@ -817,6 +865,7 @@ async def run_bluetooth(
                 addresses,
                 lambda: adapter_ready(session),
                 vibration_allowed,
+                motion_allowed,
             )
         except Exception as error:
             if app is None:
@@ -892,12 +941,24 @@ class IncompleteHciResponse(HciStartupError):
 
 
 async def run_adapter(
-    session, config_store, power_lock, addresses, on_ready, vibration_allowed
+    session,
+    config_store,
+    power_lock,
+    addresses,
+    on_ready,
+    vibration_allowed,
+    motion_allowed=None,
 ):
     for attempt in range(3):
         try:
             await run_adapter_once(
-                session, config_store, power_lock, addresses, on_ready, vibration_allowed
+                session,
+                config_store,
+                power_lock,
+                addresses,
+                on_ready,
+                vibration_allowed,
+                motion_allowed,
             )
             return
         except HciStartupError as error:
@@ -928,7 +989,13 @@ async def power_on_adapter(device):
 
 
 async def run_adapter_once(
-    session, config_store, power_lock, addresses, on_ready, vibration_allowed
+    session,
+    config_store,
+    power_lock,
+    addresses,
+    on_ready,
+    vibration_allowed,
+    motion_allowed=None,
 ):
     config = config_store.config
     bluetooth = session.bluetooth
@@ -1016,6 +1083,7 @@ async def run_adapter_once(
                 on_ready,
                 vibration_allowed,
                 getattr(hci_transport.source, "wait_for_termination", None),
+                motion_allowed=motion_allowed,
                 pro_name=pro_name,
             )
         finally:
@@ -1033,6 +1101,7 @@ async def run_powered_adapter(
     on_ready,
     vibration_allowed,
     wait_transport,
+    motion_allowed=None,
     pro_name=None,
 ):
     config = config_store.config
@@ -1141,6 +1210,10 @@ async def run_powered_adapter(
                     controller_service=controller_service if owner is session else None,
                     tick_rate_hz=config.tick_rate_hz,
                     vibration_allowed=vibration_allowed,
+                    motion_allowed=motion_allowed,
+                    imu_source=owner.controller,
+                    on_imu_active=lambda active: setattr(session, "imu_active", active),
+                    horizontal_imu=single_joycon,
                     player_changed=lambda number: setattr(
                         bluetooth, "player_number", number
                     ),

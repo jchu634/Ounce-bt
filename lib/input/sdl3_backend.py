@@ -1,15 +1,18 @@
-"""Generic SDL3 controller discovery, input polling, and rumble."""
+"""Generic SDL3 controller discovery, input polling, motion sensors, and rumble."""
 
 from __future__ import annotations
 
 import ctypes
 import logging
+from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
 from lib.sdl3 import load_sdl3, sdl3_error
 
 logger = logging.getLogger("switch_pair")
+
+STANDARD_GRAVITY = 9.80665
 
 # Canonical semantic input names (matching SDL3 SDL_GamepadButton / Axis).
 GAMEPAD_BUTTONS: tuple[str, ...] = (
@@ -77,6 +80,18 @@ _TYPE_ATTRS: tuple[tuple[str, str], ...] = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class ImuSample:
+    """One paired accelerometer (m/s^2) and gyroscope (rad/s) reading in SDL3 coordinates.
+
+    SDL3 right-handed coordinates: +X = right, +Y = up, +Z = toward player.
+    """
+
+    accel: tuple[float, float, float] = (0.0, STANDARD_GRAVITY, 0.0)
+    gyro: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    timestamp_ns: int = 0
+
+
 @dataclass(frozen=True)
 class DeviceInfo:
     """Metadata and capabilities for one connected physical controller."""
@@ -85,6 +100,8 @@ class DeviceInfo:
     guid: str
     name: str
     gamepad_type: str = "standard"
+    has_gyro: bool = False
+    has_accel: bool = False
     has_rumble: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -93,6 +110,8 @@ class DeviceInfo:
             "guid": self.guid,
             "name": self.name,
             "gamepad_type": self.gamepad_type,
+            "has_gyro": self.has_gyro,
+            "has_accel": self.has_accel,
             "has_rumble": self.has_rumble,
         }
 
@@ -106,7 +125,7 @@ def _norm_trigger(raw: int) -> float:
 
 
 class Sdl3Device:
-    """One opened SDL3 gamepad handle with input polling and rumble support."""
+    """One opened SDL3 gamepad handle with on-demand IMU and rumble support."""
 
     def __init__(self, sdl: Any, pad: Any, info: DeviceInfo):
         self._sdl = sdl
@@ -117,6 +136,9 @@ class Sdl3Device:
             for name, attr in _BUTTON_ATTRS
             if hasattr(sdl, attr)
         )
+        self._sensors_enabled = False
+        self._last_accel: tuple[float, float, float] = (0.0, STANDARD_GRAVITY, 0.0)
+        self._imu_samples: deque[ImuSample] = deque(maxlen=16)
 
     def read_state(
         self,
@@ -147,6 +169,42 @@ class Sdl3Device:
         )
         return buttons, triggers, left, right
 
+    def set_sensors_enabled(self, enabled: bool) -> None:
+        if enabled == self._sensors_enabled:
+            return
+        sdl = self._sdl
+        if self.info.has_accel:
+            sdl.SDL_SetGamepadSensorEnabled(self._pad, sdl.SDL_SENSOR_ACCEL, enabled)
+        if self.info.has_gyro:
+            sdl.SDL_SetGamepadSensorEnabled(self._pad, sdl.SDL_SENSOR_GYRO, enabled)
+        self._sensors_enabled = enabled
+        if not enabled:
+            self._imu_samples.clear()
+
+    def push_sensor(
+        self, sensor_type: int, x: float, y: float, z: float, timestamp_ns: int
+    ) -> None:
+        if not self._sensors_enabled:
+            return
+        sdl = self._sdl
+        if sensor_type == sdl.SDL_SENSOR_ACCEL:
+            self._last_accel = (x, y, z)
+            if not self.info.has_gyro:
+                self._imu_samples.append(
+                    ImuSample(self._last_accel, (0.0, 0.0, 0.0), timestamp_ns)
+                )
+        elif sensor_type == sdl.SDL_SENSOR_GYRO:
+            self._imu_samples.append(
+                ImuSample(self._last_accel, (x, y, z), timestamp_ns)
+            )
+
+    def drain_imu(self) -> list[ImuSample]:
+        if not self._imu_samples:
+            return []
+        samples = list(self._imu_samples)
+        self._imu_samples.clear()
+        return samples
+
     def rumble(self, low: float, high: float, duration_ms: int) -> bool:
         lo = max(0, min(0xFFFF, round(low * 0xFFFF)))
         hi = max(0, min(0xFFFF, round(high * 0xFFFF)))
@@ -158,6 +216,10 @@ class Sdl3Device:
     def close(self) -> None:
         if self._pad is not None:
             pad, self._pad = self._pad, None
+            try:
+                self.set_sensors_enabled(False)
+            except (OSError, RuntimeError, ValueError):
+                logger.debug("failed to disable SDL3 sensors on close", exc_info=True)
             self._sdl.SDL_CloseGamepad(pad)
 
 
@@ -232,12 +294,16 @@ class Sdl3Host:
                 guid=guid,
                 name=name,
                 gamepad_type=gtype,
+                has_gyro=existing.has_gyro,
+                has_accel=existing.has_accel,
                 has_rumble=existing.has_rumble,
             )
-        has_rumble = False
+        has_gyro = has_accel = has_rumble = False
         pad = sdl.SDL_OpenGamepad(jid)
         if pad:
             try:
+                has_gyro = bool(sdl.SDL_GamepadHasSensor(pad, sdl.SDL_SENSOR_GYRO))
+                has_accel = bool(sdl.SDL_GamepadHasSensor(pad, sdl.SDL_SENSOR_ACCEL))
                 props = sdl.SDL_GetGamepadProperties(pad)
                 has_rumble = bool(
                     sdl.SDL_GetBooleanProperty(
@@ -251,6 +317,8 @@ class Sdl3Host:
             guid=guid,
             name=name,
             gamepad_type=gtype,
+            has_gyro=has_gyro,
+            has_accel=has_accel,
             has_rumble=has_rumble,
         )
 
@@ -282,17 +350,28 @@ class Sdl3Host:
         return devices
 
     def poll_events(self, open_devices: dict[int, Any]) -> tuple[bool, set[int]]:
-        """Drain SDL3 events and report hotplug changes."""
-        del open_devices
+        """Drain SDL3 events, updating open device sensors and reporting hotplug changes."""
         sdl = self._sdl
         ev = sdl.SDL_Event()
         changed = False
         removed: set[int] = set()
         added_types = (sdl.SDL_EVENT_JOYSTICK_ADDED, sdl.SDL_EVENT_GAMEPAD_ADDED)
         removed_types = (sdl.SDL_EVENT_JOYSTICK_REMOVED, sdl.SDL_EVENT_GAMEPAD_REMOVED)
+        sensor_type = sdl.SDL_EVENT_GAMEPAD_SENSOR_UPDATE
         while sdl.SDL_PollEvent(ctypes.byref(ev)):
             etype = ev.type
-            if etype in added_types:
+            if etype == sensor_type:
+                gs = ev.gsensor
+                device = open_devices.get(int(gs.which))
+                if isinstance(device, Sdl3Device):
+                    device.push_sensor(
+                        int(gs.sensor),
+                        float(gs.data[0]),
+                        float(gs.data[1]),
+                        float(gs.data[2]),
+                        int(gs.sensor_timestamp),
+                    )
+            elif etype in added_types:
                 changed = True
             elif etype in removed_types:
                 changed = True
@@ -308,9 +387,10 @@ class Sdl3Host:
                 f"Could not open gamepad '{info.name}': {sdl3_error(self._sdl)}"
             )
         logger.info(
-            "SDL3 gamepad opened: '%s' (type=%s, rumble=%s)",
+            "SDL3 gamepad opened: '%s' (type=%s, gyro=%s, rumble=%s)",
             info.name,
             info.gamepad_type,
+            info.has_gyro,
             info.has_rumble,
         )
         return Sdl3Device(self._sdl, pad, info)

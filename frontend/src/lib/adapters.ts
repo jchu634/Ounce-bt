@@ -20,6 +20,8 @@ type Controller = {
   name: string;
   guid: string;
   gamepad_type?: string;
+  has_gyro?: boolean;
+  has_accel?: boolean;
   has_rumble?: boolean;
 };
 

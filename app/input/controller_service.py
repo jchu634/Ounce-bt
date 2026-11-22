@@ -11,9 +11,10 @@ from collections.abc import Callable
 from typing import Any
 
 from lib.controller import ControllerVariant
+from lib.input.imu import ImuBuffer
 from lib.input.presets import PresetConfig, PresetSelection
 from lib.input.rumble import RumbleData
-from lib.input.sdl3_backend import DeviceInfo, Sdl3Host
+from lib.input.sdl3_backend import DeviceInfo, ImuSample, Sdl3Host
 from lib.input.state import NEUTRAL, Button, ControllerState
 
 logger = logging.getLogger("switch_pair")
@@ -96,7 +97,7 @@ class LatestInput:
 
 
 class ControllerRoute:
-    """Per-adapter input queue, rumble state, and preset mapping."""
+    """Per-adapter input queue, IMU stream, rumble state, and preset mapping."""
 
     def __init__(
         self,
@@ -108,11 +109,13 @@ class ControllerRoute:
     ):
         self.session_id = session_id
         self.input_queue = input_queue if input_queue is not None else LatestInput()
+        self.imu_buffer = ImuBuffer()
         self.controller: DeviceInfo | None = None
         self.preset = preset
         self.preset_name = preset_name
         self.preset_override: PresetSelection | None = None
         self.mapping_variant: Callable[[], ControllerVariant] | None = None
+        self.imu_requested: Callable[[], bool] | None = None
         self._paused = False
         self._rumble_lock = threading.Lock()
         self._rumble: tuple[float, float] = (0.0, 0.0)
@@ -144,11 +147,15 @@ class ControllerRoute:
             self._rumble = rumble.strengths() if rumble is not None else (0.0, 0.0)
             self._rumble_deadline = time.monotonic() + RUMBLE_TIMEOUT_SECONDS
 
+    def read_imu_since(self, cursor: int) -> tuple[int, list[ImuSample]]:
+        return self.imu_buffer.read_since(cursor)
+
     def reset_device_state(self) -> None:
         self._rumble_playing = False
         self._rumble_supported = True
         self._rumble_refresh = 0.0
         self._played_rumble = (0.0, 0.0)
+        self.imu_buffer.clear()
 
     def clear_input(self) -> None:
         while True:
@@ -254,6 +261,14 @@ class ControllerService(threading.Thread):
     def mapping_variant(self, value: Callable[[], ControllerVariant] | None) -> None:
         self.primary.mapping_variant = value
 
+    @property
+    def imu_requested(self) -> Callable[[], bool] | None:
+        return self.primary.imu_requested
+
+    @imu_requested.setter
+    def imu_requested(self, value: Callable[[], bool] | None) -> None:
+        self.primary.imu_requested = value
+
     def add_route(self, session_id: str, preset_name: str = "xbox") -> ControllerRoute:
         route = ControllerRoute(session_id, self.primary.preset, preset_name)
         self._routes[session_id] = route
@@ -266,6 +281,9 @@ class ControllerService(threading.Thread):
 
     def set_rumble(self, rumble: RumbleData | None) -> None:
         self.primary.set_rumble(rumble)
+
+    def read_imu_since(self, cursor: int) -> tuple[int, list[ImuSample]]:
+        return self.primary.read_imu_since(cursor)
 
     def pause(self) -> None:
         self.primary.pause()
@@ -408,6 +426,15 @@ class ControllerService(threading.Thread):
                 continue
             try:
                 route.update_rumble(device)
+                want_imu = bool(
+                    not route.paused
+                    and route.preset.motion_enabled
+                    and route.imu_requested is not None
+                    and route.imu_requested()
+                )
+                device.set_sensors_enabled(want_imu)
+                if want_imu:
+                    route.imu_buffer.push(device.drain_imu())
                 if route.paused:
                     continue
                 variant = (

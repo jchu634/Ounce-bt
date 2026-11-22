@@ -1,15 +1,24 @@
 from __future__ import annotations
 
+import math
 import runpy
+import struct
 from pathlib import Path
 
 import pytest
 
 from app.input.controller_service import map_gamepad_state
 from lib import sdl3 as sdl3_loader
-from lib.controller import ControllerVariant
+from lib.controller import ControllerTypes, ControllerVariant
+from lib.input.imu import (
+    ACCEL_SCALE,
+    GYRO_SCALE,
+    ImuBuffer,
+    encode_imu_sample,
+    pack_imu_frames,
+)
 from lib.input.presets import PresetConfig, load_preset
-from lib.input.sdl3_backend import Sdl3Host
+from lib.input.sdl3_backend import STANDARD_GRAVITY, ImuSample, Sdl3Host
 from lib.input.state import NEUTRAL, Button, ControllerState
 
 
@@ -58,7 +67,67 @@ def test_mapping_switches_across_controller_variants():
     assert jc_l == ControllerState(Button.LEFT | Button.SL, left=(1.0, 0.0))
     assert jc_r == ControllerState(Button.A | Button.SL, right=(1.0, 0.0))
     assert combined == pro
-    assert PresetConfig.default().rumble_enabled is True
+    assert PresetConfig.default().motion_enabled is True
+
+
+def test_imu_encoding_orientations_and_scaling():
+    # Resting controller: +1g on SDL +Y, 90 deg/s yaw around SDL +Y.
+    yaw = math.pi / 2
+    sample = ImuSample(accel=(0.0, STANDARD_GRAVITY, 0.0), gyro=(0.0, yaw, 0.0))
+
+    pro = struct.unpack("<6h", encode_imu_sample(sample, ControllerTypes.PRO_CONTROLLER))
+    assert pro[:3] == (0, 0, 4096)
+    assert pro[3:5] == (0, 0)
+    assert pro[5] == round(yaw * GYRO_SCALE)
+
+    jc_r_upright = struct.unpack("<6h", encode_imu_sample(sample, ControllerTypes.JOYCON_R))
+    assert jc_r_upright[:3] == (0, 0, -4096)
+    assert jc_r_upright[5] == -round(yaw * GYRO_SCALE)
+
+    # Horizontal solo Joy-Con L: +X = -sdl_x, +Y = +sdl_z, +Z = +sdl_y.
+    tilt = ImuSample(accel=(STANDARD_GRAVITY, 0.0, 0.0), gyro=(0.0, 0.0, 1.0))
+    jc_l_horiz = struct.unpack(
+        "<6h", encode_imu_sample(tilt, ControllerTypes.JOYCON_L, horizontal=True)
+    )
+    assert jc_l_horiz[:3] == (-4096, 0, 0)
+    assert jc_l_horiz[3:] == (0, round(1.0 * GYRO_SCALE), 0)
+
+    # Clamping prevents int16 overflow on extreme spikes.
+    huge = ImuSample(accel=(1000.0, -1000.0, 0.0), gyro=(1000.0, -1000.0, 0.0))
+    clamped = struct.unpack("<6h", encode_imu_sample(huge, ControllerTypes.PRO_CONTROLLER))
+    assert all(-32768 <= v <= 32767 for v in clamped)
+    assert ACCEL_SCALE > 0
+
+
+def test_pack_imu_frames_handles_zero_to_many_samples():
+    s1 = ImuSample((0.0, STANDARD_GRAVITY, 0.0), (1.0, 0.0, 0.0), 1)
+    s2 = ImuSample((0.0, STANDARD_GRAVITY, 0.0), (2.0, 0.0, 0.0), 2)
+    s3 = ImuSample((0.0, STANDARD_GRAVITY, 0.0), (3.0, 0.0, 0.0), 3)
+    s4 = ImuSample((0.0, STANDARD_GRAVITY, 0.0), (4.0, 0.0, 0.0), 4)
+
+    assert len(pack_imu_frames([], ControllerTypes.PRO_CONTROLLER)) == 36
+    assert len(pack_imu_frames([s1], ControllerTypes.PRO_CONTROLLER)) == 36
+    assert len(pack_imu_frames([s1, s2], ControllerTypes.PRO_CONTROLLER)) == 36
+    packed = pack_imu_frames([s1, s2, s3, s4], ControllerTypes.PRO_CONTROLLER)
+    assert len(packed) == 36
+    # Picks oldest, middle, newest (s1, s2, s4).
+    frames = [struct.unpack("<6h", packed[i : i + 12]) for i in range(0, 36, 12)]
+    assert frames[0][4] == -round(1.0 * GYRO_SCALE)
+    assert frames[2][4] == -round(4.0 * GYRO_SCALE)
+
+
+def test_imu_buffer_supports_independent_consumers():
+    buf = ImuBuffer()
+    s1 = ImuSample((0.0, STANDARD_GRAVITY, 0.0), (0.1, 0.0, 0.0), 1)
+    s2 = ImuSample((0.0, STANDARD_GRAVITY, 0.0), (0.2, 0.0, 0.0), 2)
+    buf.push([s1, s2])
+
+    left_cursor, left_samples = buf.read_since(0)
+    right_cursor, right_samples = buf.read_since(0)
+    assert left_samples == [s1, s2]
+    assert right_samples == [s1, s2]
+    assert buf.read_since(left_cursor) == (left_cursor, [])
+    assert buf.read_since(right_cursor) == (right_cursor, [])
 
 
 def test_sdl3_host_initializes_and_quits_cleanly():

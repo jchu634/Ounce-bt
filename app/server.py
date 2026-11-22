@@ -27,7 +27,12 @@ from app.bluetooth import (
 from app.input.controller_service import ControllerRoute
 from app.input.manager import InputManager, MacroActiveError, state_from_event
 from lib.colours import normalize_controller_colours
-from lib.config import ConfigStore, new_profile_address, normalize_controller_vibration
+from lib.config import (
+    ConfigStore,
+    new_profile_address,
+    normalize_controller_motion,
+    normalize_controller_vibration,
+)
 from lib.controller import ControllerVariant
 from lib.device_names import normalize_device_names, validate_device_name
 from lib.input.macros import (
@@ -379,6 +384,8 @@ async def adapter_inventory(sessions: dict[str, AdapterSession]) -> dict:
                 "name": pad["name"],
                 "guid": pad["guid"],
                 "gamepad_type": pad.get("gamepad_type", "standard"),
+                "has_gyro": bool(pad.get("has_gyro", False)),
+                "has_accel": bool(pad.get("has_accel", False)),
                 "has_rumble": bool(pad.get("has_rumble", False)),
             }
             for pad in controllers.get("controllers", [])
@@ -975,13 +982,18 @@ async def config_patch(request: Request) -> Response:
         return _error(
             "These settings require Save and restart in the Debug tab", status=409
         )
-    if "vibration_enabled" in body and not isinstance(body["vibration_enabled"], bool):
-        return _error("vibration_enabled must be a boolean")
-    if "controller_vibration" in body:
-        try:
-            normalize_controller_vibration(body["controller_vibration"])
-        except ValueError as error:
-            return _error(str(error))
+    for flag in ("vibration_enabled", "motion_enabled"):
+        if flag in body and not isinstance(body[flag], bool):
+            return _error(f"{flag} must be a boolean")
+    for key, normalize in (
+        ("controller_vibration", normalize_controller_vibration),
+        ("controller_motion", normalize_controller_motion),
+    ):
+        if key in body:
+            try:
+                normalize(body[key])
+            except ValueError as error:
+                return _error(str(error))
     if "controller_colours" in body:
         try:
             normalize_controller_colours(body["controller_colours"])

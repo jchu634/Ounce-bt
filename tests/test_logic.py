@@ -157,6 +157,7 @@ def _ok_preset():
         "version": 2,
         "name": "T",
         "rumble_enabled": False,
+        "motion_enabled": False,
         "mappings": {
             "pro": {
                 "buttons": {"south": "B", "east": "A"},
@@ -171,6 +172,7 @@ def _ok_preset():
 def test_validate_preset_ok():
     preset = validate_preset(_ok_preset())
     assert preset.rumble_enabled is False
+    assert preset.motion_enabled is False
     assert preset.button_map["south"].name == "B"
 
 
@@ -182,6 +184,7 @@ def test_validate_preset_ok():
         (lambda p: p["mappings"]["pro"]["triggers"].update({"right_trigger": 5}), ["mappings", "pro", "triggers", "right_trigger"]),
         (lambda p: p["mappings"]["pro"]["sticks"].update(left="middle"), ["mappings", "pro", "sticks", "left"]),
         (lambda p: p.update(rumble_enabled="yes"), ["rumble_enabled"]),
+        (lambda p: p.update(motion_enabled="yes"), ["motion_enabled"]),
         (lambda p: p.update(version=1), ["version"]),
         (lambda p: p.pop("version"), ["version"]),
         (lambda p: p["mappings"].pop("pro"), ["mappings", "pro"]),

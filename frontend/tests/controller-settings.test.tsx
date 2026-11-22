@@ -21,7 +21,10 @@ const presetContents = JSON.stringify({
   },
 });
 
-vi.mock("@/src/components/settings/vibration-setting", () => ({ VibrationSetting: () => null }));
+vi.mock("@/src/components/settings/vibration-setting", () => ({
+  VibrationSetting: () => null,
+  MotionSetting: () => null,
+}));
 vi.mock("@/src/components/settings/controller-preset-picker", () => ({ PresetPicker: () => null }));
 vi.mock("@/src/components/editors/json-editor", () => ({
   JsonEditor: ({ value }: JsonEditorProps) => <pre data-testid="json">{value}</pre>,
