@@ -140,6 +140,25 @@ def test_sdl3_host_initializes_and_quits_cleanly():
         host.quit()
 
 
+def test_sdl3_host_distinguishes_switch2_pro_from_switch_pro():
+    class _FakeSdl:
+        def SDL_GetJoystickVendorForID(self, jid: int) -> int:
+            return 0x057E
+
+        def SDL_GetJoystickProductForID(self, jid: int) -> int:
+            return 0x2069 if jid == 1 else 0x2009
+
+        def SDL_GetGamepadNameForID(self, jid: int) -> bytes:
+            return b"Nintendo Switch Pro Controller"
+
+        def SDL_GetJoystickNameForID(self, jid: int) -> bytes:
+            return b"Nintendo Switch Pro Controller"
+
+    host = Sdl3Host(sdl=_FakeSdl())
+    assert host._device_name(1) == "Nintendo Switch 2 Pro Controller"
+    assert host._device_name(2) == "Nintendo Switch Pro Controller"
+
+
 def test_build_sdl3_verify_requires_libusb_and_switch2_markers(tmp_path):
     script = Path(__file__).resolve().parents[1] / "scripts" / "build-sdl3.py"
     verify = runpy.run_path(str(script))["verify_sdl3_binary"]

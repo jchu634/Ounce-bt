@@ -79,6 +79,11 @@ _TYPE_ATTRS: tuple[tuple[str, str], ...] = (
     ("SDL_GAMEPAD_TYPE_GAMECUBE", "gamecube"),
 )
 
+# SDL3 reports some newer controllers under an older model's name; override by (VID, PID).
+_PRODUCT_NAME_OVERRIDES: dict[tuple[int, int], str] = {
+    (0x057E, 0x2069): "Nintendo Switch 2 Pro Controller",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class ImuSample:
@@ -274,6 +279,21 @@ class Sdl3Host:
         sdl.SDL_GUIDToString(guid, buf, 33)
         return buf.value.decode("ascii", errors="ignore")
 
+    def _device_name(self, jid: int) -> str:
+        sdl = self._sdl
+        if hasattr(sdl, "SDL_GetJoystickVendorForID") and hasattr(
+            sdl, "SDL_GetJoystickProductForID"
+        ):
+            vid = int(sdl.SDL_GetJoystickVendorForID(jid))
+            pid = int(sdl.SDL_GetJoystickProductForID(jid))
+            override = _PRODUCT_NAME_OVERRIDES.get((vid, pid))
+            if override is not None:
+                return override
+        raw_name = sdl.SDL_GetGamepadNameForID(jid) or sdl.SDL_GetJoystickNameForID(jid)
+        return (
+            raw_name.decode("utf-8", errors="replace") if raw_name else f"Gamepad {jid}"
+        )
+
     def _probe_device(
         self, jid: int, open_devices: dict[int, Any]
     ) -> DeviceInfo | None:
@@ -281,10 +301,7 @@ class Sdl3Host:
         if not sdl.SDL_IsGamepad(jid):
             return None
         guid = self._guid_string(jid)
-        raw_name = sdl.SDL_GetGamepadNameForID(jid) or sdl.SDL_GetJoystickNameForID(jid)
-        name = (
-            raw_name.decode("utf-8", errors="replace") if raw_name else f"Gamepad {jid}"
-        )
+        name = self._device_name(jid)
         gtype = self._type_names.get(sdl.SDL_GetGamepadTypeForID(jid), "standard")
         # Reuse existing cached caps or already-open handle without churning SDL state.
         if jid in open_devices and isinstance(open_devices[jid], Sdl3Device):
