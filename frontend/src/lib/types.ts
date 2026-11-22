@@ -58,12 +58,11 @@ export type StatusFrame = AdapterInputStatus & {
 };
 
 export type ControllerInfo = {
+  instance_id: number;
   guid: string;
-  index: number;
   name: string;
-  axes: number;
-  buttons: number;
-  hats: number;
+  gamepad_type?: string;
+  has_rumble?: boolean;
 };
 
 export type ControllersFrame = {

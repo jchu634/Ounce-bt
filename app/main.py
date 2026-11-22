@@ -89,21 +89,11 @@ def setup_logging(bumble_logging: bool = True):
 
 
 def controller_spec_info(specs) -> tuple[bool, int | None]:
-    """Scan input specs for controller entries.
-
-    Returns ``(enabled, index_hint)`` where ``enabled`` is True when any
-    ``controller[:idx]`` spec is present and ``index_hint`` is the first
-    explicit index (None otherwise).
-    """
+    """Scan input specs for controller entries."""
     for spec in specs:
         spec = spec.strip()
-        if spec == "controller":
+        if spec == "controller" or spec.startswith("controller:"):
             return True, None
-        if spec.startswith("controller:"):
-            try:
-                return True, int(spec.split(":", 1)[1])
-            except ValueError:
-                return True, None
     return False, None
 
 
@@ -675,7 +665,7 @@ async def run_bluetooth(
     profiles = config_store.ensure_adapter_profiles(transports, persist=not explicit_address)
     primary_preset_name = args.preset or profiles[0].preset or config.preset
 
-    # Load the configured preset as the initial fallback. Once pygame selects
+    # Load the configured preset as the initial fallback. Once SDL3 assigns
     # a controller, its saved GUID mapping or detected controller type replaces
     # this value. An explicit --preset keeps its session-wide override behavior.
     try:
@@ -689,24 +679,27 @@ async def run_bluetooth(
         f"(rumble {'on' if preset.rumble_enabled else 'off'})"
     )
 
-    # Physical gamepads are owned by the ControllerService (single pygame
-    # thread: enumeration, selection, hotplug). Macro specs still become
-    # standalone MacroPlayerThreads.
-    controllers_enabled, controller_index = controller_spec_info(config.input_specs)
+    # Physical gamepads are owned by the ControllerService (single SDL3
+    # thread: enumeration, assignment, hotplug, polling, sensors, rumble).
+    controllers_enabled, _controller_index = controller_spec_info(config.input_specs)
     controller_service: ControllerService | None = None
     if controllers_enabled:
-        initial_ident = profiles[0].controller_guid or controller_index
         if args.preset is not None:
 
-            def preset_resolver(_guid: str, _name: str) -> PresetSelection:
+            def preset_resolver(
+                _guid: str, _name: str, _gamepad_type: str = ""
+            ) -> PresetSelection:
                 return PresetSelection(args.preset, preset)
         else:
 
-            def preset_resolver(guid: str, name: str) -> PresetSelection:
+            def preset_resolver(
+                guid: str, name: str, gamepad_type: str = ""
+            ) -> PresetSelection:
                 return resolve_controller_preset(
                     guid,
                     name,
                     config_store.config.controller_presets,
+                    gamepad_type=gamepad_type,
                 )
 
         profile_indices = {
@@ -720,7 +713,6 @@ async def run_bluetooth(
         controller_service = ControllerService(
             command_queue,
             preset=preset,
-            initial_ident=initial_ident,
             on_change=manager.on_controllers_changed,
             preset_resolver=preset_resolver,
             on_preset_changed=manager.on_controller_preset_changed,
@@ -736,7 +728,7 @@ async def run_bluetooth(
     input_threads = build_input_sources(config.input_specs, command_queue)
     if controller_service is not None:
         input_threads.append(controller_service)
-    manager.attach_pygame_threads(input_threads)
+    manager.attach_input_threads(input_threads)
 
     manager.adapter_id = "primary"
     primary = AdapterSession(
@@ -801,10 +793,11 @@ async def run_bluetooth(
 
     async def supervise(session, firmware_dir):
         def vibration_allowed():
-            controller = session.controller
+            owner = session.input_owner
+            controller = owner.controller
             selected = (
                 (manager.current_preset or preset)
-                if session.primary
+                if owner.primary
                 else (controller.preset if controller else preset)
             )
             return (
@@ -1033,7 +1026,13 @@ async def run_adapter_once(
 
 
 async def run_powered_adapter(
-    session, config_store, device, state, on_ready, vibration_allowed, wait_transport,
+    session,
+    config_store,
+    device,
+    state,
+    on_ready,
+    vibration_allowed,
+    wait_transport,
     pro_name=None,
 ):
     config = config_store.config

@@ -16,7 +16,7 @@ from starlette.testclient import TestClient
 
 import lib.input.presets as presets_module
 from app.bluetooth import AdapterSession
-from app.input.manager import InputManager, MacroActiveError
+from app.input.manager import InputManager
 from app.main import SessionState
 from app.server import build_app
 from lib.config import Config, ConfigStore
@@ -41,17 +41,16 @@ class StubControllerService:
         return {
             "controllers": self._controllers,
             "active": self._active,
+            "assignments": {
+                "primary": next(
+                    (c["instance_id"] for c in self._controllers if c["guid"] == self._active),
+                    None,
+                )
+            },
             "available": True,
         }
 
-    def select(self, ident):
-        for c in self._controllers:
-            if c["guid"] == ident or c["name"] == ident or c["index"] == ident:
-                self._active = c["guid"]
-                return type("Info", (), {"to_dict": lambda self=self, c=c: c})()
-        raise ValueError(f"no controller matches {ident!r}")
-
-    def set_preset(self, preset, source=None):
+    def set_preset(self, preset, source=None, *, session_id="primary"):
         return None
 
 
@@ -82,20 +81,18 @@ class Fixture:
             StubControllerService(
                 [
                     {
+                        "instance_id": 1,
                         "guid": "g1",
-                        "index": 0,
                         "name": "Pad One",
-                        "axes": 6,
-                        "buttons": 11,
-                        "hats": 1,
+                        "gamepad_type": "switch_pro",
+                        "has_rumble": True,
                     },
                     {
+                        "instance_id": 2,
                         "guid": "g2",
-                        "index": 1,
                         "name": "Pad Two",
-                        "axes": 4,
-                        "buttons": 9,
-                        "hats": 0,
+                        "gamepad_type": "xboxone",
+                        "has_rumble": True,
                     },
                 ],
                 "g1",
@@ -574,29 +571,13 @@ def test_macro_delete_running_conflict(fx, monkeypatch):
 
 
 
-def test_controllers_get_and_select(fx):
+def test_controllers_get_and_removed_active_endpoint(fx):
     with fx.client() as c:
         r = c.get("/api/controllers").json()
         assert r["active"] == "g1"
         assert len(r["controllers"]) == 2
-
-        r = c.put("/api/controllers/active", json={"guid": "g2"})
-        assert r.status_code == 200
-        assert r.json()["active"] == "g2"
-        # Persisted.
-        assert fx.config_store.config.controller_guid == "g2"
-
-        assert c.put("/api/controllers/active", json={"guid": "nope"}).status_code == 404
-
-
-def test_controller_select_refused_during_macro(fx, monkeypatch):
-    def boom(ident):
-        raise MacroActiveError("macro running")
-
-    monkeypatch.setattr(fx.manager, "select_controller", boom)
-    with fx.client() as c:
-        r = c.put("/api/controllers/active", json={"guid": "g2"})
-        assert r.status_code == 409
+        # Deprecated single-controller select endpoint removed.
+        assert c.put("/api/controllers/active", json={"guid": "g2"}).status_code == 404
 
 
 
@@ -616,7 +597,7 @@ def test_switch_metadata_comes_from_bundled_preset_when_custom_directory_is_empt
         presets = client.get("/api/presets").json()["presets"]
     switch = next(preset for preset in presets if preset["filename"] == "switch")
     assert switch["name"] == "Switch"
-    assert switch["description"] == "Default Switch Pro Controller / Joycon mapping"
+    assert switch["description"] == "Default Switch Pro Controller / Joy-Con mapping"
 
 
 def test_preset_builtin_guards(fx):
@@ -628,7 +609,7 @@ def test_preset_builtin_guards(fx):
 def test_preset_custom_crud_and_activate(fx):
     contents = json.dumps({
         "name": "Custom", "version": 2,
-        "mappings": {"pro": {"buttons": {"0": "A"}}, "joycon_l": {}, "joycon_r": {}, "combined": {}},
+        "mappings": {"pro": {"buttons": {"east": "A"}}, "joycon_l": {}, "joycon_r": {}, "combined": {}},
     })
     with fx.client() as c:
         assert c.put("/api/presets/my-pad", json={"contents": contents}).status_code == 200

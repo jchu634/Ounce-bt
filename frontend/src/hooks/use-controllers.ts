@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Effect } from "effect";
 import { useSocket } from "@/src/hooks/use-socket";
-import { activatePreset, getControllers, selectController } from "@/src/lib/api";
+import { requestAdapters } from "@/src/lib/adapters";
+import { activatePreset, getControllers } from "@/src/lib/api";
 import { errorMessage } from "@/src/lib/errors";
 import type { ControllersFrame } from "@/src/lib/types";
 
@@ -23,14 +24,24 @@ export function useControllers() {
   const active = data?.active ?? null;
 
   const update = useCallback(
-    async (action: { kind: "selecting"; id: string } | { kind: "applying"; preset: string }) => {
+    async (
+      action:
+        | { kind: "selecting"; id: string | null }
+        | { kind: "applying"; preset: string },
+    ) => {
       setPending(action.kind);
       setError(null);
       try {
-        const result = await Effect.runPromise(
-          action.kind === "selecting" ? selectController(action.id) : activatePreset(action.preset),
-        );
-        setRestFrame(result);
+        if (action.kind === "selecting") {
+          await requestAdapters({
+            kind: "assign",
+            adapterId: "primary",
+            controllerId: action.id === null ? null : Number(action.id),
+          });
+          setRestFrame(await Effect.runPromise(getControllers()));
+        } else {
+          setRestFrame(await Effect.runPromise(activatePreset(action.preset)));
+        }
       } catch (cause: unknown) {
         setError(errorMessage(cause));
       } finally {

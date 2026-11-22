@@ -583,8 +583,8 @@ it("opens controller settings and sends actions for the card’s saved profile",
     available: true,
     active: "test-pad",
     controllers: [
-      { guid: "test-pad", name: "Test Gamepad" },
-      { guid: "second-pad", name: "Second Gamepad" },
+      { instance_id: 1, guid: "test-pad", name: "Test Gamepad" },
+      { instance_id: 2, guid: "second-pad", name: "Second Gamepad" },
     ],
   };
   const status: BluetoothStatus = {
@@ -630,10 +630,18 @@ it("opens controller settings and sends actions for the card’s saved profile",
     if (path === "/api/controllers") {
       return Response.json({ ...controllerStatus, preset });
     }
-    if (path === "/api/controllers/active" && init?.method === "PUT") {
+    if (path === "/api/adapters/primary/controller" && init?.method === "PUT") {
       controllerStatus.active = "second-pad";
       preset = "xbox";
-      return Response.json({ ...controllerStatus, preset });
+      return Response.json({
+        adapters: [],
+        controllers: controllerStatus.controllers.map((c) => ({
+          id: c.instance_id,
+          name: c.name,
+          guid: c.guid,
+        })),
+        controllers_available: true,
+      });
     }
     if (path === "/api/presets") {
       return Response.json({
@@ -744,10 +752,10 @@ it("opens controller settings and sends actions for the card’s saved profile",
   expect(button("Mapping preset").textContent).toContain("Custom mapping");
   await chooseOption("Select controller", "Second Gamepad");
   expect(fetchRequest).toHaveBeenCalledWith(
-    "/api/controllers/active",
+    "/api/adapters/primary/controller",
     expect.objectContaining({
       method: "PUT",
-      body: JSON.stringify({ guid: "second-pad" }),
+      body: JSON.stringify({ controller_id: 2 }),
     }),
   );
   expect(container.querySelector("h3")?.textContent).toBe("Second Gamepad");

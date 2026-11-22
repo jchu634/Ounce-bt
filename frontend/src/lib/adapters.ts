@@ -15,7 +15,13 @@ export type Adapter = {
   combined_with?: string | null;
 };
 
-type Controller = { id: number; name: string; guid: string };
+type Controller = {
+  id: number;
+  name: string;
+  guid: string;
+  gamepad_type?: string;
+  has_rumble?: boolean;
+};
 
 export type AdapterInventory = {
   adapters: Adapter[];

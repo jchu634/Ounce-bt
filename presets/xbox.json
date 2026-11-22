@@ -4,124 +4,108 @@
   "description": "Default Xbox 360 / One / Series controller mapping",
   "controller_layout": "xbox",
   "rumble_enabled": true,
+  "motion_enabled": true,
   "mappings": {
     "pro": {
       "buttons": {
-        "0": "B",
-        "1": "A",
-        "2": "Y",
-        "3": "X",
-        "4": "L",
-        "5": "R",
-        "6": "MINUS",
-        "7": "PLUS",
-        "8": "STICK_L",
-        "9": "STICK_R",
-        "10": "HOME"
+        "south": "B",
+        "east": "A",
+        "west": "Y",
+        "north": "X",
+        "left_shoulder": "L",
+        "right_shoulder": "R",
+        "back": "MINUS",
+        "start": "PLUS",
+        "left_stick": "STICK_L",
+        "right_stick": "STICK_R",
+        "guide": "HOME",
+        "misc1": "CAPTURE",
+        "dpad_up": "UP",
+        "dpad_down": "DOWN",
+        "dpad_left": "LEFT",
+        "dpad_right": "RIGHT"
       },
       "triggers": {
-        "4": "ZL",
-        "5": "ZR"
+        "left_trigger": "ZL",
+        "right_trigger": "ZR"
       },
-      "left_stick": {
-        "x_axis": 0,
-        "y_axis": 1
-      },
-      "right_stick": {
-        "x_axis": 2,
-        "y_axis": 3
-      },
-      "dpad": {
-        "hat": 0
+      "sticks": {
+        "left": "left",
+        "right": "right"
       }
     },
     "joycon_l": {
       "buttons": {
-        "0": "LEFT",
-        "1": "DOWN",
-        "2": "UP",
-        "3": "RIGHT",
-        "4": "SL",
-        "5": "SR",
-        "6": "MINUS",
-        "7": "MINUS",
-        "8": "STICK_L",
-        "10": "CAPTURE"
+        "south": "LEFT",
+        "east": "DOWN",
+        "west": "UP",
+        "north": "RIGHT",
+        "left_shoulder": "SL",
+        "right_shoulder": "SR",
+        "back": "MINUS",
+        "start": "MINUS",
+        "left_stick": "STICK_L",
+        "guide": "CAPTURE",
+        "misc1": "CAPTURE"
       },
       "triggers": {
-        "4": "ZL",
-        "5": "L"
+        "left_trigger": "ZL",
+        "right_trigger": "L"
       },
-      "left_stick": {
-        "x_axis": 0,
-        "y_axis": 1
-      },
-      "right_stick": {
-        "x_axis": 2,
-        "y_axis": 3
-      },
-      "dpad": {
-        "hat": null
+      "sticks": {
+        "left": "left",
+        "right": null
       }
     },
     "joycon_r": {
       "buttons": {
-        "0": "A",
-        "1": "X",
-        "2": "B",
-        "3": "Y",
-        "4": "SL",
-        "5": "SR",
-        "6": "PLUS",
-        "7": "PLUS",
-        "8": "STICK_R",
-        "9": "STICK_R",
-        "10": "HOME"
+        "south": "A",
+        "east": "X",
+        "west": "B",
+        "north": "Y",
+        "left_shoulder": "SL",
+        "right_shoulder": "SR",
+        "back": "PLUS",
+        "start": "PLUS",
+        "left_stick": "STICK_R",
+        "right_stick": "STICK_R",
+        "guide": "HOME"
       },
       "triggers": {
-        "4": "R",
-        "5": "ZR"
+        "left_trigger": "R",
+        "right_trigger": "ZR"
       },
-      "left_stick": {
-        "x_axis": 0,
-        "y_axis": 1
-      },
-      "right_stick": {
-        "x_axis": 0,
-        "y_axis": 1
-      },
-      "dpad": {
-        "hat": null
+      "sticks": {
+        "left": null,
+        "right": "left"
       }
     },
     "combined": {
       "buttons": {
-        "0": "B",
-        "1": "A",
-        "2": "Y",
-        "3": "X",
-        "4": "L",
-        "5": "R",
-        "6": "MINUS",
-        "7": "PLUS",
-        "8": "STICK_L",
-        "9": "STICK_R",
-        "10": "HOME"
+        "south": "B",
+        "east": "A",
+        "west": "Y",
+        "north": "X",
+        "left_shoulder": "L",
+        "right_shoulder": "R",
+        "back": "MINUS",
+        "start": "PLUS",
+        "left_stick": "STICK_L",
+        "right_stick": "STICK_R",
+        "guide": "HOME",
+        "misc1": "CAPTURE",
+        "dpad_up": "UP",
+        "dpad_down": "DOWN",
+        "dpad_left": "LEFT",
+        "dpad_right": "RIGHT"
       },
       "triggers": {
-        "4": "ZL",
-        "5": "ZR"
+        "left_trigger": "ZL",
+        "right_trigger": "ZR"
       },
-      "left_stick": {
-        "x_axis": 0,
-        "y_axis": 1
-      },
-      "right_stick": {
-        "x_axis": 2,
-        "y_axis": 3
-      },
-      "dpad": {
-        "hat": 0
+      "sticks": {
+        "left": "left",
+        "right": "right"
       }
     }
   }

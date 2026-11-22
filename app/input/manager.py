@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from app.input.macro_source import MacroPlayerThread
-from app.input.pygame_source import PygameInputThread
 from lib.input.macros import load_macro, validate_macro
 from lib.input.presets import PresetConfig, PresetSelection, load_preset
 from lib.input.state import NEUTRAL, Button, ControllerState
@@ -49,7 +48,7 @@ class InputManager:
         self._pause_capture = pause_capture
         self._resume_capture = resume_capture
         self.mode: Mode = "manual"
-        self.pygame_threads: list[PygameInputThread] = []
+        self.input_threads: list = []
         self._macro: MacroPlayerThread | None = None
         self._macro_name: str | None = None
         # Reentrant: ``on_finish`` fires from the macro thread while the
@@ -129,10 +128,10 @@ class InputManager:
             return []
         return sorted(p.stem for p in self.macros_dir.glob("*.json") if p.is_file())
 
-    def attach_pygame_threads(self, threads: list) -> None:
-        """Register input threads (PygameInputThread or ControllerService —
+    def attach_input_threads(self, threads: list) -> None:
+        """Register input threads (ControllerService, MacroPlayerThread —
         anything with ``pause``/``resume``/``stop``)."""
-        self.pygame_threads.extend(threads)
+        self.input_threads.extend(threads)
 
     def set_controller_service(self, service: ControllerService) -> None:
         self._service = service
@@ -190,25 +189,6 @@ class InputManager:
             }
         )
 
-    def select_controller(self, ident: str | int) -> dict:
-        """Switch the active physical controller. Returns its info dict.
-
-        Raises :class:`MacroActiveError` while a macro runs and
-        ``ValueError`` when no device matches.
-        """
-        with self._lock:
-            if self.mode == "macro":
-                raise MacroActiveError(
-                    "cannot switch controllers while a macro is running"
-                )
-        if self._service is None:
-            raise ValueError("no controller service is attached")
-        info = self._service.select(ident)
-        try:
-            return info.to_dict()
-        finally:
-            self._emit_controllers()
-
     def apply_preset(self, source: str) -> PresetConfig:
         """Load, validate and apply a mapping preset at runtime.
 
@@ -236,7 +216,7 @@ class InputManager:
                 self._manual_state = NEUTRAL
                 if self._pause_capture:
                     self._pause_capture()
-                for t in self.pygame_threads:
+                for t in self.input_threads:
                     t.pause()
                 self.mode = "macro"
             else:  # -> manual
@@ -244,7 +224,7 @@ class InputManager:
                     self._macro.stop()
                     self._drain_and_neutralize()
                     self._clear_macro()
-                for t in self.pygame_threads:
+                for t in self.input_threads:
                     t.resume()
                 if self._resume_capture:
                     self._resume_capture()
@@ -271,7 +251,7 @@ class InputManager:
             if self.mode != "macro":
                 if self._pause_capture:
                     self._pause_capture()
-                for t in self.pygame_threads:
+                for t in self.input_threads:
                     t.pause()
                 self.mode = "macro"
             thread.start()
@@ -293,7 +273,7 @@ class InputManager:
         with self._lock:
             self._cancel_internal()
             if self.mode == "macro":
-                for t in self.pygame_threads:
+                for t in self.input_threads:
                     t.resume()
                 if self._resume_capture:
                     self._resume_capture()
@@ -349,7 +329,7 @@ class InputManager:
             if self._macro is not None:
                 self._macro.stop()
                 self._clear_macro()
-            for t in self.pygame_threads:
+            for t in self.input_threads:
                 t.stop()
 
     def _cancel_internal(self) -> None:
@@ -396,7 +376,7 @@ class InputManager:
             name = self._macro_name
             self._clear_macro()
             if self.mode == "macro":
-                for t in self.pygame_threads:
+                for t in self.input_threads:
                     t.resume()
                 if self._resume_capture:
                     self._resume_capture()

@@ -141,19 +141,6 @@ def _winusb_locations() -> set[tuple[int, int, tuple[int, ...]]]:
     return locations
 
 
-def usb_port_chains_for_hid_path(path: bytes) -> set[tuple[int, ...]]:
-    # A HID interface path ends with its interface class GUID. The other
-    # components form its PnP instance ID, whose USB parent has a port chain.
-    instance = path[4:].decode("utf-8").rsplit("#", 1)[0].replace("#", chr(92))
-    cfgmgr = _location_api()
-    node, parent = ctypes.c_uint32(), ctypes.c_uint32()
-    if cfgmgr.CM_Locate_DevNodeW(ctypes.byref(node), instance, 0):
-        return set()
-    if cfgmgr.CM_Get_Parent(ctypes.byref(parent), node, 0):
-        return set()
-    return _port_chains(cfgmgr, parent)
-
-
 def _location_api():
     cfgmgr = ctypes.WinDLL("cfgmgr32")
     ulong = ctypes.c_uint32
@@ -167,7 +154,6 @@ def _location_api():
         ulong_ptr,
         ulong,
     ]
-    cfgmgr.CM_Get_Parent.argtypes = [ulong_ptr, ulong, ulong]
     return cfgmgr
 
 

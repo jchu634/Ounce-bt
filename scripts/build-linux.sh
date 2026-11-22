@@ -22,6 +22,9 @@ test -f frontend/dist/index.html
 mkdir -p "$build_root" dist
 export UV_PROJECT_ENVIRONMENT="$build_root/.venv"
 uv sync --locked --no-dev --group build --python "$python_version"
+# Build SDL3 with SDL_HIDAPI_LIBUSB enabled; refuse to bundle a build without libusb.
+export OUNCE_SDL3_BIN_DIR="$build_root/sdl3-bin"
+uv run --no-sync --python "$python_version" python scripts/build-sdl3.py --output-dir "$OUNCE_SDL3_BIN_DIR"
 # Qt hooks cannot discover plugins if their shared-library dependencies are
 # missing on the build host. Fail before producing an incomplete bundle.
 uv run --no-sync --python "$python_version" python -c 'from PySide6 import QtCore, QtWebEngineWidgets; print("Qt plugin directory:", QtCore.QLibraryInfo.path(QtCore.QLibraryInfo.PluginsPath))'

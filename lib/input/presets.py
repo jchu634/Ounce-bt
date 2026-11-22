@@ -8,8 +8,10 @@ import os
 import threading
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Literal
 
 from lib.controller import ControllerVariant
+from lib.input.sdl3_backend import GAMEPAD_BUTTONS, GAMEPAD_STICKS, GAMEPAD_TRIGGERS
 from lib.input.state import HORIZONTAL_BUTTONS, JOYCON_BUTTONS, Button
 
 logger = logging.getLogger("switch_pair")
@@ -19,13 +21,29 @@ PRESETS_DIR = BUILTIN_PRESETS_DIR
 BUILTIN_PRESETS = frozenset({"xbox", "playstation", "switch"})
 PRESET_VERSION = 2
 
-# SDL GUIDs store the USB vendor ID as a little-endian 16-bit value at
-# bytes 4-5. These are the vendors for Microsoft's, Sony's, and Nintendo's
-# first-party controllers.
+VALID_BUTTON_INPUTS = frozenset(GAMEPAD_BUTTONS)
+VALID_TRIGGER_INPUTS = frozenset(GAMEPAD_TRIGGERS)
+VALID_STICK_INPUTS = frozenset(GAMEPAD_STICKS)
+
+StickSide = Literal["left", "right"]
+
+# SDL GUIDs store the USB vendor ID as a little-endian 16-bit value at bytes 4-5.
 _VENDOR_PRESETS = {
     "5e04": "xbox",
     "4c05": "playstation",
     "7e05": "switch",
+}
+
+_GAMEPAD_TYPE_PRESETS = {
+    "xbox360": "xbox",
+    "xboxone": "xbox",
+    "ps3": "playstation",
+    "ps4": "playstation",
+    "ps5": "playstation",
+    "switch_pro": "switch",
+    "joycon_l": "switch",
+    "joycon_r": "switch",
+    "joycon_pair": "switch",
 }
 
 _WRITE_LOCK = threading.Lock()
@@ -44,7 +62,7 @@ class PresetValidationError(ValueError):
     """A preset document failed semantic validation.
 
     ``path`` is the JSON path of the offending element, e.g.
-    ``["buttons", "3"]``, mirroring ``MacroValidationError``.
+    ``["mappings", "pro", "buttons", "south"]``.
     """
 
     def __init__(self, path: list[str | int], message: str):
@@ -58,25 +76,14 @@ class PresetValidationError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class PresetConfig:
-    """Resolved, ready-to-use controller mapping preset.
-
-    All axis/button/hat indices are :mod:`pygame.joystick` indices on the
-    physical gamepad. The built-in Xbox preset uses SDL controller semantics
-    translated to the historical Xbox indices instead. ``button_map`` maps
-    digital buttons; ``trigger_map`` maps analog trigger axes (treated as
-    digital above a threshold).
-    """
+    """Resolved, ready-to-use semantic SDL3 gamepad mapping preset."""
 
     name: str = "Default"
     rumble_enabled: bool = True
-    button_map: dict[int, Button] = field(default_factory=dict)
-    trigger_map: dict[int, Button] = field(default_factory=dict)
-    left_stick: tuple[int, int] = (0, 1)
-    right_stick: tuple[int, int] = (2, 3)
-    dpad_hat: int | None = 0
-    # Internal choice for the built-in Xbox preset, never inferred for a custom
-    # preset whose raw indices may have been deliberately edited by the user.
-    standard_gamepad: bool = False
+    button_map: dict[str, Button] = field(default_factory=dict)
+    trigger_map: dict[str, Button] = field(default_factory=dict)
+    left_stick: StickSide | None = "left"
+    right_stick: StickSide | None = "right"
     mappings: dict[ControllerVariant, PresetConfig] = field(default_factory=dict)
 
     def mapping_for(self, variant: ControllerVariant) -> PresetConfig:
@@ -89,58 +96,49 @@ class PresetConfig:
 
     @classmethod
     def default(cls) -> PresetConfig:
-        """Fallback preset matching the historical hardcoded Xbox defaults.
-
-        Used when a named preset cannot be loaded so the controller remains
-        usable.
-        """
-        preset = cls(
+        """Fallback preset matching canonical SDL3 positional gamepad layout."""
+        return cls(
             name="Default",
-            standard_gamepad=True,
             rumble_enabled=True,
             button_map={
-                0: Button.B,
-                1: Button.A,
-                2: Button.Y,
-                3: Button.X,
-                4: Button.L,
-                5: Button.R,
-                6: Button.MINUS,
-                7: Button.PLUS,
-                8: Button.STICK_L,
-                9: Button.STICK_R,
-                10: Button.HOME,
+                "south": Button.B,
+                "east": Button.A,
+                "west": Button.Y,
+                "north": Button.X,
+                "left_shoulder": Button.L,
+                "right_shoulder": Button.R,
+                "back": Button.MINUS,
+                "start": Button.PLUS,
+                "left_stick": Button.STICK_L,
+                "right_stick": Button.STICK_R,
+                "guide": Button.HOME,
+                "misc1": Button.CAPTURE,
+                "dpad_up": Button.UP,
+                "dpad_down": Button.DOWN,
+                "dpad_left": Button.LEFT,
+                "dpad_right": Button.RIGHT,
             },
-            trigger_map={4: Button.ZL, 5: Button.ZR},
-            left_stick=(0, 1),
-            right_stick=(2, 3),
-            dpad_hat=0,
+            trigger_map={
+                "left_trigger": Button.ZL,
+                "right_trigger": Button.ZR,
+            },
+            left_stick="left",
+            right_stick="right",
         )
-        return preset
 
 
 def load_preset(source: str | Path) -> PresetConfig:
-    """Load a preset by builtin name or filesystem path.
-
-    ``source`` is matched against :data:`BUILTIN_PRESETS` first; on a hit
-    the file is read from :data:`PRESETS_DIR`. Otherwise ``source`` is
-    treated as a path to a JSON file. Raises :class:`FileNotFoundError`
-    or :class:`ValueError` on problems.
-    """
+    """Load a preset by builtin name or filesystem path."""
     path = _resolve_preset_path(source)
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
     if not isinstance(data, dict):
         raise TypeError(f"Preset {path} must be a JSON object")
-    return validate_preset(data, standard_gamepad=path == BUILTIN_PRESETS_DIR / "xbox.json")
+    return validate_preset(data)
 
 
-def validate_preset(data: dict, *, standard_gamepad: bool = False) -> PresetConfig:
-    """Validate a parsed preset document and build its config.
-
-    Raises :class:`PresetValidationError` (with a JSON path) on problems,
-    mirroring :func:`lib.input.macros.validate_macro`.
-    """
+def validate_preset(data: dict) -> PresetConfig:
+    """Validate a parsed preset document and build its config."""
     if not isinstance(data, dict):
         raise PresetValidationError([], "must be a JSON object")
     version = data.get("version")
@@ -167,64 +165,57 @@ def validate_preset(data: dict, *, standard_gamepad: bool = False) -> PresetConf
         try:
             _validate_mapping(mapping)
         except PresetValidationError as error:
-            raise PresetValidationError(["mappings", variant, *error.path], error.message) from None
-        resolved[variant] = _build_preset(mapping, data, standard_gamepad=standard_gamepad)
+            raise PresetValidationError(
+                ["mappings", variant, *error.path], error.message
+            ) from None
+        resolved[variant] = _build_preset(mapping, data)
     pro = resolved.pop(ControllerVariant.PRO)
     return replace(pro, mappings=resolved)
 
 
 def _validate_mapping(data: dict) -> None:
-    for key in ("buttons", "triggers"):
+    for key, valid_inputs in (
+        ("buttons", VALID_BUTTON_INPUTS),
+        ("triggers", VALID_TRIGGER_INPUTS),
+    ):
         raw = data.get(key, {})
         if not isinstance(raw, dict):
             raise PresetValidationError([key], "must be an object")
-        for idx, value in raw.items():
-            path = [key, str(idx)]
-            try:
-                int(str(idx))
-            except (TypeError, ValueError):
-                raise PresetValidationError(path, "key must be an integer index")
-            if int(str(idx)) < 0:
-                raise PresetValidationError(path, "key must be non-negative")
+        for input_name, value in raw.items():
+            path = [key, str(input_name)]
+            if not isinstance(input_name, str) or input_name not in valid_inputs:
+                allowed = ", ".join(sorted(valid_inputs))
+                raise PresetValidationError(
+                    path, f"unknown input {input_name!r} (valid: {allowed})"
+                )
             if not isinstance(value, str):
                 raise PresetValidationError(path, "must map to a button name")
             try:
-                Button[str(value).strip().upper()]
+                Button[value.strip().upper()]
             except KeyError:
                 valid = ", ".join(sorted(b.name for b in Button if b.name))
                 raise PresetValidationError(
                     path, f"unknown button {value!r} (valid: {valid})"
                 ) from None
 
-    for key in ("left_stick", "right_stick"):
-        raw = data.get(key, {})
-        if not isinstance(raw, dict):
-            raise PresetValidationError([key], "must be an object")
-        for axis in ("x_axis", "y_axis"):
-            if axis in raw:
-                value = raw[axis]
-                if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-                    raise PresetValidationError(
-                        [key, axis], "must be a non-negative integer axis index"
-                    )
-
-    dpad = data.get("dpad", {})
-    if not isinstance(dpad, dict):
-        raise PresetValidationError(["dpad"], "must be an object")
-    if "hat" in dpad and dpad["hat"] is not None:
-        hat = dpad["hat"]
-        if not isinstance(hat, int) or isinstance(hat, bool) or hat < 0:
+    sticks = data.get("sticks", {})
+    if not isinstance(sticks, dict):
+        raise PresetValidationError(["sticks"], "must be an object")
+    for side, source in sticks.items():
+        if side not in VALID_STICK_INPUTS:
+            raise PresetValidationError(["sticks", str(side)], "must be 'left' or 'right'")
+        if source is not None and (not isinstance(source, str) or source not in VALID_STICK_INPUTS):
             raise PresetValidationError(
-                ["dpad", "hat"], "must be a non-negative integer or null"
+                ["sticks", str(side)], "must be 'left', 'right', or null"
             )
+
 
 def preset_name_is_builtin(name: str) -> bool:
     return name in BUILTIN_PRESETS
 
 
 def read_preset_text(name: str) -> str:
-    """Raw text of a preset by name (builtin or custom). Raises
-    :class:`FileNotFoundError` when absent."""
+    """Raw text of a preset by name (builtin or custom)."""
     _, path = _preset_doc_path(name)
     if name in BUILTIN_PRESETS and not path.is_file():
         path = BUILTIN_PRESETS_DIR / f"{name}.json"
@@ -258,7 +249,9 @@ def delete_preset(name: str) -> None:
 
 def list_preset_infos() -> list[dict]:
     """Metadata for every available preset (builtins + customs)."""
-    filenames = BUILTIN_PRESETS | {path.stem for path in PRESETS_DIR.glob("*.json") if path.is_file()}
+    filenames = BUILTIN_PRESETS | {
+        path.stem for path in PRESETS_DIR.glob("*.json") if path.is_file()
+    }
     infos = []
     for filename in sorted(filenames):
         name = filename
@@ -287,13 +280,12 @@ class PresetSelection:
     config: PresetConfig
 
 
-def detect_controller_preset(name: str, guid: str = "") -> str:
-    """Return the built-in preset that best matches an SDL controller.
-
-    Device names cover SDL's common mappings. The vendor field in the GUID
-    handles generic names such as ``Wireless Controller``. Unknown devices
-    use the Xbox/SDL layout, which is pygame's most common fallback.
-    """
+def detect_controller_preset(
+    name: str, guid: str = "", gamepad_type: str = ""
+) -> str:
+    """Return the built-in preset that best matches an SDL3 controller."""
+    if gamepad_type and (by_type := _GAMEPAD_TYPE_PRESETS.get(gamepad_type.casefold())):
+        return by_type
     normalized_name = name.casefold()
     if any(
         marker in normalized_name
@@ -328,15 +320,12 @@ def resolve_controller_preset(
     guid: str,
     name: str,
     saved_presets: dict[str, str] | None = None,
+    gamepad_type: str = "",
 ) -> PresetSelection:
-    """Load the saved GUID preset, or detect a built-in default.
-
-    A missing or invalid saved custom preset falls back to controller type
-    detection so a stale config entry cannot make the controller unusable.
-    """
+    """Load the saved GUID preset, or detect a built-in default."""
     normalized_guid = guid.casefold()
     saved_source = (saved_presets or {}).get(normalized_guid)
-    detected_source = detect_controller_preset(name, guid)
+    detected_source = detect_controller_preset(name, guid, gamepad_type)
     sources = [saved_source, detected_source, "xbox"]
     tried: set[str] = set()
     for source in sources:
@@ -357,8 +346,6 @@ def resolve_controller_preset(
 
 
 def list_presets() -> list[str]:
-    """Return sorted preset names: builtins plus any extra ``.json`` files
-    discovered in the presets directory."""
     return [info["filename"] for info in list_preset_infos()]
 
 
@@ -367,7 +354,6 @@ def _resolve_preset_path(source: str | Path) -> Path:
     if source in BUILTIN_PRESETS:
         path = PRESETS_DIR / f"{source}.json"
         return path if path.is_file() else BUILTIN_PRESETS_DIR / f"{source}.json"
-    # Custom presets saved in the presets directory resolve by name too.
     by_name = PRESETS_DIR / f"{source}.json"
     if by_name.is_file():
         return by_name
@@ -381,28 +367,20 @@ def _resolve_preset_path(source: str | Path) -> Path:
     return path
 
 
-def _build_preset(data: dict, metadata: dict, *, standard_gamepad: bool) -> PresetConfig:
+def _build_preset(data: dict, metadata: dict) -> PresetConfig:
     button_map = _parse_button_map(data.get("buttons") or {}, "buttons")
     trigger_map = _parse_button_map(data.get("triggers") or {}, "triggers")
-
-    left = data.get("left_stick") or {}
-    right = data.get("right_stick") or {}
-    left_stick = (int(left.get("x_axis", 0)), int(left.get("y_axis", 1)))
-    right_stick = (int(right.get("x_axis", 2)), int(right.get("y_axis", 3)))
-
-    dpad = data.get("dpad") or {}
-    dpad_hat_raw = dpad.get("hat", 0)
-    dpad_hat = int(dpad_hat_raw) if dpad_hat_raw is not None else None
+    sticks = data.get("sticks") or {}
+    left_stick = sticks.get("left", "left")
+    right_stick = sticks.get("right", "right")
 
     return PresetConfig(
         name=metadata.get("name", "Unnamed"),
         rumble_enabled=metadata.get("rumble_enabled", True),
-        standard_gamepad=standard_gamepad,
         button_map=button_map,
         trigger_map=trigger_map,
         left_stick=left_stick,
         right_stick=right_stick,
-        dpad_hat=dpad_hat,
     )
 
 
@@ -412,36 +390,32 @@ def _default_mapping(pro: PresetConfig, variant: ControllerVariant) -> PresetCon
     targets = HORIZONTAL_BUTTONS[variant]
     mask = JOYCON_BUTTONS[variant.bluetooth_type]
 
-    def translate(mapping: dict[int, Button]) -> dict[int, Button]:
-        translated = {index: targets.get(button, button) for index, button in mapping.items()}
-        return {index: button for index, button in translated.items() if button & mask}
+    def translate(mapping: dict[str, Button]) -> dict[str, Button]:
+        translated = {
+            name: targets.get(button, button) for name, button in mapping.items()
+        }
+        return {name: button for name, button in translated.items() if button & mask}
 
     return replace(
         pro,
         button_map=translate(pro.button_map),
         trigger_map=translate(pro.trigger_map),
-        right_stick=pro.left_stick if variant == ControllerVariant.RIGHT else pro.right_stick,
-        dpad_hat=None,
+        left_stick=pro.left_stick if variant == ControllerVariant.LEFT else None,
+        right_stick=pro.left_stick if variant == ControllerVariant.RIGHT else None,
         mappings={},
     )
 
 
-def _parse_button_map(raw: dict, label: str) -> dict[int, Button]:
-    """Convert a ``{"0": "B", ...}`` mapping to ``{0: Button.B}``.
-
-    JSON keys are strings; they are coerced to ``int`` indices. Button
-    values are resolved through the :class:`Button` enum by name.
-    """
-    result: dict[int, Button] = {}
-    for key, value in raw.items():
-        idx = int(key)
+def _parse_button_map(raw: dict, label: str) -> dict[str, Button]:
+    result: dict[str, Button] = {}
+    for input_name, value in raw.items():
         button_name = str(value).strip().upper()
         try:
-            result[idx] = Button[button_name]
+            result[str(input_name)] = Button[button_name]
         except KeyError:
             valid = ", ".join(sorted(b.name for b in Button if b.name))
             raise ValueError(
                 f"Unknown button name {value!r} in preset '{label}' "
-                f"(index {key}). Valid names: {valid}"
+                f"(input {input_name!r}). Valid names: {valid}"
             ) from None
     return result

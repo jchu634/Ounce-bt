@@ -159,11 +159,9 @@ def _ok_preset():
         "rumble_enabled": False,
         "mappings": {
             "pro": {
-                "buttons": {"0": "B", "1": "A"},
-                "triggers": {"4": "ZL"},
-                "left_stick": {"x_axis": 0, "y_axis": 1},
-                "right_stick": {"x_axis": 3, "y_axis": 4},
-                "dpad": {"hat": 0},
+                "buttons": {"south": "B", "east": "A"},
+                "triggers": {"left_trigger": "ZL"},
+                "sticks": {"left": "left", "right": "right"},
             },
             "joycon_l": {}, "joycon_r": {}, "combined": {},
         },
@@ -173,17 +171,16 @@ def _ok_preset():
 def test_validate_preset_ok():
     preset = validate_preset(_ok_preset())
     assert preset.rumble_enabled is False
-    assert preset.button_map[0].name == "B"
+    assert preset.button_map["south"].name == "B"
 
 
 @pytest.mark.parametrize(
     ("mutate", "path"),
     [
-        (lambda p: p["mappings"]["pro"]["buttons"].update({"2": "QQ"}), ["mappings", "pro", "buttons", "2"]),
-        (lambda p: p["mappings"]["pro"]["buttons"].update({"x": "A"}), ["mappings", "pro", "buttons", "x"]),
-        (lambda p: p["mappings"]["pro"]["triggers"].update({"9": 5}), ["mappings", "pro", "triggers", "9"]),
-        (lambda p: p["mappings"]["pro"]["left_stick"].update(x_axis=-1), ["mappings", "pro", "left_stick", "x_axis"]),
-        (lambda p: p["mappings"]["pro"]["dpad"].update(hat="zero"), ["mappings", "pro", "dpad", "hat"]),
+        (lambda p: p["mappings"]["pro"]["buttons"].update({"west": "QQ"}), ["mappings", "pro", "buttons", "west"]),
+        (lambda p: p["mappings"]["pro"]["buttons"].update({"0": "A"}), ["mappings", "pro", "buttons", "0"]),
+        (lambda p: p["mappings"]["pro"]["triggers"].update({"right_trigger": 5}), ["mappings", "pro", "triggers", "right_trigger"]),
+        (lambda p: p["mappings"]["pro"]["sticks"].update(left="middle"), ["mappings", "pro", "sticks", "left"]),
         (lambda p: p.update(rumble_enabled="yes"), ["rumble_enabled"]),
         (lambda p: p.update(version=1), ["version"]),
         (lambda p: p.pop("version"), ["version"]),

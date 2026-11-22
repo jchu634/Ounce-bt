@@ -374,7 +374,13 @@ async def adapter_inventory(sessions: dict[str, AdapterSession]) -> dict:
             for session in sessions.values()
         ],
         "controllers": [
-            {"id": pad["instance_id"], "name": pad["name"], "guid": pad["guid"]}
+            {
+                "id": pad["instance_id"],
+                "name": pad["name"],
+                "guid": pad["guid"],
+                "gamepad_type": pad.get("gamepad_type", "standard"),
+                "has_rumble": bool(pad.get("has_rumble", False)),
+            }
             for pad in controllers.get("controllers", [])
             if pad.get("instance_id") is not None
         ],
@@ -606,39 +612,6 @@ async def macro_delete(request: Request) -> Response:
 
 async def controllers_get(request: Request) -> Response:
     manager: InputManager = request.app.state.manager
-    payload = await asyncio.to_thread(manager.controllers_payload)
-    return JSONResponse(payload)
-
-
-async def controller_select(request: Request) -> Response:
-    manager: InputManager = request.app.state.manager
-    store: ConfigStore = request.app.state.config_store
-    try:
-        body = await request.json()
-    except ValueError:
-        return _error("invalid JSON body")
-    if not isinstance(body, dict):
-        return _error("expected a JSON object")
-
-    ident = body.get("guid") or body.get("name")
-    if ident is None and "index" in body:
-        ident = body["index"]
-    if ident is None or ident == "":
-        return _error("provide 'guid', 'name' or 'index'")
-
-    try:
-        info = await asyncio.to_thread(manager.select_controller, ident)
-    except MacroActiveError as e:
-        return _error(str(e), status=409)
-    except ValueError as e:
-        return _error(str(e), status=404)
-    except RuntimeError as e:
-        return _error(str(e), status=503)
-
-    # Persist the selection (GUID) so it survives restarts.
-    primary = request.app.state.adapter_sessions.get("primary")
-    if info.get("guid") and (primary is None or primary.profile_index is None):
-        store.update({"controller_guid": info["guid"]})
     payload = await asyncio.to_thread(manager.controllers_payload)
     return JSONResponse(payload)
 
@@ -1205,7 +1178,6 @@ def build_app(
         Route("/api/macros/{name}", macro_rename, methods=["PATCH"]),
         Route("/api/macros/{name}", macro_delete, methods=["DELETE"]),
         Route("/api/controllers", controllers_get, methods=["GET"]),
-        Route("/api/controllers/active", controller_select, methods=["PUT"]),
         Route("/api/presets", presets_list, methods=["GET"]),
         Route("/api/presets/{name}", preset_get, methods=["GET"]),
         Route("/api/presets/{name}", preset_put, methods=["PUT"]),

@@ -15,8 +15,8 @@ const presetContents = JSON.stringify({
   name: "Loaded preset",
   mappings: {
     pro: {},
-    joycon_l: { left_stick: { x_axis: 0, y_axis: 1 } },
-    joycon_r: { right_stick: { x_axis: 0, y_axis: 1 } },
+    joycon_l: { sticks: { left: "left" } },
+    joycon_r: { sticks: { right: "left" } },
     combined: {},
   },
 });
@@ -145,9 +145,9 @@ describe("active preset selection", () => {
     const contents = container.querySelector('[data-testid="json"]')?.textContent;
     expect(JSON.parse(contents ?? "{}")).toMatchObject({
       mappings: {
-        pro: { left_stick: { x_axis: 2, y_axis: 3 } },
-        joycon_l: { left_stick: { x_axis: 0, y_axis: 1 } },
-        joycon_r: { right_stick: { x_axis: 2, y_axis: 3 } },
+        pro: { sticks: { left: "right" } },
+        joycon_l: { sticks: { left: "left" } },
+        joycon_r: { sticks: { right: "right" } },
       },
     });
   });

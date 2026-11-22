@@ -6,13 +6,13 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "bumble==0.0.235",
-  "pygame-ce>=2.5.6",
   "pywebview>=6.2.1",
   "pyside6>=6.8,<7; sys_platform == 'linux'",
   "qtpy>=2.4; sys_platform == 'linux'",
   "starlette>=1.6.0",
   "uvicorn>=0.52.1",
   "websockets>=15.0.1",
+  "pysdl3>=0.9.12b1",
 ]
 
 [dependency-groups]

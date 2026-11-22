@@ -4,139 +4,112 @@
   "description": "Default DualShock 4 / DualSense mapping.",
   "controller_layout": "playstation",
   "rumble_enabled": true,
+  "motion_enabled": true,
   "mappings": {
     "pro": {
       "buttons": {
-        "0": "B",
-        "1": "A",
-        "2": "Y",
-        "3": "X",
-        "4": "MINUS",
-        "5": "HOME",
-        "6": "PLUS",
-        "7": "STICK_L",
-        "8": "STICK_R",
-        "9": "L",
-        "10": "R",
-        "11": "UP",
-        "12": "DOWN",
-        "13": "LEFT",
-        "14": "RIGHT",
-        "15": "CAPTURE"
+        "south": "B",
+        "east": "A",
+        "west": "Y",
+        "north": "X",
+        "back": "MINUS",
+        "guide": "HOME",
+        "start": "PLUS",
+        "left_stick": "STICK_L",
+        "right_stick": "STICK_R",
+        "left_shoulder": "L",
+        "right_shoulder": "R",
+        "dpad_up": "UP",
+        "dpad_down": "DOWN",
+        "dpad_left": "LEFT",
+        "dpad_right": "RIGHT",
+        "touchpad": "CAPTURE"
       },
       "triggers": {
-        "4": "ZL",
-        "5": "ZR"
+        "left_trigger": "ZL",
+        "right_trigger": "ZR"
       },
-      "left_stick": {
-        "x_axis": 0,
-        "y_axis": 1
-      },
-      "right_stick": {
-        "x_axis": 2,
-        "y_axis": 3
-      },
-      "dpad": {
-        "hat": null
+      "sticks": {
+        "left": "left",
+        "right": "right"
       }
     },
     "joycon_l": {
       "buttons": {
-        "0": "LEFT",
-        "1": "DOWN",
-        "2": "UP",
-        "3": "RIGHT",
-        "4": "MINUS",
-        "5": "CAPTURE",
-        "6": "MINUS",
-        "7": "STICK_L",
-        "9": "SL",
-        "10": "SR",
-        "11": "UP",
-        "12": "DOWN",
-        "13": "LEFT",
-        "14": "RIGHT",
-        "15": "CAPTURE"
+        "south": "LEFT",
+        "east": "DOWN",
+        "west": "UP",
+        "north": "RIGHT",
+        "back": "MINUS",
+        "guide": "CAPTURE",
+        "start": "MINUS",
+        "left_stick": "STICK_L",
+        "left_shoulder": "SL",
+        "right_shoulder": "SR",
+        "dpad_up": "UP",
+        "dpad_down": "DOWN",
+        "dpad_left": "LEFT",
+        "dpad_right": "RIGHT",
+        "touchpad": "CAPTURE"
       },
       "triggers": {
-        "4": "ZL",
-        "5": "L"
+        "left_trigger": "ZL",
+        "right_trigger": "L"
       },
-      "left_stick": {
-        "x_axis": 0,
-        "y_axis": 1
-      },
-      "right_stick": {
-        "x_axis": 2,
-        "y_axis": 3
-      },
-      "dpad": {
-        "hat": null
+      "sticks": {
+        "left": "left",
+        "right": null
       }
     },
     "joycon_r": {
       "buttons": {
-        "0": "A",
-        "1": "X",
-        "2": "B",
-        "3": "Y",
-        "4": "PLUS",
-        "5": "HOME",
-        "6": "PLUS",
-        "7": "STICK_R",
-        "8": "STICK_R",
-        "9": "SL",
-        "10": "SR"
+        "south": "A",
+        "east": "X",
+        "west": "B",
+        "north": "Y",
+        "back": "PLUS",
+        "guide": "HOME",
+        "start": "PLUS",
+        "left_stick": "STICK_R",
+        "right_stick": "STICK_R",
+        "left_shoulder": "SL",
+        "right_shoulder": "SR"
       },
       "triggers": {
-        "4": "R",
-        "5": "ZR"
+        "left_trigger": "R",
+        "right_trigger": "ZR"
       },
-      "left_stick": {
-        "x_axis": 0,
-        "y_axis": 1
-      },
-      "right_stick": {
-        "x_axis": 0,
-        "y_axis": 1
-      },
-      "dpad": {
-        "hat": null
+      "sticks": {
+        "left": null,
+        "right": "left"
       }
     },
     "combined": {
       "buttons": {
-        "0": "B",
-        "1": "A",
-        "2": "Y",
-        "3": "X",
-        "4": "MINUS",
-        "5": "HOME",
-        "6": "PLUS",
-        "7": "STICK_L",
-        "8": "STICK_R",
-        "9": "L",
-        "10": "R",
-        "11": "UP",
-        "12": "DOWN",
-        "13": "LEFT",
-        "14": "RIGHT",
-        "15": "CAPTURE"
+        "south": "B",
+        "east": "A",
+        "west": "Y",
+        "north": "X",
+        "back": "MINUS",
+        "guide": "HOME",
+        "start": "PLUS",
+        "left_stick": "STICK_L",
+        "right_stick": "STICK_R",
+        "left_shoulder": "L",
+        "right_shoulder": "R",
+        "dpad_up": "UP",
+        "dpad_down": "DOWN",
+        "dpad_left": "LEFT",
+        "dpad_right": "RIGHT",
+        "touchpad": "CAPTURE"
       },
       "triggers": {
-        "4": "ZL",
-        "5": "ZR"
+        "left_trigger": "ZL",
+        "right_trigger": "ZR"
       },
-      "left_stick": {
-        "x_axis": 0,
-        "y_axis": 1
-      },
-      "right_stick": {
-        "x_axis": 2,
-        "y_axis": 3
-      },
-      "dpad": {
-        "hat": null
+      "sticks": {
+        "left": "left",
+        "right": "right"
       }
     }
   }

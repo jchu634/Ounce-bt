@@ -41,23 +41,24 @@ def test_v2_controller_mappings_resolve_independently():
     data = {
         "version": 2,
         "mappings": {
-            "pro": {"buttons": {"0": "A", "4": "L"}, "left_stick": {"x_axis": 3, "y_axis": 4}},
-            "joycon_l": {"buttons": {"7": "SR_L"}, "dpad": {"hat": None}},
-            "joycon_r": {"buttons": {"0": "X", "4": "SL_R"}, "right_stick": {"x_axis": 3, "y_axis": 4}},
-            "combined": {"buttons": {"0": "B"}},
+            "pro": {"buttons": {"east": "A", "left_shoulder": "L"}, "sticks": {"left": "right"}},
+            "joycon_l": {"buttons": {"right_shoulder": "SR_L"}},
+            "joycon_r": {"buttons": {"east": "X", "left_shoulder": "SL_R"}, "sticks": {"right": "left"}},
+            "combined": {"buttons": {"south": "B"}},
         },
     }
     preset = validate_preset(data)
-    assert preset.mapping_for(ControllerVariant.PRO).button_map == {0: Button.A, 4: Button.L}
-    assert preset.mapping_for(ControllerVariant.LEFT).button_map == {7: Button.SR_L}
-    assert preset.mapping_for(ControllerVariant.RIGHT).button_map == {0: Button.X, 4: Button.SL_R}
-    assert preset.mapping_for(ControllerVariant.RIGHT).right_stick == (3, 4)
-    assert preset.mapping_for(ControllerVariant.COMBINED).button_map == {0: Button.B}
+    assert preset.mapping_for(ControllerVariant.PRO).button_map == {"east": Button.A, "left_shoulder": Button.L}
+    assert preset.mapping_for(ControllerVariant.PRO).left_stick == "right"
+    assert preset.mapping_for(ControllerVariant.LEFT).button_map == {"right_shoulder": Button.SR_L}
+    assert preset.mapping_for(ControllerVariant.RIGHT).button_map == {"east": Button.X, "left_shoulder": Button.SL_R}
+    assert preset.mapping_for(ControllerVariant.RIGHT).right_stick == "left"
+    assert preset.mapping_for(ControllerVariant.COMBINED).button_map == {"south": Button.B}
 
-    data["mappings"]["joycon_l"]["buttons"]["7"] = "invalid"
+    data["mappings"]["joycon_l"]["buttons"]["right_shoulder"] = "invalid"
     with pytest.raises(PresetValidationError) as invalid:
         validate_preset(data)
-    assert invalid.value.path == ["mappings", "joycon_l", "buttons", "7"]
+    assert invalid.value.path == ["mappings", "joycon_l", "buttons", "right_shoulder"]
 
 
 @pytest.mark.parametrize(

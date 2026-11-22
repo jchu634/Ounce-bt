@@ -42,12 +42,8 @@ import {
   SwitchDpadUp,
   SwitchStickLPress,
   SwitchStickL,
-  SwitchStickLHorizontal,
-  SwitchStickLVertical,
   SwitchStickRPress,
   SwitchStickR,
-  SwitchStickRHorizontal,
-  SwitchStickRVertical,
 } from "@/src/assets/input-prompts/switch";
 import {
   XboxButtonA,
@@ -63,12 +59,8 @@ import {
   XboxRb,
   XboxRs,
   XboxRt,
-  XboxStickLHorizontal,
   XboxStickL,
-  XboxStickLVertical,
-  XboxStickRHorizontal,
   XboxStickR,
-  XboxStickRVertical,
 } from "@/src/assets/input-prompts/xbox";
 import {
   Playstation5ButtonCreate,
@@ -83,12 +75,8 @@ import {
   PlaystationDpadLeft,
   PlaystationDpadRight,
   PlaystationDpadUp,
-  PlaystationStickLHorizontal,
   PlaystationStickL,
-  PlaystationStickLVertical,
-  PlaystationStickRHorizontal,
   PlaystationStickR,
-  PlaystationStickRVertical,
   PlaystationTriggerL1,
   PlaystationTriggerL2,
   PlaystationTriggerR1,
@@ -142,9 +130,15 @@ import {
 import { locatePathLine, positionToLineCol } from "@/src/lib/json-locate";
 import {
   CONTROLLER_LAYOUTS,
+  GAMEPAD_BUTTON_INPUTS,
+  GAMEPAD_TRIGGER_INPUTS,
+  GENERIC_BUTTON_NAMES,
   GENERIC_CONTROLLER_LAYOUT,
+  GENERIC_TRIGGER_NAMES,
   type ControllerLayout,
   type ControllerLayoutDefinition,
+  type GamepadButtonInput,
+  type GamepadTriggerInput,
 } from "@/src/lib/controller-mappings";
 import { cn } from "cn";
 
@@ -641,7 +635,33 @@ type ParsedPreset =
   | { kind: "invalid"; message: string };
 
 type PhysicalSource =
-  { kind: "button"; index: string } | { kind: "trigger"; index: string };
+  | { kind: "button"; input: GamepadButtonInput }
+  | { kind: "trigger"; input: GamepadTriggerInput };
+
+const VALID_BUTTON_SET = new Set<string>(GAMEPAD_BUTTON_INPUTS);
+const VALID_TRIGGER_SET = new Set<string>(GAMEPAD_TRIGGER_INPUTS);
+
+// W3C Standard Gamepad button index -> semantic SDL3 input.
+const WEB_GAMEPAD_SOURCES: readonly (PhysicalSource | null)[] = [
+  { kind: "button", input: "south" },
+  { kind: "button", input: "east" },
+  { kind: "button", input: "west" },
+  { kind: "button", input: "north" },
+  { kind: "button", input: "left_shoulder" },
+  { kind: "button", input: "right_shoulder" },
+  { kind: "trigger", input: "left_trigger" },
+  { kind: "trigger", input: "right_trigger" },
+  { kind: "button", input: "back" },
+  { kind: "button", input: "start" },
+  { kind: "button", input: "left_stick" },
+  { kind: "button", input: "right_stick" },
+  { kind: "button", input: "dpad_up" },
+  { kind: "button", input: "dpad_down" },
+  { kind: "button", input: "dpad_left" },
+  { kind: "button", input: "dpad_right" },
+  { kind: "button", input: "guide" },
+  { kind: "button", input: "touchpad" },
+];
 
 const MAPPING_GROUPS: readonly { title: string; controls: readonly ButtonName[] }[] = [
   { title: "Shoulder controls", controls: ["ZL", "ZR", "L", "R"] },
@@ -685,10 +705,6 @@ const MAPPING_TRIGGER_CLASS =
 const STICK_SIDES = ["left", "right"] as const;
 type StickSide = (typeof STICK_SIDES)[number];
 const STICK_NAMES: Record<StickSide, string> = { left: "Left stick", right: "Right stick" };
-const STICK_AXES = {
-  left: { x_axis: 0, y_axis: 1 },
-  right: { x_axis: 2, y_axis: 3 },
-};
 const STICK_ICONS: Record<ControllerLayout, Record<StickSide, InputIcon>> = {
   generic: { left: GenericStick, right: GenericStick },
   switch: { left: SwitchStickL, right: SwitchStickR },
@@ -697,97 +713,82 @@ const STICK_ICONS: Record<ControllerLayout, Record<StickSide, InputIcon>> = {
 };
 
 const CONTROLLER_BUTTON_ICONS: Partial<
-  Record<ControllerLayout, readonly InputIcon[]>
+  Record<ControllerLayout, Partial<Record<GamepadButtonInput, InputIcon>>>
 > = {
-  switch: [
-    SwitchButtonA,
-    SwitchButtonB,
-    SwitchButtonX,
-    SwitchButtonY,
-    SwitchButtonMinus,
-    SwitchButtonHome,
-    SwitchButtonPlus,
-    SwitchStickRPress,
-    SwitchStickLPress,
-    SwitchButtonL,
-    SwitchButtonR,
-    SwitchDpadUp,
-    SwitchDpadDown,
-    SwitchDpadLeft,
-    SwitchDpadRight,
-    SwitchButtonSync,
-  ],
-  xbox: [
-    XboxButtonA,
-    XboxButtonB,
-    XboxButtonX,
-    XboxButtonY,
-    XboxLb,
-    XboxRb,
-    XboxButtonView,
-    XboxButtonMenu,
-    XboxLs,
-    XboxRs,
-    XboxGuide,
-  ],
-  playstation: [
-    PlaystationButtonCross,
-    PlaystationButtonCircle,
-    PlaystationButtonSquare,
-    PlaystationButtonTriangle,
-    Playstation5ButtonCreate,
-    GameControllerIcon,
-    Playstation5ButtonOptions,
-    PlaystationButtonL3,
-    PlaystationButtonR3,
-    PlaystationTriggerL1,
-    PlaystationTriggerR1,
-    PlaystationDpadUp,
-    PlaystationDpadDown,
-    PlaystationDpadLeft,
-    PlaystationDpadRight,
-    GameControllerIcon,
-  ],
+  switch: {
+    east: SwitchButtonA,
+    south: SwitchButtonB,
+    north: SwitchButtonX,
+    west: SwitchButtonY,
+    back: SwitchButtonMinus,
+    guide: SwitchButtonHome,
+    start: SwitchButtonPlus,
+    right_stick: SwitchStickRPress,
+    left_stick: SwitchStickLPress,
+    left_shoulder: SwitchButtonL,
+    right_shoulder: SwitchButtonR,
+    dpad_up: SwitchDpadUp,
+    dpad_down: SwitchDpadDown,
+    dpad_left: SwitchDpadLeft,
+    dpad_right: SwitchDpadRight,
+    misc1: SwitchButtonSync,
+  },
+  xbox: {
+    south: XboxButtonA,
+    east: XboxButtonB,
+    west: XboxButtonX,
+    north: XboxButtonY,
+    left_shoulder: XboxLb,
+    right_shoulder: XboxRb,
+    back: XboxButtonView,
+    start: XboxButtonMenu,
+    left_stick: XboxLs,
+    right_stick: XboxRs,
+    guide: XboxGuide,
+  },
+  playstation: {
+    south: PlaystationButtonCross,
+    east: PlaystationButtonCircle,
+    west: PlaystationButtonSquare,
+    north: PlaystationButtonTriangle,
+    back: Playstation5ButtonCreate,
+    start: Playstation5ButtonOptions,
+    left_stick: PlaystationButtonL3,
+    right_stick: PlaystationButtonR3,
+    left_shoulder: PlaystationTriggerL1,
+    right_shoulder: PlaystationTriggerR1,
+    dpad_up: PlaystationDpadUp,
+    dpad_down: PlaystationDpadDown,
+    dpad_left: PlaystationDpadLeft,
+    dpad_right: PlaystationDpadRight,
+  },
 };
 
-const CONTROLLER_AXIS_ICONS: Partial<
-  Record<ControllerLayout, readonly InputIcon[]>
+const CONTROLLER_TRIGGER_ICONS: Partial<
+  Record<ControllerLayout, Partial<Record<GamepadTriggerInput, InputIcon>>>
 > = {
-  switch: [
-    SwitchStickLHorizontal,
-    SwitchStickLVertical,
-    SwitchStickRHorizontal,
-    SwitchStickRVertical,
-    SwitchButtonZl,
-    SwitchButtonZr,
-  ],
-  xbox: [
-    XboxStickLHorizontal,
-    XboxStickLVertical,
-    XboxLt,
-    XboxStickRHorizontal,
-    XboxStickRVertical,
-    XboxRt,
-  ],
-  playstation: [
-    PlaystationStickLHorizontal,
-    PlaystationStickLVertical,
-    PlaystationStickRHorizontal,
-    PlaystationStickRVertical,
-    PlaystationTriggerL2,
-    PlaystationTriggerR2,
-  ],
+  switch: {
+    left_trigger: SwitchButtonZl,
+    right_trigger: SwitchButtonZr,
+  },
+  xbox: {
+    left_trigger: XboxLt,
+    right_trigger: XboxRt,
+  },
+  playstation: {
+    left_trigger: PlaystationTriggerL2,
+    right_trigger: PlaystationTriggerR2,
+  },
 };
 
 function physicalInputIcon(
   source: PhysicalSource,
   layout: ControllerLayout,
 ): InputIcon {
-  const icons =
-    source.kind === "button"
-      ? CONTROLLER_BUTTON_ICONS[layout]
-      : CONTROLLER_AXIS_ICONS[layout];
-  return icons?.[Number(source.index)] ?? GameControllerIcon;
+  if (source.kind === "button") {
+    return CONTROLLER_BUTTON_ICONS[layout]?.[source.input] ?? GameControllerIcon;
+  }
+  return CONTROLLER_TRIGGER_ICONS[layout]?.[source.input] ?? GameControllerIcon;
 }
 
 const isControllerLayout = (value: unknown): value is ControllerLayout =>
@@ -803,11 +804,6 @@ const MAPPING_FIELDS: ReadonlyArray<"buttons" | "triggers"> = [
 
 function isMappingObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function stickMapping(value: unknown, offset: number) {
-  const stick = isMappingObject(value) ? value : {};
-  return { x_axis: offset, y_axis: offset + 1, ...stick };
 }
 
 function parsePreset(value: string, variant: ControllerVariant): ParsedPreset {
@@ -853,15 +849,16 @@ function parsePreset(value: string, variant: ControllerVariant): ParsedPreset {
         message: `The preset "${field}" field must be an object.`,
       };
     }
-    for (const [index, value] of Object.entries(rawMappings)) {
-      const button = parseButtonName(value);
-      if (!/^\d+$/.test(index) || button === undefined) {
+    const validSet = field === "buttons" ? VALID_BUTTON_SET : VALID_TRIGGER_SET;
+    for (const [inputName, target] of Object.entries(rawMappings)) {
+      const button = parseButtonName(target);
+      if (!validSet.has(inputName) || button === undefined) {
         return {
           kind: "invalid",
           message: `A ${field === "buttons" ? "button" : "trigger"} mapping is not valid. Open Advanced mode to fix it.`,
         };
       }
-      controls[field][index] = button;
+      controls[field][inputName] = button;
     }
   }
   return { kind: "valid", document, mapping, mappings, ...controls };
@@ -872,26 +869,34 @@ function sourceFor(
   triggers: Record<string, ButtonName>,
   target: ButtonName,
 ): PhysicalSource | null {
-  const buttonIndex = Object.entries(buttons).find(
+  const buttonInput = Object.entries(buttons).find(
     ([, button]) => button === target,
   )?.[0];
-  if (buttonIndex !== undefined) return { kind: "button", index: buttonIndex };
-  const triggerIndex = Object.entries(triggers).find(
+  if (buttonInput !== undefined && VALID_BUTTON_SET.has(buttonInput)) {
+    return { kind: "button", input: buttonInput as GamepadButtonInput };
+  }
+  const triggerInput = Object.entries(triggers).find(
     ([, button]) => button === target,
   )?.[0];
-  return triggerIndex === undefined
-    ? null
-    : { kind: "trigger", index: triggerIndex };
+  if (triggerInput !== undefined && VALID_TRIGGER_SET.has(triggerInput)) {
+    return { kind: "trigger", input: triggerInput as GamepadTriggerInput };
+  }
+  return null;
 }
 
 function sourceValue(source: PhysicalSource | null): string {
-  return source === null ? "" : `${source.kind}:${source.index}`;
+  return source === null ? "" : `${source.kind}:${source.input}`;
 }
 
 function parseSourceValue(value: string): PhysicalSource | null {
-  const [kind, index, extra] = value.split(":");
-  if (extra !== undefined || !/^\d+$/.test(index ?? "")) return null;
-  if (kind === "button" || kind === "trigger") return { kind, index };
+  const [kind, input, extra] = value.split(":");
+  if (extra !== undefined || !input) return null;
+  if (kind === "button" && VALID_BUTTON_SET.has(input)) {
+    return { kind, input: input as GamepadButtonInput };
+  }
+  if (kind === "trigger" && VALID_TRIGGER_SET.has(input)) {
+    return { kind, input: input as GamepadTriggerInput };
+  }
   return null;
 }
 
@@ -920,15 +925,19 @@ function inferControllerLayout(
 }
 
 function physicalInputLabel(
-  kind: PhysicalSource["kind"],
-  index: number,
+  source: PhysicalSource,
   controller: ControllerLayoutDefinition,
 ): string {
-  const prefix = kind === "button" ? "Button" : "Axis";
-  const names =
-    kind === "button" ? controller.buttonNames : controller.axisNames;
-  const name = names[index];
-  return name === undefined ? `${prefix} ${index}` : `${name}`;
+  if (source.kind === "button") {
+    return (
+      controller.buttonNames[source.input] ??
+      GENERIC_BUTTON_NAMES[source.input]
+    );
+  }
+  return (
+    controller.triggerNames[source.input] ??
+    GENERIC_TRIGGER_NAMES[source.input]
+  );
 }
 
 function controllerLayoutDefinition(
@@ -949,8 +958,6 @@ function PresetMappingEditor({
   const parsed = useMemo(() => parsePreset(value, variant), [value, variant]);
   const [listeningTarget, setListeningTarget] =
     useState<ButtonName | null>(null);
-  const [gamepadButtonCount, setGamepadButtonCount] = useState(16);
-  const [gamepadAxisCount, setGamepadAxisCount] = useState(6);
   const pressedAtStart = useRef<Set<number>>(new Set());
 
   const updateMapping = useCallback((changes: Record<string, unknown>) => {
@@ -965,20 +972,20 @@ function PresetMappingEditor({
       if (disabled || parsed.kind === "invalid") return;
       const nextButtons = Object.fromEntries(
         Object.entries(parsed.buttons).filter(
-          ([index, button]) =>
-            !(source?.kind === "button" && index === source.index) &&
+          ([inputName, button]) =>
+            !(source?.kind === "button" && inputName === source.input) &&
             button !== target,
         ),
       );
       const nextTriggers = Object.fromEntries(
         Object.entries(parsed.triggers).filter(
-          ([index, button]) =>
-            !(source?.kind === "trigger" && index === source.index) &&
+          ([inputName, button]) =>
+            !(source?.kind === "trigger" && inputName === source.input) &&
             button !== target,
         ),
       );
-      if (source?.kind === "button") nextButtons[source.index] = target;
-      if (source?.kind === "trigger") nextTriggers[source.index] = target;
+      if (source?.kind === "button") nextButtons[source.input] = target;
+      if (source?.kind === "trigger") nextTriggers[source.input] = target;
       updateMapping({ buttons: nextButtons, triggers: nextTriggers });
     },
     [disabled, parsed, updateMapping],
@@ -992,8 +999,6 @@ function PresetMappingEditor({
         (item) => item !== null,
       );
       if (gamepad !== undefined) {
-        setGamepadButtonCount(Math.max(16, gamepad.buttons.length));
-        setGamepadAxisCount(Math.max(6, gamepad.axes.length));
         const pressed = new Set<number>();
         gamepad.buttons.forEach((button, index) => {
           if (button.pressed) pressed.add(index);
@@ -1002,12 +1007,12 @@ function PresetMappingEditor({
           (index) => !pressedAtStart.current.has(index),
         );
         if (newlyPressed !== undefined) {
-          assign(listeningTarget, {
-            kind: "button",
-            index: String(newlyPressed),
-          });
-          setListeningTarget(null);
-          return;
+          const mapped = WEB_GAMEPAD_SOURCES[newlyPressed] ?? null;
+          if (mapped !== null) {
+            assign(listeningTarget, mapped);
+            setListeningTarget(null);
+            return;
+          }
         }
         pressedAtStart.current = pressed;
       }
@@ -1026,10 +1031,6 @@ function PresetMappingEditor({
         button.pressed ? [index] : [],
       ) ?? [],
     );
-    if (gamepad !== undefined) {
-      setGamepadButtonCount(Math.max(16, gamepad.buttons.length));
-      setGamepadAxisCount(Math.max(6, gamepad.axes.length));
-    }
     setListeningTarget(target);
   };
 
@@ -1041,14 +1042,6 @@ function PresetMappingEditor({
     );
   }
 
-  const buttonOptions = Array.from(
-    { length: gamepadButtonCount },
-    (_, index) => index,
-  );
-  const axisOptions = Array.from(
-    { length: gamepadAxisCount },
-    (_, index) => index,
-  );
   const controllerLayout = inferControllerLayout(parsed.document);
   const controller = controllerLayoutDefinition(controllerLayout);
   const ControllerImage = controller.image;
@@ -1061,41 +1054,51 @@ function PresetMappingEditor({
   });
   function stickRow(side: StickSide) {
     if (parsed.kind !== "valid") return null;
-    const key = `${side}_stick`;
-    const stick = stickMapping(parsed.mapping[key], STICK_AXES[side].x_axis);
-    const source = STICK_SIDES.find((option) =>
-      stick.x_axis === STICK_AXES[option].x_axis && stick.y_axis === STICK_AXES[option].y_axis,
-    );
+    const rawSticks = isMappingObject(parsed.mapping.sticks)
+      ? parsed.mapping.sticks
+      : {};
+    const current = rawSticks[side];
+    const source: StickSide | undefined =
+      current === "left" || current === "right"
+        ? current
+        : current === undefined
+          ? side
+          : undefined;
     const OutputIcon = STICK_ICONS.switch[side];
     const SourceIcon = source ? STICK_ICONS[controllerLayout][source] : GenericStick;
     const label = STICK_NAMES[side];
 
     return (
-      <div key={key} className="flex w-fit items-center gap-2 rounded-lg p-1.5">
+      <div key={side} className="flex w-fit items-center gap-2 rounded-lg p-1.5">
         <span title={label} className="flex size-8 shrink-0 items-center justify-center text-primary-foreground">
           <OutputIcon className="size-7" aria-hidden="true" />
         </span>
         <ArrowLeftIcon aria-hidden="true" weight="bold" className="size-4 shrink-0 text-primary-foreground" />
         <Select
-          value={source ?? "custom"}
+          value={source ?? ""}
           disabled={disabled || listeningTarget !== null}
           onValueChange={(value) => {
-            const next = STICK_SIDES.find((option) => option === value);
-            if (next) updateMapping({ [key]: { ...stick, ...STICK_AXES[next] } });
+            const next = STICK_SIDES.find((option) => option === value) ?? null;
+            updateMapping({ sticks: { ...rawSticks, [side]: next } });
           }}
         >
           <SelectTrigger
             size="sm"
             aria-label={`Physical stick for ${label.toLowerCase()}`}
-            title={`${label} maps to ${source ? STICK_NAMES[source].toLowerCase() : "a custom stick"}`}
+            title={`${label} maps to ${source ? STICK_NAMES[source].toLowerCase() : "none"}`}
             className={MAPPING_TRIGGER_CLASS}
           >
             <SelectValue>
-              <SourceIcon className="size-5" aria-hidden="true" />
+              {source ? (
+                <SourceIcon className="size-5" aria-hidden="true" />
+              ) : (
+                <MinusIcon className="size-5" aria-hidden="true" />
+              )}
             </SelectValue>
           </SelectTrigger>
           <SelectContent align="start" className="w-50">
             <SelectGroup>
+              <SelectItem value="">None</SelectItem>
               <SelectLabel>Sticks</SelectLabel>
               {STICK_SIDES.map((option) => {
                 const OptionIcon = STICK_ICONS[controllerLayout][option];
@@ -1106,12 +1109,6 @@ function PresetMappingEditor({
                   </SelectItem>
                 );
               })}
-              {!source && (
-                <SelectItem value="custom">
-                  <GenericStick className="size-5" aria-hidden="true" />
-                  Custom stick
-                </SelectItem>
-              )}
             </SelectGroup>
           </SelectContent>
         </Select>
@@ -1171,8 +1168,7 @@ function PresetMappingEditor({
               source === null
                 ? `${BUTTON_LABELS[target]} is not mapped`
                 : `${BUTTON_LABELS[target]} maps to ${physicalInputLabel(
-                    source.kind,
-                    Number(source.index),
+                    source,
                     controller,
                   )}`
             }
@@ -1192,30 +1188,26 @@ function PresetMappingEditor({
             </SelectGroup>
             <SelectGroup>
               <SelectLabel>Buttons</SelectLabel>
-              {buttonOptions.map((index) => {
-                const OptionIcon = physicalInputIcon(
-                  { kind: "button", index: String(index) },
-                  controllerLayout,
-                );
+              {GAMEPAD_BUTTON_INPUTS.map((input) => {
+                const option: PhysicalSource = { kind: "button", input };
+                const OptionIcon = physicalInputIcon(option, controllerLayout);
                 return (
-                  <SelectItem key={index} value={`button:${index}`}>
+                  <SelectItem key={input} value={`button:${input}`}>
                     <OptionIcon className="size-5" />
-                    {physicalInputLabel("button", index, controller)}
+                    {physicalInputLabel(option, controller)}
                   </SelectItem>
                 );
               })}
             </SelectGroup>
             <SelectGroup>
-              <SelectLabel>Trigger axes</SelectLabel>
-              {axisOptions.map((index) => {
-                const OptionIcon = physicalInputIcon(
-                  { kind: "trigger", index: String(index) },
-                  controllerLayout,
-                );
+              <SelectLabel>Triggers</SelectLabel>
+              {GAMEPAD_TRIGGER_INPUTS.map((input) => {
+                const option: PhysicalSource = { kind: "trigger", input };
+                const OptionIcon = physicalInputIcon(option, controllerLayout);
                 return (
-                  <SelectItem key={index} value={`trigger:${index}`}>
+                  <SelectItem key={input} value={`trigger:${input}`}>
                     <OptionIcon className="size-5" />
-                    {physicalInputLabel("trigger", index, controller)}
+                    {physicalInputLabel(option, controller)}
                   </SelectItem>
                 );
               })}

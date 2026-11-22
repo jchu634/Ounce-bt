@@ -280,17 +280,18 @@ export function ConnectionPanel({ onEditPreset }: { onEditPreset: (preset: Prese
 
   const legacyMapping: MappingSettings = {
     available: controller.available,
-    options: controller.controllers.map((pad) => ({ id: pad.guid, name: pad.name })),
-    active: controller.active,
+    options: controller.controllers.map((pad) => ({
+      id: pad.instance_id.toString(),
+      name: pad.name,
+    })),
+    active: controller.activeInfo?.instance_id.toString() ?? null,
     controllerGuid: controller.activeInfo?.guid ?? null,
     preset: controller.preset,
     error: controller.error,
     pending: controller.pending,
     macroMode: status?.mode === "macro",
-    allowUnassign: false,
-    selectController: (id) => {
-      if (id !== null) void controller.update({ kind: "selecting", id });
-    },
+    allowUnassign: true,
+    selectController: (id) => void controller.update({ kind: "selecting", id }),
     applyPreset: (preset) => void controller.update({ kind: "applying", preset }),
   };
 
