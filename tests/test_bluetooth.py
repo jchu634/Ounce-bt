@@ -21,7 +21,9 @@ from app.input.macro_source import MacroPlayerThread
 from app.main import SessionState, make_l2cap_handler, run_until_disconnected
 from lib.bluetooth_transport import WindowsUsbHost
 from lib.config import Config
-from lib.controller import ControllerVariant
+from lib.controller import ControllerTypes, ControllerVariant
+from lib.input.imu import ImuBuffer
+from lib.input.sdl3_backend import STANDARD_GRAVITY, ImuSample
 from lib.input.state import NEUTRAL, Button, ControllerState, apply_to_protocol
 from lib.switch_protocol import ControllerProtocol
 
@@ -807,5 +809,152 @@ def test_forget_all_disconnects_before_deleting_pairing_keys():
         await service.forget_all()
         connection.disconnect.assert_awaited_once()
         assert await device.keystore.get_all() == []
+
+    asyncio.run(scenario())
+
+
+def _fake_acl_channel():
+    class _State:
+        OPEN = "open"
+
+    class _Queue:
+        def __init__(self):
+            self.pending = 0
+
+    class _Channel:
+        State = _State
+        state = _State.OPEN
+
+        def __init__(self):
+            self.queue = _Queue()
+            self.connection = SimpleNamespace(data_packet_queue=self.queue)
+            self.sent: list[bytes] = []
+
+        def send_pdu(self, pdu: bytes) -> None:
+            self.sent.append(pdu)
+            self.queue.pending += 1
+
+    return _Channel()
+
+
+def test_mainloop_caps_imu_backlog_and_prioritizes_button_presses(monkeypatch):
+    async def scenario():
+        protocol = ControllerProtocol(ControllerTypes.PRO_CONTROLLER, ADDRESS)
+        protocol.device_info_queried = True
+        protocol.imu_enabled = True
+        channel = _fake_acl_channel()
+        imu_buffer = ImuBuffer()
+        command_queue = queue.Queue()
+        stop = asyncio.Event()
+        now = [100.0]
+        tick = [0]
+
+        monkeypatch.setattr("app.main.perf_counter", lambda: now[0])
+
+        async def advance(_delay):
+            tick[0] += 1
+            now[0] += 0.020
+            # Push distinct IMU samples every tick to simulate continuous gyro noise.
+            imu_buffer.push([ImuSample((0.0, STANDARD_GRAVITY, 0.0), (0.05 * tick[0], 0.0, 0.0), tick[0])])
+            if tick[0] == 1:
+                # Tick 1: initial report is still unacknowledged (pending == 1);
+                # verify IMU-only updates do not queue behind it.
+                assert channel.queue.pending == 1
+            elif tick[0] == 3:
+                # After multiple congested ticks with continuous IMU noise, backlog stays capped at 1.
+                assert len(channel.sent) == 1
+                assert channel.queue.pending == 1
+                # Pressing Button A immediately takes the reserved priority slot (pending 1 -> 2).
+                command_queue.put(ControllerState(Button.A))
+            elif tick[0] == 4:
+                assert len(channel.sent) == 2
+                assert int.from_bytes(channel.sent[-1][4:7], "little") == int(Button.A)
+                assert channel.queue.pending == 2
+                # While pending == 2, intermediate state Button.X is deferred/coalesced.
+                command_queue.put(ControllerState(Button.X))
+            elif tick[0] == 5:
+                assert len(channel.sent) == 2
+                # Replace with latest state Button.B and ACK one in-flight packet.
+                command_queue.put(ControllerState(Button.B))
+                channel.queue.pending -= 1
+            elif tick[0] == 6:
+                assert len(channel.sent) == 3
+                assert int.from_bytes(channel.sent[-1][4:7], "little") == int(Button.B)
+                stop.set()
+
+        monkeypatch.setattr("app.main.asyncio.sleep", advance)
+        imu_buffer.push([ImuSample((0.0, STANDARD_GRAVITY, 0.0), (0.01, 0.0, 0.0), 0)])
+        await application.run_mainloop(
+            protocol,
+            channel,
+            asyncio.Queue(),
+            stop,
+            command_queue,
+            imu_source=SimpleNamespace(read_imu_since=imu_buffer.read_since),
+        )
+
+    asyncio.run(scenario())
+
+
+def test_mainloop_subcommand_reply_bypasses_acl_backpressure(monkeypatch):
+    async def scenario():
+        protocol = ControllerProtocol(ControllerTypes.PRO_CONTROLLER, ADDRESS)
+        protocol.device_info_queried = True
+        channel = _fake_acl_channel()
+        channel.queue.pending = 4  # Link already above control cap.
+        incoming = asyncio.Queue()
+        request = bytes.fromhex("A2 01 00 00 00 00 00 00 00 00 00 30 01").ljust(50, b"\x00")
+        incoming.put_nowait(request)
+        stop = asyncio.Event()
+
+        async def advance(_delay):
+            stop.set()
+
+        monkeypatch.setattr("app.main.asyncio.sleep", advance)
+        await application.run_mainloop(
+            protocol,
+            channel,
+            incoming,
+            stop,
+            queue.Queue(),
+        )
+        assert len(channel.sent) == 1
+        assert channel.sent[0][1] == 0x21
+
+    asyncio.run(scenario())
+
+
+def test_mainloop_sleep_accounts_only_for_work_not_prior_sleep(monkeypatch):
+    async def scenario():
+        protocol = ControllerProtocol(ControllerTypes.PRO_CONTROLLER, ADDRESS)
+        channel = _fake_acl_channel()
+        stop = asyncio.Event()
+        now = [10.0]
+        sleeps: list[float] = []
+
+        def fake_clock():
+            # Each tick's work consumes 0.5 ms.
+            now[0] += 0.00025
+            return now[0]
+
+        async def advance(delay):
+            sleeps.append(delay)
+            # Simulate a 2 ms Windows timer overshoot on every sleep.
+            now[0] += delay + 0.002
+            if len(sleeps) >= 3:
+                stop.set()
+
+        monkeypatch.setattr("app.main.perf_counter", fake_clock)
+        monkeypatch.setattr("app.main.asyncio.sleep", advance)
+        await application.run_mainloop(
+            protocol,
+            channel,
+            asyncio.Queue(),
+            stop,
+            queue.Queue(),
+            tick_rate_hz=100,
+        )
+        assert len(sleeps) == 3
+        assert all(delay > 0.008 for delay in sleeps)
 
     asyncio.run(scenario())

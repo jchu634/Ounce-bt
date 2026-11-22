@@ -24,7 +24,7 @@ from bumble.pairing import PairingConfig, PairingDelegate
 from starlette.applications import Starlette
 
 from app.bluetooth import AdapterSession, configure_adapter_outputs
-from app.input.controller_service import ControllerService
+from app.input.controller_service import ControllerService, LatestInput
 from app.input.macro_source import MacroPlayerThread
 from app.input.manager import InputManager
 from app.server import build_app
@@ -64,8 +64,22 @@ HID_CONTROL_PSM = 0x0011
 HID_INTERRUPT_PSM = 0x0013
 TICK_RATE_HZ = 132
 IMU_REPORT_INTERVAL_SECONDS = 0.015
+# Cap unacknowledged ACL packets per adapter so continuous IMU or stick traffic
+# cannot build an unbounded FIFO backlog in Bumble or the adapter's TX buffers.
+# Keeping IMU-only reports at <= 1 in flight always leaves a priority slot for
+# button/stick transitions while still allowing full 66.7 Hz IMU on clean links.
+MAX_PENDING_IMU_PACKETS = 1
+MAX_PENDING_CONTROL_PACKETS = 2
 
 logger = logging.getLogger("switch_pair")
+
+
+def _pending_acl_packets(interrupt_channel) -> int:
+    """Return unacknowledged ACL packets on this channel's link (0 if unknown)."""
+    connection = getattr(interrupt_channel, "connection", None)
+    packet_queue = getattr(connection, "data_packet_queue", None)
+    pending = getattr(packet_queue, "pending", 0)
+    return pending if type(pending) is int and pending > 0 else 0
 
 
 def setup_logging(bumble_logging: bool = True):
@@ -203,8 +217,9 @@ async def run_mainloop(
     """
     tick = 0
     cached = None
+    cached_controls = None
     latest_state: ControllerState = NEUTRAL
-    duration_start = perf_counter()
+    tick_period = 1.0 / tick_rate_hz
     imu_cursor = 0
     next_imu_at = 0.0
     last_imu_active: bool | None = None
@@ -213,6 +228,7 @@ async def run_mainloop(
 
     try:
         while not stop_event.is_set():
+            tick_start = perf_counter()
             if (
                 not interrupt_channel
                 or interrupt_channel.state != interrupt_channel.State.OPEN
@@ -239,7 +255,24 @@ async def run_mainloop(
             if player_changed and protocol.player_number != previous_player:
                 player_changed(protocol.player_number)
 
+            # Apply the latest input state (buttons + sticks) to the report.
+            state = mix_manual_input(latest_state) if mix_manual_input else latest_state
+            if output_input is not None:
+                state = output_input(state)
+            if pairing_grip is not None:
+                state = pairing_grip(protocol, state)
+            apply_to_protocol(protocol, state)
+
+            is_subcommand_reply = protocol.report[1] == 0x21
+            report_controls = bytes(protocol.report[3:14])
+            controls_changed = report_controls != cached_controls
+            pending = _pending_acl_packets(interrupt_channel)
+            can_send_control = controls_changed and pending < MAX_PENDING_CONTROL_PACKETS
+            can_send_imu = pending < MAX_PENDING_IMU_PACKETS
+
             # Update IMU payload on a 15 ms (~66.7 Hz) cadence matching Switch 3x5ms framing.
+            # Only consume fresh samples when the link has ACL headroom to transmit them so
+            # congested links coalesce motion instead of building an unbounded FIFO backlog.
             resolved_imu = imu_source_getter() if imu_source_getter is not None else imu_source
             if resolved_imu is not active_imu_source:
                 active_imu_source = resolved_imu
@@ -252,7 +285,11 @@ async def run_mainloop(
                 last_imu_active = imu_on
             if imu_on and resolved_imu is not None:
                 now = perf_counter()
-                if now >= next_imu_at:
+                if (
+                    now >= next_imu_at
+                    and not is_subcommand_reply
+                    and (can_send_control or can_send_imu)
+                ):
                     imu_cursor, samples = resolved_imu.read_imu_since(imu_cursor)
                     if samples:
                         protocol.set_imu_inputs(
@@ -265,14 +302,6 @@ async def run_mainloop(
                     next_imu_at = now + IMU_REPORT_INTERVAL_SECONDS
             elif not imu_on:
                 protocol.set_imu_inputs(None)
-
-            # Apply the latest input state (buttons + sticks) to the report.
-            state = mix_manual_input(latest_state) if mix_manual_input else latest_state
-            if output_input is not None:
-                state = output_input(state)
-            if pairing_grip is not None:
-                state = pairing_grip(protocol, state)
-            apply_to_protocol(protocol, state)
 
             report = protocol.get_report()
 
@@ -297,12 +326,23 @@ async def run_mainloop(
                     if rumble is not None:
                         resolved_rumble.set_rumble(rumble)
 
+            imu_changed = report[3:] != cached
+            if is_subcommand_reply:
+                should_send = True
+            elif controls_changed:
+                should_send = can_send_control
+            elif imu_changed:
+                should_send = can_send_imu
+            elif tick >= tick_rate_hz:
+                should_send = pending == 0
+            else:
+                should_send = False
+
             try:
-                if report[3:] != cached:
+                if should_send:
                     interrupt_channel.send_pdu(report)
-                    cached = report[3:]
-                elif tick >= tick_rate_hz:
-                    interrupt_channel.send_pdu(report)
+                    cached_controls = report_controls
+                    cached = None if is_subcommand_reply else report[3:]
                     tick = 0
             except Exception as e:
                 logger.warning(f"Failed to send report: {e}")
@@ -311,11 +351,8 @@ async def run_mainloop(
             tick += 1
 
             # Maintain the target tick rate, accounting for processing time.
-            duration_end = perf_counter()
-            elapsed = duration_end - duration_start
-            duration_start = duration_end
-            sleep_time = max(0.0, 1 / tick_rate_hz - elapsed)
-            await asyncio.sleep(sleep_time)
+            elapsed = perf_counter() - tick_start
+            await asyncio.sleep(max(0.0, tick_period - elapsed))
 
     finally:
         if on_imu_active is not None:
@@ -600,7 +637,7 @@ async def main(
     logger.info(f"Config path: {config_path()}")
     logger.info(f"Config: {config_store.snapshot()}")
 
-    command_queue: queue.Queue[ControllerState] = queue.Queue()
+    command_queue = LatestInput()
     manager = InputManager(
         command_queue,
         config.resolve_folder(config.macros_dir),
