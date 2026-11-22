@@ -1,0 +1,112 @@
+{
+  "version": 2,
+  "name": "Steam",
+  "description": "Default Steam Controller / Steam Deck mapping",
+  "controller_layout": "steam_deck",
+  "rumble_enabled": true,
+  "motion_enabled": true,
+  "mappings": {
+    "pro": {
+      "buttons": {
+        "south": "B",
+        "east": "A",
+        "west": "Y",
+        "north": "X",
+        "left_shoulder": "L",
+        "right_shoulder": "R",
+        "back": "MINUS",
+        "start": "PLUS",
+        "left_stick": "STICK_L",
+        "right_stick": "STICK_R",
+        "guide": "HOME",
+        "misc1": "CAPTURE",
+        "dpad_up": "UP",
+        "dpad_down": "DOWN",
+        "dpad_left": "LEFT",
+        "dpad_right": "RIGHT"
+      },
+      "triggers": {
+        "left_trigger": "ZL",
+        "right_trigger": "ZR"
+      },
+      "sticks": {
+        "left": "left",
+        "right": "right"
+      }
+    },
+    "joycon_l": {
+      "buttons": {
+        "south": "LEFT",
+        "east": "DOWN",
+        "west": "UP",
+        "north": "RIGHT",
+        "left_shoulder": "SL",
+        "right_shoulder": "SR",
+        "back": "MINUS",
+        "start": "MINUS",
+        "left_stick": "STICK_L",
+        "guide": "CAPTURE",
+        "misc1": "CAPTURE"
+      },
+      "triggers": {
+        "left_trigger": "ZL",
+        "right_trigger": "L"
+      },
+      "sticks": {
+        "left": "left",
+        "right": null
+      }
+    },
+    "joycon_r": {
+      "buttons": {
+        "south": "A",
+        "east": "X",
+        "west": "B",
+        "north": "Y",
+        "left_shoulder": "SL",
+        "right_shoulder": "SR",
+        "back": "PLUS",
+        "start": "PLUS",
+        "left_stick": "STICK_R",
+        "right_stick": "STICK_R",
+        "guide": "HOME"
+      },
+      "triggers": {
+        "left_trigger": "R",
+        "right_trigger": "ZR"
+      },
+      "sticks": {
+        "left": null,
+        "right": "left"
+      }
+    },
+    "combined": {
+      "buttons": {
+        "south": "B",
+        "east": "A",
+        "west": "Y",
+        "north": "X",
+        "left_shoulder": "L",
+        "right_shoulder": "R",
+        "back": "MINUS",
+        "start": "PLUS",
+        "left_stick": "STICK_L",
+        "right_stick": "STICK_R",
+        "guide": "HOME",
+        "misc1": "CAPTURE",
+        "dpad_up": "UP",
+        "dpad_down": "DOWN",
+        "dpad_left": "LEFT",
+        "dpad_right": "RIGHT"
+      },
+      "triggers": {
+        "left_trigger": "ZL",
+        "right_trigger": "ZR"
+      },
+      "sticks": {
+        "left": "left",
+        "right": "right"
+      }
+    }
+  }
+}

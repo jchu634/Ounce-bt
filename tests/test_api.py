@@ -611,7 +611,7 @@ def test_presets_list(fx):
         names = {p["name"] for p in r["presets"]}
         assert {"Xbox", "PlayStation", "Switch"} <= names
         filenames = {p["filename"] for p in r["presets"]}
-        assert {"xbox", "playstation", "switch"} <= filenames
+        assert {"xbox", "playstation", "switch", "steam"} <= filenames
         assert r["active"] == "xbox"
 
 

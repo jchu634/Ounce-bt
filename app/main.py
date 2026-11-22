@@ -493,7 +493,7 @@ def load_options():
     parser.add_argument(
         "--preset",
         default=None,
-        metavar="xbox|playstation|switch|<path.json>",
+        metavar="xbox|playstation|switch|steam|<path.json>",
         help="controller mapping preset name or path to a JSON preset file "
         "(default: from config, or xbox)",
     )

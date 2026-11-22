@@ -18,7 +18,7 @@ logger = logging.getLogger("switch_pair")
 
 BUILTIN_PRESETS_DIR = Path(__file__).resolve().parents[2] / "presets"
 PRESETS_DIR = BUILTIN_PRESETS_DIR
-BUILTIN_PRESETS = frozenset({"xbox", "playstation", "switch"})
+BUILTIN_PRESETS = frozenset({"xbox", "playstation", "switch", "steam"})
 PRESET_VERSION = 2
 
 VALID_BUTTON_INPUTS = frozenset(GAMEPAD_BUTTONS)
@@ -32,6 +32,7 @@ _VENDOR_PRESETS = {
     "5e04": "xbox",
     "4c05": "playstation",
     "7e05": "switch",
+    "de28": "steam",
 }
 
 _GAMEPAD_TYPE_PRESETS = {
@@ -308,6 +309,8 @@ def detect_controller_preset(
         for marker in ("switch", "joy-con", "joycon", "nintendo")
     ):
         return "switch"
+    if any(marker in normalized_name for marker in ("steam", "valve")):
+        return "steam"
     if any(marker in normalized_name for marker in ("xbox", "x-box", "xinput")):
         return "xbox"
 

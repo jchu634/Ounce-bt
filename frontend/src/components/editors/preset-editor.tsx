@@ -82,6 +82,55 @@ import {
   PlaystationTriggerR1,
   PlaystationTriggerR2,
 } from "@/src/assets/input-prompts/playstation";
+import {
+  ControllerIcon as SteamGuideIcon,
+  SteamButtonA,
+  SteamButtonB,
+  SteamButtonBackIcon,
+  SteamButtonStartIcon,
+  SteamButtonX,
+  SteamButtonY,
+  SteamDpadDown,
+  SteamDpadLeft,
+  SteamDpadRight,
+  SteamDpadUp,
+  SteamLb,
+  SteamLg,
+  SteamLt,
+  SteamPad,
+  SteamPadCenter,
+  SteamRb,
+  SteamRg,
+  SteamRt,
+  SteamStick,
+  SteamStickLPress,
+} from "@/src/assets/input-prompts/steam-controller";
+import {
+  SteamdeckButtonA,
+  SteamdeckButtonB,
+  SteamdeckButtonGuide,
+  SteamdeckButtonL1,
+  SteamdeckButtonL2,
+  SteamdeckButtonL4,
+  SteamdeckButtonL5,
+  SteamdeckButtonOptions,
+  SteamdeckButtonQuickaccess,
+  SteamdeckButtonR1,
+  SteamdeckButtonR2,
+  SteamdeckButtonR4,
+  SteamdeckButtonR5,
+  SteamdeckButtonView,
+  SteamdeckButtonX,
+  SteamdeckButtonY,
+  SteamdeckDpadDown,
+  SteamdeckDpadLeft,
+  SteamdeckDpadRight,
+  SteamdeckDpadUp,
+  SteamdeckStickL,
+  SteamdeckStickLPress,
+  SteamdeckStickR,
+  SteamdeckStickRPress,
+} from "@/src/assets/input-prompts/steam-deck";
 import { parseButtonName } from "@/src/lib/button-names";
 import { BUTTON_ICONS } from "@/src/assets/input-prompts/switch/button-icons";
 import { GenericStick } from "@/src/assets/input-prompts/generic";
@@ -710,6 +759,8 @@ const STICK_ICONS: Record<ControllerLayout, Record<StickSide, InputIcon>> = {
   switch: { left: SwitchStickL, right: SwitchStickR },
   xbox: { left: XboxStickL, right: XboxStickR },
   playstation: { left: PlaystationStickL, right: PlaystationStickR },
+  steam_controller: { left: SteamStick, right: SteamPad },
+  steam_deck: { left: SteamdeckStickL, right: SteamdeckStickR },
 };
 
 const CONTROLLER_BUTTON_ICONS: Partial<
@@ -762,6 +813,47 @@ const CONTROLLER_BUTTON_ICONS: Partial<
     dpad_left: PlaystationDpadLeft,
     dpad_right: PlaystationDpadRight,
   },
+  steam_controller: {
+    south: SteamButtonA,
+    east: SteamButtonB,
+    west: SteamButtonX,
+    north: SteamButtonY,
+    back: SteamButtonBackIcon,
+    guide: SteamGuideIcon,
+    start: SteamButtonStartIcon,
+    left_stick: SteamStickLPress,
+    right_stick: SteamPadCenter,
+    left_shoulder: SteamLb,
+    right_shoulder: SteamRb,
+    dpad_up: SteamDpadUp,
+    dpad_down: SteamDpadDown,
+    dpad_left: SteamDpadLeft,
+    dpad_right: SteamDpadRight,
+    left_paddle1: SteamLg,
+    right_paddle1: SteamRg,
+  },
+  steam_deck: {
+    south: SteamdeckButtonA,
+    east: SteamdeckButtonB,
+    west: SteamdeckButtonX,
+    north: SteamdeckButtonY,
+    back: SteamdeckButtonView,
+    guide: SteamdeckButtonGuide,
+    start: SteamdeckButtonOptions,
+    misc1: SteamdeckButtonQuickaccess,
+    left_stick: SteamdeckStickLPress,
+    right_stick: SteamdeckStickRPress,
+    left_shoulder: SteamdeckButtonL1,
+    right_shoulder: SteamdeckButtonR1,
+    dpad_up: SteamdeckDpadUp,
+    dpad_down: SteamdeckDpadDown,
+    dpad_left: SteamdeckDpadLeft,
+    dpad_right: SteamdeckDpadRight,
+    left_paddle1: SteamdeckButtonL4,
+    right_paddle1: SteamdeckButtonR4,
+    left_paddle2: SteamdeckButtonL5,
+    right_paddle2: SteamdeckButtonR5,
+  },
 };
 
 const CONTROLLER_TRIGGER_ICONS: Partial<
@@ -779,6 +871,14 @@ const CONTROLLER_TRIGGER_ICONS: Partial<
     left_trigger: PlaystationTriggerL2,
     right_trigger: PlaystationTriggerR2,
   },
+  steam_controller: {
+    left_trigger: SteamLt,
+    right_trigger: SteamRt,
+  },
+  steam_deck: {
+    left_trigger: SteamdeckButtonL2,
+    right_trigger: SteamdeckButtonR2,
+  },
 };
 
 function physicalInputIcon(
@@ -795,7 +895,9 @@ const isControllerLayout = (value: unknown): value is ControllerLayout =>
   value === "generic" ||
   value === "switch" ||
   value === "xbox" ||
-  value === "playstation";
+  value === "playstation" ||
+  value === "steam_controller" ||
+  value === "steam_deck";
 
 const MAPPING_FIELDS: ReadonlyArray<"buttons" | "triggers"> = [
   "buttons",
@@ -920,6 +1022,12 @@ function inferControllerLayout(
     identity.includes("nintendo")
   ) {
     return "switch";
+  }
+  if (identity.includes("steam deck") || identity.includes("steamdeck")) {
+    return "steam_deck";
+  }
+  if (identity.includes("steam") || identity.includes("valve")) {
+    return "steam_controller";
   }
   return "xbox";
 }

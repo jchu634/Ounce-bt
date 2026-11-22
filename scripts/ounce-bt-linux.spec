@@ -32,7 +32,7 @@ datas = [
 ]
 datas += [
     (str(root / "presets" / f"{name}.json"), "presets")
-    for name in ("xbox", "playstation", "switch")
+    for name in ("xbox", "playstation", "switch", "steam")
 ]
 datas += (
     collect_data_files("webview")

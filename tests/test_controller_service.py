@@ -90,11 +90,20 @@ def test_controller_type_detection_uses_sdl_type_name_and_vendor_guid():
     assert detect_controller_preset("DualSense Wireless Controller") == "playstation"
     assert detect_controller_preset("Sony Interactive Entertainment Pad") == "playstation"
     assert detect_controller_preset("Nintendo Switch Pro Controller") == "switch"
+    assert detect_controller_preset("Steam Controller") == "steam"
+    assert detect_controller_preset("Steam Deck") == "steam"
+    assert detect_controller_preset("Valve Software Steam Virtual Gamepad") == "steam"
     assert (
         detect_controller_preset(
             "Wireless Controller", "030000004c050000cc09000000000000"
         )
         == "playstation"
+    )
+    assert (
+        detect_controller_preset(
+            "Wireless Controller", "03000000de2800000512000000000000"
+        )
+        == "steam"
     )
 
 

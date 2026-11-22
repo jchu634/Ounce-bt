@@ -66,6 +66,7 @@ try
             '--include-data-files=presets/xbox.json=presets/xbox.json',
             '--include-data-files=presets/playstation.json=presets/playstation.json',
             '--include-data-files=presets/switch.json=presets/switch.json',
+            '--include-data-files=presets/steam.json=presets/steam.json',
             '--report=build/windows/nuitka-report.xml',
             'main.py'
         )

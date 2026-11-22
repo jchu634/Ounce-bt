@@ -38,7 +38,7 @@ from lib.input.state import NEUTRAL, Button, ControllerState
         (frozenset({"south", "east"}), {}, (0.0, 0.0), (0.0, 0.0), ControllerState(Button.B | Button.A)),
     ],
 )
-@pytest.mark.parametrize("preset_name", ["xbox", "playstation", "switch"])
+@pytest.mark.parametrize("preset_name", ["xbox", "playstation", "switch", "steam"])
 def test_builtin_presets_map_canonical_sdl3_inputs(
     preset_name, buttons, triggers, left, right, expected
 ):

@@ -2,6 +2,8 @@ import type { ComponentType, SVGProps } from "react";
 import PlayStation5Controller from "@/src/assets/controllers/PlayStation5Controller";
 import SwitchProController from "@/src/assets/controllers/SwitchProController";
 import XboxSeriesController from "@/src/assets/controllers/XboxSeriesController";
+import { ControllerSteam } from "@/src/assets/input-prompts/steam-controller";
+import { ControllerSteamdeck } from "@/src/assets/input-prompts/steam-deck";
 
 export const GAMEPAD_BUTTON_INPUTS = [
   "south",
@@ -35,7 +37,13 @@ export const GAMEPAD_TRIGGER_INPUTS = [
 export type GamepadButtonInput = (typeof GAMEPAD_BUTTON_INPUTS)[number];
 export type GamepadTriggerInput = (typeof GAMEPAD_TRIGGER_INPUTS)[number];
 
-export type ControllerLayout = "generic" | "switch" | "xbox" | "playstation";
+export type ControllerLayout =
+  | "generic"
+  | "switch"
+  | "xbox"
+  | "playstation"
+  | "steam_controller"
+  | "steam_deck";
 export type ControllerLayoutDefinition = {
   value: ControllerLayout;
   label: string;
@@ -161,6 +169,65 @@ export const CONTROLLER_LAYOUTS: readonly ControllerLayoutDefinition[] = [
       dpad_right: "D-pad right",
       touchpad: "Touchpad",
       misc1: "Mute",
+    },
+    triggerNames: {
+      left_trigger: "L2",
+      right_trigger: "R2",
+    },
+  },
+  {
+    value: "steam_controller",
+    label: "Steam Controller",
+    image: ControllerSteam,
+    buttonNames: {
+      south: "A",
+      east: "B",
+      west: "X",
+      north: "Y",
+      left_shoulder: "LB",
+      right_shoulder: "RB",
+      back: "Back",
+      start: "Start",
+      left_stick: "Left stick click",
+      right_stick: "Right pad click",
+      guide: "Steam",
+      dpad_up: "Left pad up",
+      dpad_down: "Left pad down",
+      dpad_left: "Left pad left",
+      dpad_right: "Left pad right",
+      left_paddle1: "Left grip",
+      right_paddle1: "Right grip",
+    },
+    triggerNames: {
+      left_trigger: "LT",
+      right_trigger: "RT",
+    },
+  },
+  {
+    value: "steam_deck",
+    label: "Steam Deck",
+    image: ControllerSteamdeck,
+    buttonNames: {
+      south: "A",
+      east: "B",
+      west: "X",
+      north: "Y",
+      left_shoulder: "L1",
+      right_shoulder: "R1",
+      back: "View",
+      start: "Menu",
+      left_stick: "L3",
+      right_stick: "R3",
+      guide: "Steam",
+      misc1: "Quick Access",
+      dpad_up: "D-pad up",
+      dpad_down: "D-pad down",
+      dpad_left: "D-pad left",
+      dpad_right: "D-pad right",
+      left_paddle1: "L4",
+      right_paddle1: "R4",
+      left_paddle2: "L5",
+      right_paddle2: "R5",
     },
     triggerNames: {
       left_trigger: "L2",
