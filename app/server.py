@@ -6,6 +6,7 @@ import asyncio
 import logging
 import secrets
 import sys
+from functools import partial
 from pathlib import Path
 
 from starlette.applications import Starlette
@@ -296,7 +297,7 @@ def _dispatch_macro(
                 and session.combined_input_mode == "individual"
             ):
                 side_type = session.bluetooth.controller_type.bluetooth_type
-                state_filter = lambda state, ct=side_type: filter_joycon_state(state, ct)
+                state_filter = partial(filter_joycon_state, controller_type=side_type)
             manager.start_macro(macro, variant=variant, state_filter=state_filter)
     else:
         for manager, _session in targets:
