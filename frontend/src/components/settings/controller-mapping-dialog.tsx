@@ -38,6 +38,7 @@ export type MappingSettings = {
   controllerGuid: string | null;
   hasGyro?: boolean;
   preset: string | null;
+  presetLabel?: string;
   pending: "selecting" | "applying" | null;
   error: string | null;
   macroMode: boolean;
@@ -169,22 +170,16 @@ function MappingControls({
   onEditPreset: (preset: PresetInfo) => void;
 }) {
   const {
-    available,
-    options,
-    active,
     controllerGuid,
     hasGyro,
     preset,
+    presetLabel,
     pending,
     error,
     macroMode,
-    allowUnassign,
-    selectController,
     applyPreset,
     partnerPreset,
   } = controller;
-  const activeName = options.find((option) => option.id === active)?.name;
-  const selection = active ?? (allowUnassign ? "unassigned" : null);
   const [presets, setPresets] = useState<Effect.Success<
     ReturnType<typeof listPresets>
   > | null>(null);
@@ -221,140 +216,181 @@ function MappingControls({
   return (
     <div className="space-y-4" aria-busy={changing}>
       <div className="space-y-3">
-        <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1">
-          <p className="text-sm font-medium">Controller</p>
-          <Select
-            value={selection}
-            disabled={
-              !available || options.length === 0 || changing || macroMode
-            }
-            onValueChange={(value) => {
-              if (value !== null && value !== selection)
-                selectController(value === "unassigned" ? null : value);
-            }}
-          >
-            <SelectTrigger
-              className="w-full min-w-0"
-              aria-label="Select controller"
-            >
-              <SelectValue placeholder="No controller selected">
-                {activeName ?? (allowUnassign ? "No controller" : null)}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {allowUnassign && (
-                <SelectItem value="unassigned">No controller</SelectItem>
+        {partnerPreset ? (
+          <div className="space-y-2">
+            <h3 className="text-sm font-medium">Mapped preset</h3>
+            <div className="space-y-2">
+              <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1">
+                <p className="pl-2 text-sm text-muted-foreground">
+                  {presetLabel ?? "Mapping preset"}
+                </p>
+                <div className="flex min-w-0 items-center gap-1">
+                  <Select
+                    value={activePreset?.filename ?? null}
+                    disabled={
+                      changing ||
+                      macroMode ||
+                      !!loadError ||
+                      !presets?.presets.length
+                    }
+                    onValueChange={(value) => {
+                      if (value !== null && value !== activePreset?.filename) {
+                        applyPreset(value);
+                      }
+                    }}
+                  >
+                    <SelectTrigger
+                      className="w-full min-w-0"
+                      aria-label={presetLabel ?? "Mapping preset"}
+                    >
+                      <SelectValue
+                        placeholder={
+                          presets || loadError
+                            ? "No preset selected"
+                            : "Loading presets…"
+                        }
+                      >
+                        {activePreset ? (
+                          <span className="truncate">{activePreset.name}</span>
+                        ) : null}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {presets?.presets.map((entry) => (
+                          <SelectItem key={entry.filename} value={entry.filename}>
+                            {entry.name}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="action-hover"
+                    aria-label={`Edit ${(presetLabel ?? "mapping preset").toLowerCase()}`}
+                    title={`Edit ${(presetLabel ?? "mapping preset").toLowerCase()}`}
+                    disabled={!activePreset || changing}
+                    onClick={() => {
+                      if (activePreset) onEditPreset(activePreset);
+                    }}
+                  >
+                    <PencilSimpleIcon />
+                  </Button>
+                </div>
+              </div>
+              <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1">
+                <p className="pl-2 text-sm text-muted-foreground">
+                  {partnerPreset.label}
+                </p>
+                <div className="flex min-w-0 items-center gap-1">
+                  <Select
+                    value={activePartnerPreset?.filename ?? null}
+                    disabled={
+                      changing ||
+                      partnerPreset.macroMode ||
+                      !!loadError ||
+                      !presets?.presets.length
+                    }
+                    onValueChange={(value) => {
+                      if (
+                        value !== null &&
+                        value !== activePartnerPreset?.filename
+                      ) {
+                        partnerPreset.applyPreset(value);
+                      }
+                    }}
+                  >
+                    <SelectTrigger
+                      className="w-full min-w-0"
+                      aria-label={partnerPreset.label}
+                    >
+                      <SelectValue
+                        placeholder={
+                          presets || loadError
+                            ? "No preset selected"
+                            : "Loading presets…"
+                        }
+                      >
+                        {activePartnerPreset ? (
+                          <span className="truncate">
+                            {activePartnerPreset.name}
+                          </span>
+                        ) : null}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {presets?.presets.map((entry) => (
+                          <SelectItem key={entry.filename} value={entry.filename}>
+                            {entry.name}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="action-hover"
+                    aria-label={`Edit ${partnerPreset.label.toLowerCase()}`}
+                    title={`Edit ${partnerPreset.label.toLowerCase()}`}
+                    disabled={!activePartnerPreset || changing}
+                    onClick={() => {
+                      if (activePartnerPreset)
+                        onEditPreset(activePartnerPreset);
+                    }}
+                  >
+                    <PencilSimpleIcon />
+                  </Button>
+                </div>
+              </div>
+              {loadError && (
+                <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-x-2">
+                  <div className="col-start-2 flex items-center justify-between gap-2">
+                    <p role="alert" className="text-sm text-destructive">
+                      {loadError}
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setPresets(null);
+                        setLoadError(null);
+                        setAttempt((current) => current + 1);
+                      }}
+                    >
+                      Retry
+                    </Button>
+                  </div>
+                </div>
               )}
-              {options.map((entry) => (
-                <SelectItem
-                  key={entry.id}
-                  value={entry.id}
-                  disabled={entry.disabled}
-                >
-                  {entry.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {!available && (
-            <p className="col-start-2 text-xs text-muted-foreground">
-              Controller service unavailable.
-            </p>
-          )}
-        </div>
-        <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1">
-          <p className="text-sm font-medium">Mapping preset</p>
-          <div className="flex min-w-0 items-center gap-1">
-            <Select
-              value={activePreset?.filename ?? null}
-              disabled={
-                changing || macroMode || !!loadError || !presets?.presets.length
-              }
-              onValueChange={(value) => {
-                if (value !== null && value !== activePreset?.filename) {
-                  applyPreset(value);
-                }
-              }}
-            >
-              <SelectTrigger
-                className="w-full min-w-0"
-                aria-label="Mapping preset"
-              >
-                <SelectValue
-                  placeholder={
-                    presets || loadError
-                      ? "No preset selected"
-                      : "Loading presets…"
-                  }
-                >
-                  {activePreset ? (
-                    <span className="truncate">{activePreset.name}</span>
-                  ) : null}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {presets?.presets.map((entry) => (
-                  <SelectItem key={entry.filename} value={entry.filename}>
-                    {entry.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              className="action-hover"
-              aria-label="Edit mapping preset"
-              title="Edit mapping preset"
-              disabled={!activePreset || changing}
-              onClick={() => {
-                if (activePreset) onEditPreset(activePreset);
-              }}
-            >
-              <PencilSimpleIcon />
-            </Button>
-          </div>
-          {loadError && (
-            <div className="col-start-2 flex items-center justify-between gap-2">
-              <p role="alert" className="text-sm text-destructive">
-                {loadError}
-              </p>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setPresets(null);
-                  setLoadError(null);
-                  setAttempt((current) => current + 1);
-                }}
-              >
-                Retry
-              </Button>
             </div>
-          )}
-        </div>
-        {partnerPreset && (
+          </div>
+        ) : (
           <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1">
-            <p className="text-sm font-medium">{partnerPreset.label}</p>
+            <p className="text-sm font-medium">Mapping preset</p>
             <div className="flex min-w-0 items-center gap-1">
               <Select
-                value={activePartnerPreset?.filename ?? null}
+                value={activePreset?.filename ?? null}
                 disabled={
                   changing ||
-                  partnerPreset.macroMode ||
+                  macroMode ||
                   !!loadError ||
                   !presets?.presets.length
                 }
                 onValueChange={(value) => {
-                  if (value !== null && value !== activePartnerPreset?.filename) {
-                    partnerPreset.applyPreset(value);
+                  if (value !== null && value !== activePreset?.filename) {
+                    applyPreset(value);
                   }
                 }}
               >
                 <SelectTrigger
                   className="w-full min-w-0"
-                  aria-label={partnerPreset.label}
+                  aria-label="Mapping preset"
                 >
                   <SelectValue
                     placeholder={
@@ -363,17 +399,19 @@ function MappingControls({
                         : "Loading presets…"
                     }
                   >
-                    {activePartnerPreset ? (
-                      <span className="truncate">{activePartnerPreset.name}</span>
+                    {activePreset ? (
+                      <span className="truncate">{activePreset.name}</span>
                     ) : null}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  {presets?.presets.map((entry) => (
-                    <SelectItem key={entry.filename} value={entry.filename}>
-                      {entry.name}
-                    </SelectItem>
-                  ))}
+                  <SelectGroup>
+                    {presets?.presets.map((entry) => (
+                      <SelectItem key={entry.filename} value={entry.filename}>
+                        {entry.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
                 </SelectContent>
               </Select>
               <Button
@@ -381,16 +419,34 @@ function MappingControls({
                 size="icon"
                 variant="ghost"
                 className="action-hover"
-                aria-label={`Edit ${partnerPreset.label.toLowerCase()}`}
-                title={`Edit ${partnerPreset.label.toLowerCase()}`}
-                disabled={!activePartnerPreset || changing}
+                aria-label="Edit mapping preset"
+                title="Edit mapping preset"
+                disabled={!activePreset || changing}
                 onClick={() => {
-                  if (activePartnerPreset) onEditPreset(activePartnerPreset);
+                  if (activePreset) onEditPreset(activePreset);
                 }}
               >
                 <PencilSimpleIcon />
               </Button>
             </div>
+            {loadError && (
+              <div className="col-start-2 flex items-center justify-between gap-2">
+                <p role="alert" className="text-sm text-destructive">
+                  {loadError}
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setPresets(null);
+                    setLoadError(null);
+                    setAttempt((current) => current + 1);
+                  }}
+                >
+                  Retry
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </div>

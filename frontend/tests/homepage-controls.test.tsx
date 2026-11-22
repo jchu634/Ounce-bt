@@ -282,8 +282,8 @@ it("keeps adapter settings scoped to the card and supports range selection", asy
     cards[1].querySelector('[data-region="body"]')?.getAttribute("fill"),
   ).toBe("#1122AA");
   expect(
-    container.querySelector('[aria-label="Select controller"]'),
-  ).toBeNull();
+    cards[0].querySelector('[aria-label="Select controller"]')?.textContent,
+  ).toContain("First Pad");
 
   const selectCard = button("Send manual and macro input through usb:1");
   await act(async () => selectCard.click());
@@ -309,12 +309,26 @@ it("keeps adapter settings scoped to the card and supports range selection", asy
   expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
     "usb:1",
   );
-  await chooseOption("Select controller", "Second Pad");
+  await act(async () => button("Close").click());
+  await act(async () =>
+    cards[1]
+      .querySelector<HTMLButtonElement>('[aria-label="Select controller"]')
+      ?.click(),
+  );
+  await act(async () => {
+    const option = Array.from(
+      document.querySelectorAll<HTMLElement>('[role="option"]'),
+    ).find((el) => el.textContent?.trim() === "Second Pad");
+    if (!option) throw new Error("Missing option: Second Pad");
+    option.click();
+  });
   expect(fetchRequest).toHaveBeenCalledWith(
     "/api/adapters/adapter-2/controller",
     expect.objectContaining({ body: JSON.stringify({ controller_id: 2 }) }),
   );
-  expect(cards[1].querySelector("h3")?.textContent).toBe("Second Pad");
+  expect(
+    cards[1].querySelector('[aria-label="Select controller"]')?.textContent,
+  ).toContain("Second Pad");
   expect(send).toHaveBeenCalledTimes(1);
 
   const firstCard = button("Send manual and macro input through usb:0");
@@ -717,7 +731,7 @@ it("opens controller settings and sends actions for the card’s saved profile",
   }
 
   expect(cardBodyColour()).toBe("#FF3344");
-  expect(container.querySelector("h3")?.parentElement?.textContent).toContain(
+  expect(container.querySelector("article")?.textContent).toContain(
     "Connected",
   );
   await act(async () => button("Edit controller colours").click());
@@ -768,7 +782,9 @@ it("opens controller settings and sends actions for the card’s saved profile",
       body: JSON.stringify({ controller_id: 2 }),
     }),
   );
-  expect(container.querySelector("h3")?.textContent).toBe("Second Gamepad");
+  expect(
+    container.querySelector('[aria-label="Select controller"]')?.textContent,
+  ).toContain("Second Gamepad");
   expect(button("Mapping preset").textContent).toContain("Xbox");
 
   const vibration = () =>
@@ -806,7 +822,9 @@ it("opens controller settings and sends actions for the card’s saved profile",
   expect(
     document.querySelector('[role="tabpanel"]:not([hidden])')?.textContent,
   ).toContain("Presets");
-  expect(document.querySelector('[aria-label="Select controller"]')).toBeNull();
+  expect(
+    document.querySelector('[role="dialog"] [aria-label="Select controller"]'),
+  ).toBeNull();
   await act(async () => button("Close").click());
 
   await act(async () => button("Delete Switch profile").click());
@@ -1119,23 +1137,27 @@ it("pairs and unpairs two Joy-Con adapters and switches between Combined and Ind
   expect(cards[1].querySelector('svg[viewBox="19 6 26 52"]')).not.toBeNull();
   expect(cards[2].querySelector('svg[viewBox="19 6 26 52"]')).not.toBeNull();
 
-  // Open Left Joy-Con dialog -> includes Joy-Con R preset dropdown.
+  // Open Left Joy-Con dialog -> includes Mapped preset heading and Joycon (L) / Joycon (R) dropdowns.
   await act(async () =>
     cards[1].querySelector<HTMLButtonElement>('[aria-label="Controller settings"]')?.click(),
   );
-  expect(button("Joy-Con R preset").textContent).toContain("PlayStation");
-  await chooseOption("Joy-Con R preset", "Xbox");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Mapped preset");
+  expect(button("Joycon (L)").textContent).toContain("Switch");
+  expect(button("Joycon (R)").textContent).toContain("PlayStation");
+  await chooseOption("Joycon (R)", "Xbox");
   expect(fetchRequest).toHaveBeenCalledWith(
     "/api/adapters/adapter-3/preset/xbox",
     expect.objectContaining({ method: "POST" }),
   );
   await act(async () => button("Close").click());
 
-  // Open Right Joy-Con dialog -> includes Joy-Con L preset dropdown.
+  // Open Right Joy-Con dialog -> includes Mapped preset heading and Joycon (L) / Joycon (R) dropdowns.
   await act(async () =>
     cards[2].querySelector<HTMLButtonElement>('[aria-label="Controller settings"]')?.click(),
   );
-  expect(button("Joy-Con L preset").textContent).toContain("Switch");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Mapped preset");
+  expect(button("Joycon (L)").textContent).toContain("Switch");
+  expect(button("Joycon (R)").textContent).toContain("Xbox");
   await act(async () => button("Close").click());
 
   // Clicking the far-right unlink button requires confirmation before calling DELETE.

@@ -30,6 +30,7 @@ import {
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -441,6 +442,12 @@ export function ConnectionPanel({ onEditPreset }: { onEditPreset: (preset: Prese
       controllerGuid: pad?.guid ?? null,
       hasGyro: pad?.has_gyro,
       preset: source.preset,
+      presetLabel:
+        partner && inputMode === "individual"
+          ? source.controller_type === "joycon_r"
+            ? "Joycon (R)"
+            : "Joycon (L)"
+          : undefined,
       pending:
         pending?.kind === "assign"
           ? "selecting"
@@ -466,8 +473,8 @@ export function ConnectionPanel({ onEditPreset }: { onEditPreset: (preset: Prese
           ? {
               label:
                 partner.controller_type === "joycon_r"
-                  ? "Joy-Con R preset"
-                  : "Joy-Con L preset",
+                  ? "Joycon (R)"
+                  : "Joycon (L)",
               preset: partner.preset,
               macroMode: partner.macro_mode,
               applyPreset: (preset) =>
@@ -753,6 +760,8 @@ function ConnectionCard({
     label: CONTROLLER_VARIANT_NAMES[type],
     variant: type,
   }));
+  const controllerSelection = mapping.active ?? (mapping.allowUnassign ? "unassigned" : null);
+  const activeControllerName = mapping.options.find((option) => option.id === mapping.active)?.name;
 
   useEffect(() => {
     if (!adapter || !onBluetoothBusyChange) return;
@@ -821,18 +830,61 @@ function ConnectionCard({
         )}
       >
         <div className="flex min-w-0 items-center gap-2">
-          <h3
-            id={`${id}-controller`}
-            className={cn(
-              "max-w-3/5 min-w-0 truncate text-sm font-medium",
-              mutedTitle && "font-normal text-muted-foreground",
-            )}
-            title={controllerName}
-          >
-            {controllerName}
-          </h3>
-          <ConnectionStatus status={status} statusError={statusError} />
-          <div className="ms-auto shrink-0">
+          {mutedTitle ? (
+            <h3
+              id={`${id}-controller`}
+              className="min-w-0 flex-1 truncate text-sm font-normal text-muted-foreground"
+              title={controllerName}
+            >
+              {controllerName}
+            </h3>
+          ) : (
+            <div className="min-w-44 flex-1">
+              <Select
+                value={controllerSelection}
+                disabled={
+                  !mapping.available ||
+                  mapping.options.length === 0 ||
+                  mapping.pending !== null ||
+                  mapping.macroMode
+                }
+                onValueChange={(value) => {
+                  if (value !== null && value !== controllerSelection) {
+                    mapping.selectController(value === "unassigned" ? null : value);
+                  }
+                }}
+              >
+                <SelectTrigger
+                  id={`${id}-controller`}
+                  size="sm"
+                  className="w-full min-w-0"
+                  aria-label="Select controller"
+                  title={activeControllerName ?? controllerName}
+                >
+                  <SelectValue placeholder="No controller selected" className="min-w-0">
+                    <span className="truncate">
+                      {activeControllerName ??
+                        (mapping.allowUnassign ? "No controller" : "No controller selected")}
+                    </span>
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent align="start">
+                  <SelectGroup>
+                    {mapping.allowUnassign && (
+                      <SelectItem value="unassigned">No controller</SelectItem>
+                    )}
+                    {mapping.options.map((entry) => (
+                      <SelectItem key={entry.id} value={entry.id} disabled={entry.disabled}>
+                        {entry.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <div className="ms-auto flex shrink-0 items-center gap-1.5">
+            <ConnectionStatus status={status} statusError={statusError} />
             <ControllerMappingDialog
               controller={mapping}
               usbAdapter={
