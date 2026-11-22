@@ -4,7 +4,14 @@ import json
 
 import pytest
 
-from lib.input.macros import MacroValidationError, validate_macro
+from lib.controller import ControllerVariant
+from lib.input.macros import (
+    MacroValidationError,
+    resolve_macro_button,
+    validate_macro,
+    validate_macro_capabilities,
+)
+from lib.input.state import Button
 from lib.input.presets import PresetValidationError, validate_preset
 from lib.server.files import (
     JsonDocStore,
@@ -97,6 +104,29 @@ def _ok_macro():
 
 def test_validate_macro_ok():
     validate_macro(_ok_macro())
+
+
+def test_validate_macro_adaptive_shoulder_buttons():
+    macro = {
+        "version": 1,
+        "actions": [
+            {"do": "press", "button": "SL_OR_L"},
+            {"do": "press", "button": "sr_or_r"},
+            {"do": "release", "button": "SL_OR_L"},
+            {"do": "release", "button": "SR_OR_R"},
+        ],
+    }
+    validate_macro(macro)
+    for variant in ControllerVariant:
+        validate_macro_capabilities(macro, variant)
+    assert resolve_macro_button("SL_OR_L", ControllerVariant.LEFT) == Button.SL
+    assert resolve_macro_button("SR_OR_R", ControllerVariant.LEFT) == Button.SR
+    assert resolve_macro_button("SL_OR_L", ControllerVariant.RIGHT) == Button.SL
+    assert resolve_macro_button("SR_OR_R", ControllerVariant.RIGHT) == Button.SR
+    assert resolve_macro_button("SL_OR_L", ControllerVariant.PRO) == Button.L
+    assert resolve_macro_button("SR_OR_R", ControllerVariant.PRO) == Button.R
+    assert resolve_macro_button("SL_OR_L", ControllerVariant.COMBINED) == Button.L
+    assert resolve_macro_button("SR_OR_R", ControllerVariant.COMBINED) == Button.R
 
 
 @pytest.mark.parametrize("unit", ["ms", "seconds"])

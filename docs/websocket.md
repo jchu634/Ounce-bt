@@ -57,7 +57,7 @@ The top-level status fields describe the first selected adapter.
 {"type": "macro", "op": "resume"}
 ```
 
-Valid button names: `A B X Y L R ZL ZR UP DOWN LEFT RIGHT PLUS MINUS HOME CAPTURE STICK_L STICK_R`.
+Valid button names: `A B X Y L R ZL ZR UP DOWN LEFT RIGHT PLUS MINUS HOME CAPTURE STICK_L STICK_R SL SR`. Macros also accept `SL_OR_L` and `SR_OR_R`, which map to `SL`/`SR` on a sideways Joy-Con and `L`/`R` otherwise.
 
 `event` semantics: each frame replaces the current controller state (latest-wins consumer). For chorded/persistent input, prefer `state` snapshots.
 

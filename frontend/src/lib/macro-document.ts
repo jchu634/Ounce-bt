@@ -1,4 +1,4 @@
-import { parseButtonName } from "@/src/lib/button-names";
+import { parseMacroButtonName } from "@/src/lib/button-names";
 import type { MacroAction, MacroDoc } from "@/src/lib/types";
 
 export type MacroPath = (string | number)[];
@@ -56,7 +56,7 @@ function parseActions(
     switch (candidate.do) {
       case "press":
       case "release": {
-        const button = parseButtonName(candidate.button);
+        const button = parseMacroButtonName(candidate.button);
         if (button === undefined) {
           return invalid(`Unknown button for '${candidate.do}'.`, [...actionPath, "button"]);
         }

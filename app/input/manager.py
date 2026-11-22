@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from app.input.macro_source import MacroPlayerThread
+from lib.controller import ControllerVariant
 from lib.input.macros import load_macro, validate_macro
 from lib.input.presets import PresetConfig, PresetSelection, load_preset
 from lib.input.state import NEUTRAL, Button, ControllerState
@@ -235,6 +236,7 @@ class InputManager:
         self,
         macro: dict,
         *,
+        variant: ControllerVariant = ControllerVariant.PRO,
         state_filter: Callable[[ControllerState], ControllerState] | None = None,
     ) -> None:
         """Start a macro if this adapter has no active playback."""
@@ -252,6 +254,7 @@ class InputManager:
                 publish=lambda state: self._publish_macro_state(
                     thread, state_filter(state) if state_filter is not None else state
                 ),
+                variant=variant,
             )
             self._macro = thread
             self._macro_name = name

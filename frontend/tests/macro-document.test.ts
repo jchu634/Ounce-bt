@@ -10,6 +10,8 @@ describe("parseMacroDocument", () => {
         repeat: 0,
         actions: [
           { do: "press", button: "A" },
+          { do: "press", button: "SL_OR_L" },
+          { do: "release", button: "SR_OR_R" },
           { do: "wait", ms: 12.5 },
           { do: "stick", side: "right", x: -1, y: 0.5 },
           {

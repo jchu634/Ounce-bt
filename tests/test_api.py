@@ -609,6 +609,52 @@ def test_default_grip_macro_is_editable_and_stays_deleted(fx):
         assert client.get(url).status_code == 404
 
 
+def test_ws_macro_adaptive_shoulder_buttons_use_adapter_variant(fx):
+    macro = {
+        "version": 1,
+        "actions": [
+            {"do": "press", "button": "SL_OR_L"},
+            {"do": "press", "button": "SR_OR_R"},
+            {"do": "release", "button": "SR_OR_R"},
+            {"do": "release", "button": "SL_OR_L"},
+        ],
+    }
+    other = InputManager(queue.Queue(), fx.macros_dir)
+    primary = AdapterSession("primary", "usb:0", fx.manager.command_queue, None, input_manager=fx.manager)
+    secondary = AdapterSession("adapter-2", "usb:1", other.command_queue, None, input_manager=other)
+    primary.bluetooth.set_controller_type(ControllerVariant.LEFT)
+    secondary.bluetooth.set_controller_type(ControllerVariant.PRO)
+
+    try:
+        with fx.client() as client:
+            client.app.state.adapter_sessions = {primary.id: primary, secondary.id: secondary}
+            client.app.state.input_managers = {primary.id: fx.manager, secondary.id: other}
+            with client.websocket_connect("/ws") as ws:
+                assert ws.receive_json()["type"] == "status"
+                assert ws.receive_json()["type"] == "controllers"
+                ws.send_json({"type": "select_adapters", "adapter_ids": [primary.id, secondary.id]})
+                assert ws.receive_json()["type"] == "status"
+                ws.send_json({"type": "macro", "op": "start", "macro": macro})
+                while fx.manager.status()["mode"] == "macro" or other.status()["mode"] == "macro":
+                    ws.receive_json()
+
+        primary_buttons = []
+        while not fx.manager.command_queue.empty():
+            primary_buttons.append(fx.manager.command_queue.get_nowait().buttons)
+        secondary_buttons = []
+        while not other.command_queue.empty():
+            secondary_buttons.append(other.command_queue.get_nowait().buttons)
+
+        assert Button.SL in primary_buttons
+        assert (Button.SL | Button.SR) in primary_buttons
+        assert Button.L not in primary_buttons
+        assert Button.L in secondary_buttons
+        assert (Button.L | Button.R) in secondary_buttons
+        assert Button.SL not in secondary_buttons
+    finally:
+        other.shutdown()
+
+
 def test_bluetooth_unavailable_and_validation(fx):
     with fx.client() as c:
         status = c.get("/api/bluetooth")

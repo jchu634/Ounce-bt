@@ -288,6 +288,7 @@ def _dispatch_macro(
                 return error_frame("invalid macro", detail=str(e))
             return error_frame(f"could not load macro: {e}")
         for manager, session in targets:
+            variant = session.mapping_variant() if session is not None else ControllerVariant.PRO
             state_filter = None
             if (
                 session is not None
@@ -296,7 +297,7 @@ def _dispatch_macro(
             ):
                 side_type = session.bluetooth.controller_type.bluetooth_type
                 state_filter = lambda state, ct=side_type: filter_joycon_state(state, ct)
-            manager.start_macro(macro, state_filter=state_filter)
+            manager.start_macro(macro, variant=variant, state_filter=state_filter)
     else:
         for manager, _session in targets:
             if isinstance(msg, MacroCancel):

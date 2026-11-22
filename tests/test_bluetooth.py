@@ -114,6 +114,80 @@ def test_universal_rail_macro_reaches_both_combined_joycon_reports():
         ]
 
 
+@pytest.mark.parametrize(
+    ("variant", "first", "both", "second"),
+    [
+        (ControllerVariant.LEFT, Button.SL_L, Button.SL_L | Button.SR_L, Button.SR_L),
+        (ControllerVariant.RIGHT, Button.SL_R, Button.SL_R | Button.SR_R, Button.SR_R),
+        (ControllerVariant.PRO, Button.L, Button.L | Button.R, Button.R),
+    ],
+)
+def test_adaptive_shoulder_macro_maps_to_sl_sr_on_sideways_joycon_and_l_r_otherwise(
+    variant, first, both, second
+):
+    protocol = ControllerProtocol(variant.bluetooth_type, ADDRESS)
+    protocol.process_commands(None)
+
+    states = queue.Queue()
+    MacroPlayerThread(
+        {
+            "actions": [
+                {"do": "press", "button": "SL_OR_L"},
+                {"do": "press", "button": "SR_OR_R"},
+                {"do": "release", "button": "SL_OR_L"},
+                {"do": "release", "button": "SR_OR_R"},
+            ]
+        },
+        states,
+        variant=variant,
+    ).run()
+
+    for expected in (first, both, second, Button.NONE):
+        apply_to_protocol(protocol, states.get_nowait())
+        assert protocol.get_report()[4:7] == int(expected).to_bytes(3, "little")
+
+
+def test_adaptive_shoulder_macro_maps_to_l_and_r_on_combined_joycons():
+    left = AdapterSession("primary", "usb:0", queue.Queue(), None)
+    right = AdapterSession("adapter-2", "usb:1", queue.Queue(), None)
+    left.bluetooth.set_controller_type(ControllerVariant.LEFT)
+    right.bluetooth.set_controller_type(ControllerVariant.RIGHT)
+    left.combined_partner, right.combined_partner = right, left
+    protocols = [
+        ControllerProtocol(slot.bluetooth.controller_type.bluetooth_type, ADDRESS)
+        for slot in (left, right)
+    ]
+    for protocol in protocols:
+        protocol.process_commands(None)
+
+    states = queue.Queue()
+    MacroPlayerThread(
+        {
+            "actions": [
+                {"do": "press", "button": "SL_OR_L"},
+                {"do": "press", "button": "SR_OR_R"},
+                {"do": "release", "button": "SL_OR_L"},
+                {"do": "release", "button": "SR_OR_R"},
+            ]
+        },
+        states,
+        variant=left.mapping_variant(),
+    ).run()
+
+    for left_buttons, right_buttons in [
+        (Button.L, Button.NONE),
+        (Button.L, Button.R),
+        (Button.NONE, Button.R),
+        (Button.NONE, Button.NONE),
+    ]:
+        apply_to_protocol(protocols[0], left.output_input(states.get_nowait()))
+        apply_to_protocol(protocols[1], right.output_input(NEUTRAL))
+        assert [protocol.get_report()[4:7] for protocol in protocols] == [
+            int(left_buttons).to_bytes(3, "little"),
+            int(right_buttons).to_bytes(3, "little"),
+        ]
+
+
 def test_paired_joycons_individual_mode_routes_inputs_and_imu_independently():
     left = AdapterSession("primary", "usb:0", queue.Queue(), None)
     right = AdapterSession("adapter-2", "usb:1", queue.Queue(), None)

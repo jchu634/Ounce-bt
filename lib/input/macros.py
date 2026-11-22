@@ -8,8 +8,22 @@ from typing import Any
 from lib.controller import ControllerVariant
 from lib.input.state import JOYCON_BUTTONS, Button
 
-VALID_BUTTONS = frozenset(Button.__members__) - {"NONE"}
+MACRO_BUTTON_ALIASES = frozenset({"SL_OR_L", "SR_OR_R"})
+VALID_BUTTONS = (frozenset(Button.__members__) - {"NONE"}) | MACRO_BUTTON_ALIASES
 MACRO_VERSION = 1
+
+
+def resolve_macro_button(
+    name: str,
+    variant: ControllerVariant = ControllerVariant.PRO,
+) -> Button:
+    """Resolve a macro button name for the target controller variant."""
+    normalized = name.strip().upper()
+    if normalized == "SL_OR_L":
+        return Button.SL if variant.is_single_joycon else Button.L
+    if normalized == "SR_OR_R":
+        return Button.SR if variant.is_single_joycon else Button.R
+    return Button.by_name(normalized)
 
 
 def seed_default_macros(directory: Path) -> None:
@@ -87,7 +101,7 @@ def validate_macro_capabilities(macro: dict, variant: ControllerVariant) -> None
             here = [*path, index]
             kind = action["do"]
             if kind in ("press", "release"):
-                button = Button.by_name(action["button"])
+                button = resolve_macro_button(action["button"], variant)
                 if not button & buttons:
                     label = {
                         Button.STICK_L: "left stick click",

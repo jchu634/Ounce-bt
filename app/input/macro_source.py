@@ -6,6 +6,8 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from lib.controller import ControllerVariant
+from lib.input.macros import resolve_macro_button
 from lib.input.state import Button, ControllerState
 
 logger = logging.getLogger("switch_pair")
@@ -39,7 +41,9 @@ class MacroPlayerThread(threading.Thread):
         }
 
     Button names match the ``Button`` enum (A, B, X, Y, L, R, ZL, ZR,
-    UP, DOWN, LEFT, RIGHT, PLUS, MINUS, HOME, CAPTURE, STICK_L, STICK_R).
+    UP, DOWN, LEFT, RIGHT, PLUS, MINUS, HOME, CAPTURE, STICK_L, STICK_R,
+    SL, SR) plus the adaptive aliases ``SL_OR_L`` and ``SR_OR_R`` (which map
+    to SL/SR on a sideways Joy-Con and L/R otherwise).
     """
 
     def __init__(
@@ -49,10 +53,12 @@ class MacroPlayerThread(threading.Thread):
         rate_hz: int = 120,
         on_finish: Callable[[], None] | None = None,
         publish: Callable[[ControllerState], None] | None = None,
+        variant: ControllerVariant = ControllerVariant.PRO,
     ):
         super().__init__(name="macro-player", daemon=True)
         self._macro = macro
         self._publish = publish or command_queue.put
+        self._variant = variant
         self._period = 1.0 / rate_hz
         self._stop = threading.Event()
         # Set = running, cleared = paused. Pause freezes the macro in its
@@ -115,10 +121,10 @@ class MacroPlayerThread(threading.Thread):
                 return False
             kind = action.get("do")
             if kind == "press":
-                self._buttons.add(Button.by_name(action["button"]))
+                self._buttons.add(resolve_macro_button(action["button"], self._variant))
                 self._emit()
             elif kind == "release":
-                self._buttons.discard(Button.by_name(action["button"]))
+                self._buttons.discard(resolve_macro_button(action["button"], self._variant))
                 self._emit()
             elif kind == "stick":
                 self._apply_stick(action)

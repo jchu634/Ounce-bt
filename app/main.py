@@ -113,7 +113,12 @@ def controller_spec_info(specs) -> tuple[bool, int | None]:
     return False, None
 
 
-def build_input_sources(specs, command_queue):
+def build_input_sources(
+    specs,
+    command_queue,
+    *,
+    variant: ControllerVariant = ControllerVariant.PRO,
+):
     """Construct (not yet start) the daemon input threads for each --input spec.
 
     Spec formats:
@@ -129,7 +134,7 @@ def build_input_sources(specs, command_queue):
         elif spec.startswith("macro:"):
             path = spec.split(":", 1)[1]
             macro = load_macro(path)
-            threads.append(MacroPlayerThread(macro, command_queue))
+            threads.append(MacroPlayerThread(macro, command_queue, variant=variant))
         else:
             raise ValueError(f"Unknown --input spec: {spec!r}")
     return threads
@@ -815,11 +820,6 @@ async def run_bluetooth(
         )
         manager.set_controller_service(controller_service)
 
-    input_threads = build_input_sources(config.input_specs, command_queue)
-    if controller_service is not None:
-        input_threads.append(controller_service)
-    manager.attach_input_threads(input_threads)
-
     manager.adapter_id = "primary"
     primary = AdapterSession(
         "primary",
@@ -860,6 +860,14 @@ async def run_bluetooth(
         )
 
     configure_adapter_outputs(sessions, profiles)
+    input_threads = build_input_sources(
+        config.input_specs,
+        command_queue,
+        variant=primary.mapping_variant(),
+    )
+    if controller_service is not None:
+        input_threads.append(controller_service)
+    manager.attach_input_threads(input_threads)
     for session in sessions.values():
         session.input_manager.map_manual_input = session.map_manual_input
         if session.controller is not None:
