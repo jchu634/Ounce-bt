@@ -244,6 +244,8 @@ class ControllerService(threading.Thread):
         if primary_preset_override:
             primary.preset_override = PresetSelection(initial_preset.name, initial_preset)
         self._routes: dict[str, ControllerRoute] = {"primary": primary}
+        self._status_lock = threading.Lock()
+        self._status_snapshot: dict[str, Any] = self._build_status()
 
     @property
     def primary(self) -> ControllerRoute:
@@ -272,6 +274,7 @@ class ControllerService(threading.Thread):
     def add_route(self, session_id: str, preset_name: str = "xbox") -> ControllerRoute:
         route = ControllerRoute(session_id, self.primary.preset, preset_name)
         self._routes[session_id] = route
+        self._publish_status()
         return route
 
     def assign(self, session_id: str, instance_id: int | None) -> None:
@@ -298,15 +301,33 @@ class ControllerService(threading.Thread):
         self._stop_event.set()
         self._mailbox.put(("wake", None, None))
 
+    def _build_status(self) -> dict[str, Any]:
+        return {
+            "controllers": [c.to_dict() for c in self._controllers],
+            "active": self.active_guid,
+            "assignments": {
+                key: route.controller.instance_id if route.controller else None
+                for key, route in self._routes.items()
+            },
+            "available": self._sdl_ok,
+        }
+
+    def _publish_status(self) -> None:
+        snapshot = self._build_status()
+        with self._status_lock:
+            self._status_snapshot = snapshot
+
     def status(self) -> dict:
         if not self.is_alive():
             return {"controllers": [], "active": None, "assignments": {}, "available": False}
-        result = self._request("status")
-        return (
-            result
-            if isinstance(result, dict)
-            else {"controllers": [], "active": None, "assignments": {}, "available": False}
-        )
+        with self._status_lock:
+            snap = self._status_snapshot
+            return {
+                "controllers": [dict(c) for c in snap["controllers"]],
+                "active": snap["active"],
+                "assignments": dict(snap["assignments"]),
+                "available": snap["available"],
+            }
 
     def enumerate(self) -> list[dict]:
         return list(self.status().get("controllers", []))
@@ -345,7 +366,10 @@ class ControllerService(threading.Thread):
                     self._restore_assignments()
                 elif self._controllers:
                     self._assign("primary", self._controllers[0].instance_id)
+                self._publish_status()
                 self._notify()
+            else:
+                self._publish_status()
 
             while not self._stop_event.is_set():
                 deadline = time.monotonic() + self._period
@@ -364,23 +388,15 @@ class ControllerService(threading.Thread):
                 if self._sdl_ok and not self._stop_event.is_set():
                     self._tick_sdl()
         finally:
+            self._sdl_ok = False
             self._shutdown_devices()
+            self._publish_status()
             self._host.quit()
 
     def _handle(self, op: str, payload: Any, fut: concurrent.futures.Future) -> None:
         try:
             if op == "status":
-                fut.set_result(
-                    {
-                        "controllers": [c.to_dict() for c in self._controllers],
-                        "active": self.active_guid,
-                        "assignments": {
-                            key: route.controller.instance_id if route.controller else None
-                            for key, route in self._routes.items()
-                        },
-                        "available": self._sdl_ok,
-                    }
-                )
+                fut.set_result(self._build_status())
             elif op == "set_preset":
                 preset, source, session_id = payload
                 route = self._routes[session_id]
@@ -465,12 +481,15 @@ class ControllerService(threading.Thread):
                 route.controller = None
                 route.reset_device_state()
                 route.clear_input()
+                self._publish_status()
                 self._notify()
 
     def _refresh_controllers(self) -> bool:
         infos = self._host.list_devices(self._devices)
         changed = infos != self._controllers
         self._controllers = infos
+        if changed:
+            self._publish_status()
         return changed
 
     def _handle_hotplug(self, removed: set[int]) -> None:
@@ -521,6 +540,7 @@ class ControllerService(threading.Thread):
                 except ValueError:
                     pass
 
+        self._publish_status()
         if changed or self.active_guid != previous_primary:
             self._notify()
 
@@ -592,6 +612,7 @@ class ControllerService(threading.Thread):
         if match is None:
             if session_id == "primary":
                 self._auto_select_primary = False
+            self._publish_status()
             self._notify()
             return
 
@@ -603,12 +624,20 @@ class ControllerService(threading.Thread):
                 self._report_preset(selection)
 
         device = self._host.open_device(match)
+        opened_info = getattr(device, "info", match)
+        if isinstance(opened_info, DeviceInfo) and opened_info != match:
+            match = opened_info
+            self._controllers = [
+                opened_info if c.instance_id == opened_info.instance_id else c
+                for c in self._controllers
+            ]
         self._devices[match.instance_id] = device
         route.controller = match
         route.reset_device_state()
         if session_id == "primary":
             self._auto_select_primary = True
         logger.info("Controller assigned to '%s': '%s' (%s)", session_id, match.name, match.guid)
+        self._publish_status()
         self._notify()
 
     def _close_device(self, instance_id: int) -> None:

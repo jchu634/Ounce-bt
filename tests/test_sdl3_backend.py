@@ -182,6 +182,95 @@ def test_build_sdl3_verify_requires_libusb_and_switch2_markers(tmp_path):
     verify(valid)
 
 
+def test_build_sdl3_verify_libusb_requires_expected_version(tmp_path):
+    script = Path(__file__).resolve().parents[1] / "scripts" / "build-sdl3.py"
+    ns = runpy.run_path(str(script))
+    verify_libusb = ns["verify_libusb_binary"]
+    version = ns["LIBUSB_VERSION"]
+
+    stale = tmp_path / "libusb-1.0.dll"
+    stale.write_bytes(b"libusb 1.0.26")
+    with pytest.raises(RuntimeError, match=version):
+        verify_libusb(stale)
+
+    fresh = tmp_path / "libusb-1.0-fresh.dll"
+    fresh.write_bytes(f"libusb {version}".encode("utf-16-le"))
+    verify_libusb(fresh)
+
+
+def test_list_devices_defers_capability_probe_until_open_device():
+    import ctypes
+
+    class _FakeSdl:
+        SDL_SENSOR_GYRO = 1
+        SDL_SENSOR_ACCEL = 2
+        SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN = b"rumble"
+
+        def __init__(self):
+            self.opened_jids: list[int] = []
+            self.closed_pads: list[object] = []
+
+        def SDL_GetJoysticks(self, count_ptr):
+            count_ptr._obj.value = 1
+            return (ctypes.c_uint32 * 1)(42)
+
+        def SDL_free(self, _ptr):
+            pass
+
+        def SDL_IsGamepad(self, jid: int) -> bool:
+            return jid == 42
+
+        def SDL_GetJoystickGUIDForID(self, _jid: int):
+            return b"guid"
+
+        def SDL_GUIDToString(self, _guid, buf, _size):
+            buf.value = b"030000007e0500000920000000006800"
+
+        def SDL_GetJoystickVendorForID(self, _jid: int) -> int:
+            return 0x057E
+
+        def SDL_GetJoystickProductForID(self, _jid: int) -> int:
+            return 0x2009
+
+        def SDL_GetGamepadNameForID(self, _jid: int) -> bytes:
+            return b"Nintendo Switch Pro Controller"
+
+        def SDL_GetGamepadTypeForID(self, _jid: int) -> int:
+            return 0
+
+        def SDL_OpenGamepad(self, jid: int):
+            self.opened_jids.append(jid)
+            return object()
+
+        def SDL_CloseGamepad(self, pad):
+            self.closed_pads.append(pad)
+
+        def SDL_GamepadHasSensor(self, _pad, sensor: int) -> bool:
+            return sensor in (self.SDL_SENSOR_GYRO, self.SDL_SENSOR_ACCEL)
+
+        def SDL_GetGamepadProperties(self, _pad):
+            return 1
+
+        def SDL_GetBooleanProperty(self, _props, _name, _default) -> bool:
+            return True
+
+    fake_sdl = _FakeSdl()
+    host = Sdl3Host(sdl=fake_sdl)
+
+    devices = host.list_devices()
+    assert len(devices) == 1
+    assert fake_sdl.opened_jids == []
+    assert devices[0].has_gyro is False
+    assert devices[0].has_rumble is False
+
+    opened = host.open_device(devices[0])
+    assert fake_sdl.opened_jids == [42]
+    assert opened.info.has_gyro is True
+    assert opened.info.has_accel is True
+    assert opened.info.has_rumble is True
+    assert host.list_devices({42: opened})[0] == opened.info
+
+
 def test_sdl3_loader_prefers_bundled_binary_and_fails_packaged_when_missing(
     tmp_path, monkeypatch
 ):

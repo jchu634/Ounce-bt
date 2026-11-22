@@ -1285,3 +1285,26 @@ def test_debug_regenerates_only_the_target_adapter(
                 CONFIG_HEADER + bytes.fromhex(address.replace(":", ""))[::-1]
             )
             assert saved.bt_address == primary_address
+
+
+def test_adapters_get_returns_adapters_when_controller_status_unavailable(fx):
+    from unittest.mock import Mock
+
+    broken_controller = Mock()
+    broken_controller.status.side_effect = RuntimeError("controller service did not answer 'status' in time")
+    primary = AdapterSession("primary", "usb:0", fx.command_queue, broken_controller)
+    secondary = AdapterSession("adapter-2", "usb:1", queue.Queue(), None)
+    app = build_app(
+        fx.manager,
+        fx.config_store,
+        Path("/nonexistent-dist"),
+        bluetooth=primary.bluetooth,
+        adapter_sessions={slot.id: slot for slot in (primary, secondary)},
+    )
+    with TestClient(app) as client:
+        response = client.get("/api/adapters")
+        assert response.status_code == 200
+        body = response.json()
+        assert [item["id"] for item in body["adapters"]] == ["primary", "adapter-2"]
+        assert body["controllers"] == []
+        assert body["controllers_available"] is False

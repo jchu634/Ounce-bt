@@ -51,49 +51,87 @@ def _extract_tar(archive: Path, target_dir: Path, sentinel: Path) -> None:
         tf.extractall(target_dir, filter="data")
 
 
-def _find_msvc_lib_exe() -> Path:
-    if found := shutil.which("lib.exe"):
+def _find_msbuild_exe() -> Path:
+    if found := shutil.which("msbuild"):
         return Path(found)
     vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / (
         "Microsoft Visual Studio/Installer/vswhere.exe"
     )
     if vswhere.is_file():
-        install = subprocess.check_output(
-            [str(vswhere), "-latest", "-products", "*", "-property", "installationPath"],
+        output = subprocess.check_output(
+            [
+                str(vswhere),
+                "-latest",
+                "-products",
+                "*",
+                "-requires",
+                "Microsoft.Component.MSBuild",
+                "-find",
+                r"MSBuild\**\Bin\MSBuild.exe",
+            ],
             text=True,
         ).strip()
-        if install:
-            tools = Path(install) / "VC/Tools/MSVC"
-            for candidate in sorted(tools.glob("*/bin/Hostx64/x64/lib.exe"), reverse=True):
+        for line in output.splitlines():
+            candidate = Path(line.strip())
+            if candidate.is_file():
                 return candidate
-    raise RuntimeError("Could not locate MSVC lib.exe to generate libusb-1.0.lib")
+    raise RuntimeError("Could not locate MSBuild.exe to build libusb-1.0.dll")
 
 
-def _prepare_windows_libusb(work_dir: Path) -> tuple[Path, Path]:
+def _find_built_libusb(src_root: Path, platform_name: str) -> tuple[Path, Path] | None:
+    build_root = src_root / "build"
+    if not build_root.is_dir():
+        return None
+    for dll in sorted(build_root.glob(f"*/{platform_name}/Release/dll/libusb-1.0.dll"), reverse=True):
+        implib = dll.with_suffix(".lib")
+        if implib.is_file():
+            return dll, implib
+    return None
+
+
+def _prepare_windows_libusb(work_dir: Path) -> tuple[Path, Path, Path]:
     archive = _download(LIBUSB_URL, work_dir / f"libusb-{LIBUSB_VERSION}.tar.bz2", LIBUSB_SHA256)
     src_root = work_dir / f"libusb-{LIBUSB_VERSION}"
     header = src_root / "libusb" / "libusb.h"
     _extract_tar(archive, work_dir, header)
-    def_file = src_root / "libusb" / "libusb-1.0.def"
-    if not header.is_file() or not def_file.is_file():
-        raise RuntimeError(f"Missing libusb.h or libusb-1.0.def under {src_root}")
+    vcxproj = src_root / "msvc" / "libusb_dll.vcxproj"
+    if not header.is_file() or not vcxproj.is_file():
+        raise RuntimeError(f"Missing libusb.h or msvc/libusb_dll.vcxproj under {src_root}")
 
-    machine = "ARM64" if platform.machine().lower() in ("arm64", "aarch64") else "X64"
-    implib = work_dir / "libusb-1.0.lib"
-    if not implib.is_file():
-        lib_exe = _find_msvc_lib_exe()
+    platform_name = "ARM64" if platform.machine().lower() in ("arm64", "aarch64") else "x64"
+    built = _find_built_libusb(src_root, platform_name)
+    if built is None:
+        msbuild = _find_msbuild_exe()
         subprocess.run(
             [
-                str(lib_exe),
+                str(msbuild),
+                str(vcxproj),
                 "/nologo",
-                f"/def:{def_file}",
-                "/name:libusb-1.0.dll",
-                f"/out:{implib}",
-                f"/machine:{machine}",
+                "/m",
+                "/v:minimal",
+                "/p:Configuration=Release",
+                f"/p:Platform={platform_name}",
             ],
             check=True,
         )
-    return header.parent, implib
+        built = _find_built_libusb(src_root, platform_name)
+    if built is None:
+        raise RuntimeError(f"MSBuild did not produce libusb-1.0.dll under {src_root / 'build'}")
+    dll_path, implib_path = built
+    return header.parent, implib_path, dll_path
+
+
+def verify_libusb_binary(path: Path) -> None:
+    """Fail if the Windows libusb DLL is missing or does not match LIBUSB_VERSION."""
+    if not path.is_file():
+        raise RuntimeError(f"Missing libusb binary: {path}")
+    data = path.read_bytes()
+    ascii_marker = LIBUSB_VERSION.encode("ascii")
+    utf16_marker = LIBUSB_VERSION.encode("utf-16-le")
+    if ascii_marker not in data and utf16_marker not in data:
+        raise RuntimeError(
+            f"libusb binary {path} does not match expected version {LIBUSB_VERSION}"
+        )
 
 
 def verify_sdl3_binary(path: Path) -> None:
@@ -117,12 +155,12 @@ def _output_library_path(output_dir: Path) -> Path:
 
 def build_sdl3(work_dir: Path, output_dir: Path, *, force: bool = False) -> Path:
     target = _output_library_path(output_dir)
-    ready = target.is_file() and (
-        sys.platform != "win32" or (output_dir / "libusb-1.0.dll").is_file()
-    )
-    if not force and ready:
+    libusb_target = output_dir / "libusb-1.0.dll"
+    if not force and target.is_file():
         try:
             verify_sdl3_binary(target)
+            if sys.platform == "win32":
+                verify_libusb_binary(libusb_target)
             print(f"Using verified libusb-enabled SDL3 binary: {target}", flush=True)
             return target
         except RuntimeError:
@@ -133,6 +171,7 @@ def build_sdl3(work_dir: Path, output_dir: Path, *, force: bool = False) -> Path
     src_dir = work_dir / f"SDL3-{SDL3_VERSION}"
     _extract_tar(archive, work_dir, src_dir / "CMakeLists.txt")
 
+    libusb_dll: Path | None = None
     build_dir = work_dir / "cmake-build"
     cmake_args = [
         "cmake",
@@ -151,7 +190,7 @@ def build_sdl3(work_dir: Path, output_dir: Path, *, force: bool = False) -> Path
         "-DSDL_HIDAPI_LIBUSB_SHARED=ON",
     ]
     if sys.platform == "win32":
-        include_dir, implib = _prepare_windows_libusb(work_dir)
+        include_dir, implib, libusb_dll = _prepare_windows_libusb(work_dir)
         arch = "ARM64" if platform.machine().lower() in ("arm64", "aarch64") else "x64"
         cmake_args += [
             "-A",
@@ -185,11 +224,9 @@ def build_sdl3(work_dir: Path, output_dir: Path, *, force: bool = False) -> Path
             built = build_dir / "SDL3.dll"
         verify_sdl3_binary(built)
         shutil.copy2(built, target)
-        # Stage libusb-1.0.dll alongside SDL3.dll so SDL_LoadObject("libusb-1.0.dll") always succeeds.
-        import libusb_package
-
-        libusb_dll = Path(libusb_package.get_library_path())
-        shutil.copy2(libusb_dll, output_dir / "libusb-1.0.dll")
+        assert libusb_dll is not None
+        verify_libusb_binary(libusb_dll)
+        shutil.copy2(libusb_dll, libusb_target)
     else:
         candidates = sorted(build_dir.glob("libSDL3.so*"))
         real_libs = [p for p in candidates if p.is_file() and not p.is_symlink()]

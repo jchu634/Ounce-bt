@@ -294,6 +294,18 @@ class Sdl3Host:
             raw_name.decode("utf-8", errors="replace") if raw_name else f"Gamepad {jid}"
         )
 
+    def _read_capabilities(self, pad: Any) -> tuple[bool, bool, bool]:
+        sdl = self._sdl
+        has_gyro = bool(sdl.SDL_GamepadHasSensor(pad, sdl.SDL_SENSOR_GYRO))
+        has_accel = bool(sdl.SDL_GamepadHasSensor(pad, sdl.SDL_SENSOR_ACCEL))
+        props = sdl.SDL_GetGamepadProperties(pad)
+        has_rumble = bool(
+            sdl.SDL_GetBooleanProperty(
+                props, sdl.SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN, False
+            )
+        )
+        return has_gyro, has_accel, has_rumble
+
     def _probe_device(
         self, jid: int, open_devices: dict[int, Any]
     ) -> DeviceInfo | None:
@@ -303,7 +315,9 @@ class Sdl3Host:
         guid = self._guid_string(jid)
         name = self._device_name(jid)
         gtype = self._type_names.get(sdl.SDL_GetGamepadTypeForID(jid), "standard")
-        # Reuse existing cached caps or already-open handle without churning SDL state.
+        # Reuse capabilities from an already-open handle without churning SDL state.
+        # Unassigned devices are not opened during enumeration; capabilities are
+        # queried once when the gamepad is actually opened in open_device().
         if jid in open_devices and isinstance(open_devices[jid], Sdl3Device):
             existing = open_devices[jid].info
             return DeviceInfo(
@@ -315,28 +329,11 @@ class Sdl3Host:
                 has_accel=existing.has_accel,
                 has_rumble=existing.has_rumble,
             )
-        has_gyro = has_accel = has_rumble = False
-        pad = sdl.SDL_OpenGamepad(jid)
-        if pad:
-            try:
-                has_gyro = bool(sdl.SDL_GamepadHasSensor(pad, sdl.SDL_SENSOR_GYRO))
-                has_accel = bool(sdl.SDL_GamepadHasSensor(pad, sdl.SDL_SENSOR_ACCEL))
-                props = sdl.SDL_GetGamepadProperties(pad)
-                has_rumble = bool(
-                    sdl.SDL_GetBooleanProperty(
-                        props, sdl.SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN, False
-                    )
-                )
-            finally:
-                sdl.SDL_CloseGamepad(pad)
         return DeviceInfo(
             instance_id=jid,
             guid=guid,
             name=name,
             gamepad_type=gtype,
-            has_gyro=has_gyro,
-            has_accel=has_accel,
-            has_rumble=has_rumble,
         )
 
     def list_devices(
@@ -403,11 +400,22 @@ class Sdl3Host:
             raise RuntimeError(
                 f"Could not open gamepad '{info.name}': {sdl3_error(self._sdl)}"
             )
+        has_gyro, has_accel, has_rumble = self._read_capabilities(pad)
+        resolved = DeviceInfo(
+            instance_id=info.instance_id,
+            guid=info.guid,
+            name=info.name,
+            gamepad_type=info.gamepad_type,
+            has_gyro=has_gyro,
+            has_accel=has_accel,
+            has_rumble=has_rumble,
+        )
+        self._device_cache[info.instance_id] = resolved
         logger.info(
             "SDL3 gamepad opened: '%s' (type=%s, gyro=%s, rumble=%s)",
-            info.name,
-            info.gamepad_type,
-            info.has_gyro,
-            info.has_rumble,
+            resolved.name,
+            resolved.gamepad_type,
+            resolved.has_gyro,
+            resolved.has_rumble,
         )
-        return Sdl3Device(self._sdl, pad, info)
+        return Sdl3Device(self._sdl, pad, resolved)

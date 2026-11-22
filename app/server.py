@@ -172,7 +172,9 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
 
     try:
         await websocket.send_text(frame_text(selection_status()))
-        await websocket.send_text(frame_text(primary.controllers_payload()))
+        await websocket.send_text(
+            frame_text(await asyncio.to_thread(primary.controllers_payload))
+        )
         # Persistent get-tasks, renewed immediately after consumption so
         # no frame is ever stranded in an abandoned task.
         while True:
@@ -387,11 +389,12 @@ async def adapter_inventory(
     joycon_pairing_enabled: bool = False,
 ) -> dict:
     primary = sessions.get("primary")
-    controllers = (
-        await asyncio.to_thread(primary.controller.status)
-        if primary and primary.controller
-        else {}
-    )
+    controllers: dict = {}
+    if primary and primary.controller:
+        try:
+            controllers = await asyncio.to_thread(primary.controller.status)
+        except RuntimeError as error:
+            logger.warning("Controller status unavailable for adapter inventory: %s", error)
     assignments = controllers.get("assignments", {})
     return {
         "adapters": [

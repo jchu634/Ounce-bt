@@ -298,3 +298,55 @@ def test_service_can_stop_and_join_without_controllers():
         service.join(timeout=2)
     assert not service.is_alive()
     assert host.quit_called
+
+
+def test_status_returns_immediately_while_sdl_init_is_in_progress():
+    import threading
+    import time
+
+    init_started = threading.Event()
+    release_init = threading.Event()
+    raw = ControllerInfo(7, "guid-7", "Pro Pad", "switch_pro")
+    probed = ControllerInfo(
+        7, "guid-7", "Pro Pad", "switch_pro", has_gyro=True, has_accel=True, has_rumble=True
+    )
+
+    class BlockingInitHost(FakeHost):
+        def init(self) -> bool:
+            init_started.set()
+            release_init.wait(timeout=5)
+            return True
+
+        def open_device(self, info: ControllerInfo) -> FakeDevice:
+            device = FakeDevice(probed)
+            self.opened.append(device)
+            return device
+
+    service = ControllerService(queue.Queue(), host=BlockingInitHost([raw]))
+    service.add_route("adapter-2")
+    service.start()
+    try:
+        assert init_started.wait(timeout=2)
+        started = time.perf_counter()
+        snap = service.status()
+        assert time.perf_counter() - started < 0.5
+        assert snap == {
+            "controllers": [],
+            "active": None,
+            "assignments": {"primary": None, "adapter-2": None},
+            "available": False,
+        }
+
+        release_init.set()
+        deadline = time.monotonic() + 2.0
+        while not service.status()["available"] and time.monotonic() < deadline:
+            time.sleep(0.01)
+        ready = service.status()
+        assert ready["available"] is True
+        assert ready["active"] == "guid-7"
+        assert ready["assignments"] == {"primary": 7, "adapter-2": None}
+        assert ready["controllers"] == [probed.to_dict()]
+    finally:
+        release_init.set()
+        service.stop()
+        service.join(timeout=2)

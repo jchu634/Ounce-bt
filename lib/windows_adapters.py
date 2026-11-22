@@ -2,12 +2,37 @@
 
 import ctypes
 import re
+import threading
 from collections import Counter
 from dataclasses import dataclass
 from uuid import UUID
 
 import usb1
-from bumble.transport.usb import USB_BT_HCI_CLASS_TUPLE, load_libusb
+from bumble.transport.usb import USB_BT_HCI_CLASS_TUPLE
+from bumble.transport.usb import load_libusb as _load_bumble_libusb
+
+from lib.sdl3 import bundled_libusb_path
+
+_libusb_lock = threading.Lock()
+_libusb_loaded = False
+
+
+def load_libusb() -> None:
+    """Load the bundled Windows libusb-1.0.dll when available, else fall back to Bumble."""
+    global _libusb_loaded
+    if _libusb_loaded:
+        return
+    with _libusb_lock:
+        if _libusb_loaded:
+            return
+        bundled = bundled_libusb_path()
+        if bundled is not None:
+            usb1.loadLibrary(
+                ctypes.WinDLL(str(bundled), use_errno=True, use_last_error=True)
+            )
+        else:
+            _load_bumble_libusb()
+        _libusb_loaded = True
 
 
 @dataclass(frozen=True)

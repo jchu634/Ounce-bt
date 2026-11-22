@@ -43,6 +43,17 @@ def _resolve_binary_dir() -> Path | None:
     return None
 
 
+def bundled_libusb_path() -> Path | None:
+    """Return the bundled Windows libusb-1.0.dll alongside SDL3, if present."""
+    if sys.platform != "win32":
+        return None
+    bundled = _resolve_binary_dir()
+    if bundled is None:
+        return None
+    candidate = bundled / "libusb-1.0.dll"
+    return candidate if candidate.is_file() else None
+
+
 def configure_sdl3_environment() -> None:
     """Disable PySDL3 runtime network checks, locate bundled SDL3, and expose libusb."""
     os.environ.setdefault("SDL_CHECK_VERSION", "0")
@@ -50,18 +61,8 @@ def configure_sdl3_environment() -> None:
     os.environ.setdefault("SDL_CHECK_BINARY_VERSION", "0")
     os.environ.setdefault("SDL_LOG_LEVEL", "2")
 
-    if sys.platform == "win32":
-        try:
-            import libusb_package
-
-            libusb_path = libusb_package.get_library_path()
-            if libusb_path:
-                _register_windows_dll_dir(Path(libusb_path).parent)
-        except ImportError:
-            pass
-
+    bundled = _resolve_binary_dir()
     if "SDL_BINARY_PATH" not in os.environ:
-        bundled = _resolve_binary_dir()
         if bundled is not None:
             _register_windows_dll_dir(bundled)
             os.environ["SDL_BINARY_PATH"] = str(bundled)
@@ -72,6 +73,16 @@ def configure_sdl3_environment() -> None:
             raise RuntimeError(
                 f"Bundled libusb-enabled SDL3 binary is missing under {application_dir() / 'sdl3' / 'bin'}."
             )
+
+    if sys.platform == "win32" and (bundled is None or not (bundled / "libusb-1.0.dll").is_file()):
+        try:
+            import libusb_package
+
+            libusb_path = libusb_package.get_library_path()
+            if libusb_path:
+                _register_windows_dll_dir(Path(libusb_path).parent)
+        except ImportError:
+            pass
 
 
 def load_sdl3() -> Any:
