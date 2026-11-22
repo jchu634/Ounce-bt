@@ -5,8 +5,8 @@
     <img src="./assets/CompactHomepage.png" alt="Compact Homepage" width="29%" />
 </p>
 <p float="left">
-  <img src="./assets/PresetEditor.png" alt="Macro Editor" width="33%" />
-  <img src="./assets/MacroEditor.png" alt="Preset Editor" width="33%" />
+  <img src="./assets/PresetEditor.png" alt="Preset Editor" width="33%" />
+  <img src="./assets/MacroEditor.png" alt="Macro Editor" width="33%" />
   <img src="./assets/Appearance.png" alt="Controller Appearance" width="33%" />
 </p>
 
