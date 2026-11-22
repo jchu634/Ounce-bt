@@ -7,7 +7,11 @@ import {
   SwitchJoyconRight,
 } from "@/src/assets/input-prompts/switch";
 import { controllerColourDefaults, type ControllerColours } from "@/src/lib/controller-colours";
-import { CONTROLLER_VARIANT_NAMES, type ControllerVariant } from "@/src/lib/controller-variants";
+import {
+  CONTROLLER_VARIANT_NAMES,
+  type ControllerVariant,
+  type JoyConSide,
+} from "@/src/lib/controller-variants";
 
 export function ControllerVariantIcon({ variant }: { variant: ControllerVariant }) {
   switch (variant) {
@@ -22,14 +26,29 @@ export function ControllerPreview({
   colours,
   variant = "pro",
   upright = false,
+  activeSide,
 }: {
   colours?: ControllerColours;
   variant?: ControllerVariant;
   upright?: boolean;
+  activeSide?: JoyConSide;
 }) {
   const className = "mx-auto size-full max-w-md";
   if (variant === "combined") {
-    return <JoyConPair role="img" aria-label="Joycons preview" className={className} />;
+    return (
+      <JoyConPair
+        left={activeSide === "joycon_l" ? colours : undefined}
+        right={activeSide === "joycon_r" ? colours : undefined}
+        activeSide={activeSide}
+        role="img"
+        aria-label={
+          activeSide
+            ? `${CONTROLLER_VARIANT_NAMES[activeSide]} combined preview`
+            : "Joycons preview"
+        }
+        className={className}
+      />
+    );
   }
   const palette = colours ?? controllerColourDefaults(variant);
   if (variant !== "pro") {

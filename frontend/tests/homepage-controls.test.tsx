@@ -800,7 +800,7 @@ it("opens controller settings and sends actions for the card’s saved profile",
   await act(async () => button("Close").click());
   await act(async () => button("General Settings").click());
   expect(document.querySelector('[role="tablist"]')?.textContent).toBe(
-    "GeneralControllerCredits",
+    "GeneralControllerAdvancedCredits",
   );
   await act(async () => button("Controller").click());
   expect(
@@ -821,4 +821,337 @@ it("opens controller settings and sends actions for the card’s saved profile",
       body: JSON.stringify({ address }),
     }),
   );
+});
+
+it("pairs and unpairs two Joy-Con adapters and switches between Combined and Individual input modes", async () => {
+  type AdapterEntry = {
+    id: string;
+    transport: string;
+    controller_id: number | null;
+    preset: string | null;
+    macro_mode: boolean;
+    local_address: string | null;
+    error: string | null;
+    controller_type: BluetoothControllerType;
+    combined_with: string | null;
+    combined_input_mode: "combined" | "individual";
+  };
+  let adapters: AdapterEntry[] = [
+    {
+      id: "primary",
+      transport: "usb:0",
+      controller_id: 1,
+      preset: "xbox",
+      macro_mode: false,
+      local_address: "02:00:00:00:00:01",
+      error: null,
+      controller_type: "pro",
+      combined_with: null,
+      combined_input_mode: "combined",
+    },
+    {
+      id: "adapter-2",
+      transport: "usb:1",
+      controller_id: 2,
+      preset: "switch",
+      macro_mode: false,
+      local_address: "02:00:00:00:00:02",
+      error: null,
+      controller_type: "joycon_l",
+      combined_with: null,
+      combined_input_mode: "combined",
+    },
+    {
+      id: "adapter-3",
+      transport: "usb:2",
+      controller_id: null,
+      preset: "playstation",
+      macro_mode: false,
+      local_address: "02:00:00:00:00:03",
+      error: null,
+      controller_type: "joycon_r",
+      combined_with: null,
+      combined_input_mode: "combined",
+    },
+  ];
+  const controllers = [
+    { id: 1, guid: "pad-1", name: "Xbox Controller" },
+    { id: 2, guid: "pad-2", name: "DualSense Wireless" },
+    { id: 3, guid: "pad-3", name: "Joy-Con (R)" },
+  ];
+  let joyconPairingEnabled = false;
+  const inventory = () => ({
+    adapters,
+    controllers,
+    controllers_available: true,
+    joycon_pairing_enabled: joyconPairingEnabled,
+  });
+  const btStatus: BluetoothStatus = {
+    available: true,
+    pairing: false,
+    state: "disconnected",
+    address: null,
+    player_number: null,
+    peers: [],
+    names: {},
+    failure_id: 0,
+    failure: null,
+  };
+  const fetchRequest = vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === "/api/adapters") return Response.json(inventory());
+    if (path === "/api/bluetooth" || path.endsWith("/bluetooth")) return Response.json(btStatus);
+    if (path === "/api/adapters/pair" && init?.method === "POST") {
+      adapters = adapters.map((entry) =>
+        entry.id === "adapter-2"
+          ? { ...entry, combined_with: "adapter-3", combined_input_mode: "combined" }
+          : entry.id === "adapter-3"
+            ? { ...entry, combined_with: "adapter-2", combined_input_mode: "combined" }
+            : entry,
+      );
+      return Response.json(inventory());
+    }
+    if (path === "/api/adapters/adapter-2/pair-mode" && init?.method === "PUT") {
+      const { input_mode } = JSON.parse(String(init.body)) as {
+        input_mode: "combined" | "individual";
+      };
+      adapters = adapters.map((entry) =>
+        entry.id === "adapter-2" || entry.id === "adapter-3"
+          ? { ...entry, combined_input_mode: input_mode }
+          : entry,
+      );
+      return Response.json(inventory());
+    }
+    if (path === "/api/adapters/adapter-2/pair" && init?.method === "DELETE") {
+      adapters = adapters.map((entry) =>
+        entry.id === "adapter-2" || entry.id === "adapter-3"
+          ? { ...entry, combined_with: null, combined_input_mode: "combined" }
+          : entry,
+      );
+      return Response.json(inventory());
+    }
+    const presetMatch = path.match(/^\/api\/adapters\/([^/]+)\/preset\/([^/]+)$/);
+    if (presetMatch && init?.method === "POST") {
+      const [, id, presetName] = presetMatch;
+      adapters = adapters.map((entry) =>
+        entry.id === id ? { ...entry, preset: presetName } : entry,
+      );
+      return Response.json(inventory());
+    }
+    if (path.includes("/colours")) {
+      return Response.json({
+        controller_colours: DEFAULT_CONTROLLER_COLOURS,
+        colours_reconnect_required: false,
+      });
+    }
+    if (path === "/api/presets") {
+      return Response.json({
+        active: "xbox",
+        presets: [
+          { filename: "xbox", name: "Xbox", active: true, builtin: true },
+          { filename: "switch", name: "Switch", active: false, builtin: true },
+          { filename: "playstation", name: "PlayStation", active: false, builtin: true },
+        ],
+      });
+    }
+    if (path === "/api/config") {
+      if (init?.method === "PATCH") {
+        const change = JSON.parse(String(init.body)) as { joycon_pairing_enabled?: boolean };
+        if (typeof change.joycon_pairing_enabled === "boolean") {
+          joyconPairingEnabled = change.joycon_pairing_enabled;
+        }
+        return Response.json({
+          config: {
+            vibration_enabled: true,
+            motion_enabled: true,
+            joycon_pairing_enabled: joyconPairingEnabled,
+          },
+          colours_reconnect_required: false,
+        });
+      }
+      return Response.json({
+        vibration_enabled: true,
+        motion_enabled: true,
+        joycon_pairing_enabled: joyconPairingEnabled,
+      });
+    }
+    return Response.json({}, { status: 404 });
+  });
+  vi.stubGlobal("fetch", fetchRequest);
+  vi.spyOn(socket, "start").mockImplementation(() => {});
+  const send = vi.spyOn(socket, "send").mockReturnValue(true);
+  let receive: ((frame: ServerFrame) => void) | undefined;
+  vi.spyOn(socket, "onFrame").mockImplementation((handler) => {
+    receive = handler;
+    return () => {};
+  });
+
+  await act(async () => {
+    root.render(
+      <SocketProvider>
+        <CaptureProvider>
+          <SettingsDialog />
+          <ConnectionPanel onEditPreset={() => {}} />
+        </CaptureProvider>
+      </SocketProvider>,
+    );
+  });
+
+  // Joy-Con pairing is locked behind the Advanced settings tab by default.
+  expect(
+    Array.from(container.querySelectorAll("button")).find((el) => el.textContent?.trim() === "Pair"),
+  ).toBeUndefined();
+
+  await act(async () => button("General Settings").click());
+  await act(async () => button("Advanced").click());
+  const advancedPanel = document.querySelector('[role="tabpanel"]:not([hidden])');
+  expect(advancedPanel?.textContent).toContain("not quite stable");
+  const pairingCheckbox = advancedPanel?.querySelector<HTMLElement>('[role="checkbox"]');
+  if (!pairingCheckbox) throw new Error("Missing Joy-Con pairing checkbox");
+  await act(async () => pairingCheckbox.click());
+  expect(fetchRequest).toHaveBeenCalledWith(
+    "/api/config",
+    expect.objectContaining({
+      method: "PATCH",
+      body: JSON.stringify({ joycon_pairing_enabled: true }),
+    }),
+  );
+  await act(async () => button("Close").click());
+
+  const manual: AdapterInputStatus = { mode: "manual", macro: null };
+  // Selecting Pro + Joy-Con L keeps Pair disabled.
+  await act(async () =>
+    receive?.({
+      type: "status",
+      ...manual,
+      adapter_id: "primary",
+      adapter_statuses: { primary: manual, "adapter-2": manual },
+    }),
+  );
+  expect(button("Pair").disabled).toBe(true);
+
+  // Selecting Joy-Con L + Joy-Con R enables Pair.
+  await act(async () =>
+    receive?.({
+      type: "status",
+      ...manual,
+      adapter_id: "adapter-2",
+      adapter_statuses: { "adapter-2": manual, "adapter-3": manual },
+    }),
+  );
+  expect(button("Pair").disabled).toBe(false);
+  await act(async () => button("Pair").click());
+  expect(fetchRequest).toHaveBeenCalledWith(
+    "/api/adapters/pair",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ adapter_ids: ["adapter-2", "adapter-3"] }),
+    }),
+  );
+
+  // Clicking either paired Joy-Con card selects both adapters together.
+  await act(async () => button("Send manual and macro input through usb:2").click());
+  expect(send).toHaveBeenLastCalledWith({
+    type: "select_adapters",
+    adapter_ids: ["adapter-2", "adapter-3"],
+  });
+  await act(async () => button("Send manual and macro input through usb:1").click());
+  expect(send).toHaveBeenLastCalledWith({
+    type: "select_adapters",
+    adapter_ids: ["adapter-2", "adapter-3"],
+  });
+  // Ctrl-clicking primary adds it, then Ctrl-clicking either paired card toggles both paired cards out.
+  await act(async () =>
+    button("Send manual and macro input through usb:0").dispatchEvent(
+      new MouseEvent("click", { bubbles: true, ctrlKey: true }),
+    ),
+  );
+  expect(send).toHaveBeenLastCalledWith({
+    type: "select_adapters",
+    adapter_ids: ["primary", "adapter-2", "adapter-3"],
+  });
+  await act(async () =>
+    button("Send manual and macro input through usb:2").dispatchEvent(
+      new MouseEvent("click", { bubbles: true, ctrlKey: true }),
+    ),
+  );
+  expect(send).toHaveBeenLastCalledWith({
+    type: "select_adapter",
+    adapter_id: "primary",
+  });
+  // Re-select the pair so Unpair header state is verified below.
+  await act(async () =>
+    receive?.({
+      type: "status",
+      ...manual,
+      adapter_id: "primary",
+      adapter_statuses: { primary: manual },
+    }),
+  );
+  await act(async () =>
+    receive?.({
+      type: "status",
+      ...manual,
+      adapter_id: "adapter-2",
+      adapter_statuses: { "adapter-2": manual, "adapter-3": manual },
+    }),
+  );
+
+  // In default Combined mode, both icons render combined pair with opposite side greyed out.
+  const cards = container.querySelectorAll("article");
+  expect(cards).toHaveLength(3);
+  expect(cards[1].querySelector('[data-side="joycon_r"][data-inactive="true"]')).not.toBeNull();
+  expect(cards[2].querySelector('[data-side="joycon_l"][data-inactive="true"]')).not.toBeNull();
+  expect(cards[2].querySelector("h3")?.textContent).toContain("Shared with DualSense Wireless");
+  expect(button("Combined").getAttribute("aria-pressed")).toBe("true");
+  expect(button("Individual").getAttribute("aria-pressed")).toBe("false");
+  // Header button switches to Unpair when both paired cards are selected.
+  expect(button("Unpair").disabled).toBe(false);
+
+  // Switch to Individual mode -> single upright icons and partner preset dropdown in each dialog.
+  await act(async () => button("Individual").click());
+  expect(fetchRequest).toHaveBeenCalledWith(
+    "/api/adapters/adapter-2/pair-mode",
+    expect.objectContaining({
+      method: "PUT",
+      body: JSON.stringify({ input_mode: "individual" }),
+    }),
+  );
+  expect(cards[1].querySelector('svg[viewBox="19 6 26 52"]')).not.toBeNull();
+  expect(cards[2].querySelector('svg[viewBox="19 6 26 52"]')).not.toBeNull();
+
+  // Open Left Joy-Con dialog -> includes Joy-Con R preset dropdown.
+  await act(async () =>
+    cards[1].querySelector<HTMLButtonElement>('[aria-label="Controller settings"]')?.click(),
+  );
+  expect(button("Joy-Con R preset").textContent).toContain("PlayStation");
+  await chooseOption("Joy-Con R preset", "Xbox");
+  expect(fetchRequest).toHaveBeenCalledWith(
+    "/api/adapters/adapter-3/preset/xbox",
+    expect.objectContaining({ method: "POST" }),
+  );
+  await act(async () => button("Close").click());
+
+  // Open Right Joy-Con dialog -> includes Joy-Con L preset dropdown.
+  await act(async () =>
+    cards[2].querySelector<HTMLButtonElement>('[aria-label="Controller settings"]')?.click(),
+  );
+  expect(button("Joy-Con L preset").textContent).toContain("Switch");
+  await act(async () => button("Close").click());
+
+  // Clicking the far-right unlink button requires confirmation before calling DELETE.
+  await act(async () => button("Unpair usb:1 and usb:2").click());
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+    "Unpair Joy-Con adapters?",
+  );
+  const dialogButtons = Array.from(
+    document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button'),
+  );
+  const confirmUnpair = dialogButtons.find((el) => el.textContent?.trim() === "Unpair");
+  if (!confirmUnpair) throw new Error("Missing confirm Unpair button");
+  await act(async () => confirmUnpair.click());
+  expect(fetchRequest).toHaveBeenCalledWith(
+    "/api/adapters/adapter-2/pair",
+    expect.objectContaining({ method: "DELETE" }),
+  );
+  expect(container.querySelector('[aria-label="Paired Joy-Con input mode"]')).toBeNull();
 });

@@ -134,15 +134,27 @@ def rotate_joycon_stick(state: ControllerState, variant: ControllerVariant) -> C
     return state
 
 
+def filter_joycon_state(state: ControllerState, controller_type: ControllerTypes) -> ControllerState:
+    """Keep only the buttons and analog stick belonging to one Joy-Con side."""
+    mask = JOYCON_BUTTONS.get(controller_type)
+    if mask is None:
+        return state
+    return ControllerState(
+        state.buttons & mask,
+        left=state.left if controller_type != ControllerTypes.JOYCON_R else NEUTRAL.left,
+        right=state.right if controller_type != ControllerTypes.JOYCON_L else NEUTRAL.right,
+    )
+
+
 def apply_to_protocol(protocol, state: ControllerState) -> None:
     """
     Push a controller state onto a Switch ControllerProtocol.
     """
     controller_type = getattr(protocol, "controller_type", ControllerTypes.PRO_CONTROLLER)
-    mask = JOYCON_BUTTONS.get(controller_type)
-    b = int(state.buttons if mask is None else state.buttons & mask)
+    filtered = filter_joycon_state(state, controller_type)
+    b = int(filtered.buttons)
     protocol.set_button_inputs(b & 0xFF, (b >> 8) & 0xFF, (b >> 16) & 0xFF)
     if controller_type != ControllerTypes.JOYCON_R:
-        protocol.set_left_stick_inputs(calibrate_stick(state.left, PRO_LEFT))
+        protocol.set_left_stick_inputs(calibrate_stick(filtered.left, PRO_LEFT))
     if controller_type != ControllerTypes.JOYCON_L:
-        protocol.set_right_stick_inputs(calibrate_stick(state.right, PRO_RIGHT))
+        protocol.set_right_stick_inputs(calibrate_stick(filtered.right, PRO_RIGHT))

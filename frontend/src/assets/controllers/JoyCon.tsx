@@ -41,20 +41,39 @@ export function JoyCon({
 type JoyConPairProps = SVGProps<SVGSVGElement> & {
   left?: JoyConColours;
   right?: JoyConColours;
+  activeSide?: JoyConSide;
+};
+
+const INACTIVE_JOYCON_COLOURS: JoyConColours = {
+  body: "#71717A",
+  buttons: "#27272A",
 };
 
 export function JoyConPair({
   left = controllerColourDefaults("joycon_l"),
   right = controllerColourDefaults("joycon_r"),
+  activeSide,
   ...props
 }: JoyConPairProps) {
+  const leftInactive = activeSide === "joycon_r";
+  const rightInactive = activeSide === "joycon_l";
   return (
     <svg viewBox="6 6 52 52" {...props}>
-      <g transform="translate(-13 0)">
-        <JoyConParts side="joycon_l" colours={left} />
+      <g
+        transform="translate(-13 0)"
+        opacity={leftInactive ? 0.35 : undefined}
+        data-side="joycon_l"
+        data-inactive={leftInactive || undefined}
+      >
+        <JoyConParts side="joycon_l" colours={leftInactive ? INACTIVE_JOYCON_COLOURS : left} />
       </g>
-      <g transform="translate(13 0)">
-        <JoyConParts side="joycon_r" colours={right} />
+      <g
+        transform="translate(13 0)"
+        opacity={rightInactive ? 0.35 : undefined}
+        data-side="joycon_r"
+        data-inactive={rightInactive || undefined}
+      >
+        <JoyConParts side="joycon_r" colours={rightInactive ? INACTIVE_JOYCON_COLOURS : right} />
       </g>
     </svg>
   );

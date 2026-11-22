@@ -24,6 +24,13 @@ import { MotionSetting, VibrationSetting } from "./vibration-setting";
 import { ControllerVariantIcon } from "./controller-preview";
 import type { ControllerVariant } from "@/src/lib/controller-variants";
 
+export type PartnerPresetSettings = {
+  label: string;
+  preset: string | null;
+  macroMode: boolean;
+  applyPreset: (preset: string) => void;
+};
+
 export type MappingSettings = {
   available: boolean;
   options: { id: string; name: string; disabled?: boolean }[];
@@ -37,6 +44,7 @@ export type MappingSettings = {
   allowUnassign: boolean;
   selectController: (id: string | null) => void;
   applyPreset: (preset: string) => void;
+  partnerPreset?: PartnerPresetSettings;
 };
 
 export function ControllerMappingDialog({
@@ -173,6 +181,7 @@ function MappingControls({
     allowUnassign,
     selectController,
     applyPreset,
+    partnerPreset,
   } = controller;
   const activeName = options.find((option) => option.id === active)?.name;
   const selection = active ?? (allowUnassign ? "unassigned" : null);
@@ -203,6 +212,11 @@ function MappingControls({
   const activePreset = presets?.presets.find(
     (entry) => entry.filename === (preset ?? presets.active),
   );
+  const activePartnerPreset = partnerPreset
+    ? presets?.presets.find(
+        (entry) => entry.filename === (partnerPreset.preset ?? presets.active),
+      )
+    : undefined;
 
   return (
     <div className="space-y-4" aria-busy={changing}>
@@ -320,6 +334,65 @@ function MappingControls({
             </div>
           )}
         </div>
+        {partnerPreset && (
+          <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1">
+            <p className="text-sm font-medium">{partnerPreset.label}</p>
+            <div className="flex min-w-0 items-center gap-1">
+              <Select
+                value={activePartnerPreset?.filename ?? null}
+                disabled={
+                  changing ||
+                  partnerPreset.macroMode ||
+                  !!loadError ||
+                  !presets?.presets.length
+                }
+                onValueChange={(value) => {
+                  if (value !== null && value !== activePartnerPreset?.filename) {
+                    partnerPreset.applyPreset(value);
+                  }
+                }}
+              >
+                <SelectTrigger
+                  className="w-full min-w-0"
+                  aria-label={partnerPreset.label}
+                >
+                  <SelectValue
+                    placeholder={
+                      presets || loadError
+                        ? "No preset selected"
+                        : "Loading presets…"
+                    }
+                  >
+                    {activePartnerPreset ? (
+                      <span className="truncate">{activePartnerPreset.name}</span>
+                    ) : null}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {presets?.presets.map((entry) => (
+                    <SelectItem key={entry.filename} value={entry.filename}>
+                      {entry.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="action-hover"
+                aria-label={`Edit ${partnerPreset.label.toLowerCase()}`}
+                title={`Edit ${partnerPreset.label.toLowerCase()}`}
+                disabled={!activePartnerPreset || changing}
+                onClick={() => {
+                  if (activePartnerPreset) onEditPreset(activePartnerPreset);
+                }}
+              >
+                <PencilSimpleIcon />
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
       <div className="space-y-3">
         <VibrationSetting controllerGuid={controllerGuid} />

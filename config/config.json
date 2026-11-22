@@ -19,6 +19,7 @@
   "input_specs": [
     "controller"
   ],
+  "joycon_pairing_enabled": false,
   "last_camera_device_id": "",
   "macro_rate_hz": 120,
   "macros_dir": "macros",

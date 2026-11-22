@@ -112,6 +112,86 @@ def test_universal_rail_macro_reaches_both_combined_joycon_reports():
         ]
 
 
+def test_paired_joycons_individual_mode_routes_inputs_and_imu_independently():
+    left = AdapterSession("primary", "usb:0", queue.Queue(), None)
+    right = AdapterSession("adapter-2", "usb:1", queue.Queue(), None)
+    left.bluetooth.set_controller_type(ControllerVariant.LEFT)
+    right.bluetooth.set_controller_type(ControllerVariant.RIGHT)
+    left.combined_partner, right.combined_partner = right, left
+
+    # Default combined mode shares left's input and IMU demand.
+    assert left.input_owner is left
+    assert right.input_owner is left
+    right.imu_active = True
+    assert left.imu_requested() is True
+    left_state = ControllerState(Button.L, left=(0.5, -0.5))
+    right_state = ControllerState(Button.A, right=(0.0, 1.0))
+    assert left.output_input(left_state) == left_state
+    assert right.output_input(right_state) == left_state
+
+    # Individual mode gives each Joy-Con its own input owner without horizontal stick rotation.
+    left.combined_input_mode = "individual"
+    right.combined_input_mode = "individual"
+    assert left.input_owner is left
+    assert right.input_owner is right
+    assert left.mapping_variant() == ControllerVariant.COMBINED
+    assert right.mapping_variant() == ControllerVariant.COMBINED
+    assert left.imu_requested() is False
+    assert right.imu_requested() is True
+    assert left.output_input(left_state) == left_state
+    assert right.output_input(right_state) == right_state
+
+
+def test_combined_macro_splits_buttons_and_sticks_per_joycon():
+    from lib.controller import ControllerTypes
+    from lib.input.state import filter_joycon_state
+    from lib.input.stick import PRO_LEFT, PRO_RIGHT, calibrate_stick
+
+    left = AdapterSession("primary", "usb:0", queue.Queue(), None)
+    right = AdapterSession("adapter-2", "usb:1", queue.Queue(), None)
+    left.bluetooth.set_controller_type(ControllerVariant.LEFT)
+    right.bluetooth.set_controller_type(ControllerVariant.RIGHT)
+    left.combined_partner, right.combined_partner = right, left
+
+    macro = {"actions": [
+        {"do": "press", "button": "UP"},
+        {"do": "stick", "side": "left", "x": 1.0, "y": 0.0},
+        {"do": "press", "button": "A"},
+        {"do": "stick", "side": "right", "x": 0.0, "y": 1.0},
+    ]}
+    # Combined mode: single macro stream splits cleanly across L and R protocols.
+    states = queue.Queue()
+    MacroPlayerThread(macro, states).run()
+    emitted = []
+    while not states.empty():
+        emitted.append(states.get_nowait())
+    peak = emitted[-2]
+
+    protocol_l = ControllerProtocol(ControllerTypes.JOYCON_L, ADDRESS)
+    protocol_r = ControllerProtocol(ControllerTypes.JOYCON_R, ADDRESS)
+    for protocol in (protocol_l, protocol_r):
+        protocol.device_info_queried = True
+        protocol.set_full_input_report()
+    apply_to_protocol(protocol_l, left.output_input(peak))
+    apply_to_protocol(protocol_r, right.output_input(NEUTRAL))
+    report_l = protocol_l.get_report()
+    report_r = protocol_r.get_report()
+    assert report_l[4:7] == int(Button.UP).to_bytes(3, "little")
+    assert report_l[7:10] == bytes(calibrate_stick((1.0, 0.0), PRO_LEFT))
+    assert report_l[10:13] == b"\x00\x00\x00"
+    assert report_r[4:7] == int(Button.A).to_bytes(3, "little")
+    assert report_r[7:10] == b"\x00\x00\x00"
+    assert report_r[10:13] == bytes(calibrate_stick((0.0, 1.0), PRO_RIGHT))
+
+    # Per-Joy-Con state filter strips opposite-side buttons and stick.
+    assert filter_joycon_state(peak, ControllerTypes.JOYCON_L) == ControllerState(
+        Button.UP, left=(1.0, 0.0), right=(0.0, 0.0)
+    )
+    assert filter_joycon_state(peak, ControllerTypes.JOYCON_R) == ControllerState(
+        Button.A, left=(0.0, 0.0), right=(0.0, 1.0)
+    )
+
+
 def test_adapter_reopens_after_status_only_capability_response(monkeypatch):
     async def scenario():
         async def incomplete_power_on():

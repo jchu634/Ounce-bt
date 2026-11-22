@@ -37,10 +37,12 @@ export function ControllerColoursDialog({
   adapterId,
   variant,
   upright,
+  combinedShared,
 }: {
   adapterId?: string;
   variant?: BluetoothControllerType;
   upright?: boolean;
+  combinedShared?: boolean;
 }) {
   const id = useId();
   const controllerType = variant ?? "pro";
@@ -166,7 +168,12 @@ export function ControllerColoursDialog({
         }
       >
         <span className="block size-full" aria-hidden="true">
-          <ControllerPreview colours={saved ?? defaults} variant={controllerType} upright={upright} />
+          <ControllerPreview
+            colours={saved ?? defaults}
+            variant={combinedShared && controllerType !== "pro" ? "combined" : controllerType}
+            upright={upright}
+            activeSide={combinedShared && controllerType !== "pro" ? controllerType : undefined}
+          />
         </span>
       </DialogTrigger>
       <DialogContent className="action-hover-group app-scrollbar max-h-[calc(100dvh-2rem)] gap-4 overflow-y-auto bg-background sm:max-w-2xl">

@@ -25,6 +25,7 @@ from lib.input.state import (
     NEUTRAL,
     Button,
     ControllerState,
+    filter_joycon_state,
     horizontal_manual_input,
     rotate_joycon_stick,
 )
@@ -339,6 +340,7 @@ class AdapterSession:
     profile_index: int | None = None
     legacy_keystore: bool = False
     combined_partner: "AdapterSession | None" = field(default=None, repr=False, compare=False)
+    combined_input_mode: str = "combined"
     combined_input: ControllerState = NEUTRAL
     imu_active: bool = False
     _grip_pending: bool = field(default=False, init=False)
@@ -349,20 +351,29 @@ class AdapterSession:
     def primary(self) -> bool:
         return self.id == "primary"
 
+    @property
+    def is_combined_shared(self) -> bool:
+        return self.combined_partner is not None and self.combined_input_mode == "combined"
+
     def imu_requested(self) -> bool:
         return self.imu_active or bool(
-            self.combined_partner and self.combined_partner.imu_active
+            self.is_combined_shared and self.combined_partner.imu_active
         )
 
     def mapping_variant(self) -> ControllerVariant:
         return ControllerVariant.COMBINED if self.combined_partner else self.bluetooth.controller_type
 
     def map_manual_input(self, state: ControllerState) -> ControllerState:
-        return horizontal_manual_input(state, self.mapping_variant())
+        mapped = horizontal_manual_input(state, self.mapping_variant())
+        if self.combined_partner is not None and self.combined_input_mode == "individual":
+            return filter_joycon_state(mapped, self.bluetooth.controller_type.bluetooth_type)
+        return mapped
 
     def output_input(self, state: ControllerState) -> ControllerState:
         if not self.combined_partner:
             return rotate_joycon_stick(state, self.bluetooth.controller_type)
+        if self.combined_input_mode == "individual":
+            return state
         owner = self.input_owner
         if owner is self:
             self.combined_input = state
@@ -397,7 +408,7 @@ class AdapterSession:
 
     @property
     def input_owner(self) -> "AdapterSession":
-        if self.combined_partner and self.bluetooth.controller_type == ControllerVariant.RIGHT:
+        if self.is_combined_shared and self.bluetooth.controller_type == ControllerVariant.RIGHT:
             return self.combined_partner
         return self
 
@@ -411,8 +422,10 @@ def configure_adapter_outputs(
             continue
         profile = profiles[index]
         partner = by_index.get(profile.combined_with) if profile.combined_with is not None else None
-        if session.combined_partner is not partner:
+        input_mode = profile.combined_input_mode if partner is not None else "combined"
+        if session.combined_partner is not partner or session.combined_input_mode != input_mode:
             session.combined_input = NEUTRAL
             session.combined_partner = partner
+            session.combined_input_mode = input_mode
         if session.bluetooth.controller_type != profile.controller_type:
             session.bluetooth.set_controller_type(profile.controller_type)

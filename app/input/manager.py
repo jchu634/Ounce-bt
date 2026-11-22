@@ -231,7 +231,12 @@ class InputManager:
                 self.mode = "manual"
         self.broadcast_status()
 
-    def start_macro(self, macro: dict) -> None:
+    def start_macro(
+        self,
+        macro: dict,
+        *,
+        state_filter: Callable[[ControllerState], ControllerState] | None = None,
+    ) -> None:
         """Start a macro if this adapter has no active playback."""
         with self._lock:
             if self._macro is not None:
@@ -244,7 +249,9 @@ class InputManager:
                 self.command_queue,
                 rate_hz=self.macro_rate_hz,
                 on_finish=lambda: self._on_macro_finished(thread),
-                publish=lambda state: self._publish_macro_state(thread, state),
+                publish=lambda state: self._publish_macro_state(
+                    thread, state_filter(state) if state_filter is not None else state
+                ),
             )
             self._macro = thread
             self._macro_name = name

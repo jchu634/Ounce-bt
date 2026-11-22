@@ -179,9 +179,11 @@ async def run_mainloop(
     command_queue,
     rumble_enabled: bool = True,
     controller_service: ControllerService | None = None,
+    controller_service_getter: Callable[[], ControllerService | None] | None = None,
     vibration_allowed: Callable[[], bool] | None = None,
     motion_allowed: Callable[[], bool] | None = None,
     imu_source=None,
+    imu_source_getter: Callable[[], object] | None = None,
     on_imu_active: Callable[[bool], None] | None = None,
     horizontal_imu: bool = False,
     player_changed: Callable[[int | None], None] | None = None,
@@ -206,6 +208,8 @@ async def run_mainloop(
     imu_cursor = 0
     next_imu_at = 0.0
     last_imu_active: bool | None = None
+    active_imu_source = None
+    active_rumble_service = None
 
     try:
         while not stop_event.is_set():
@@ -236,16 +240,20 @@ async def run_mainloop(
                 player_changed(protocol.player_number)
 
             # Update IMU payload on a 15 ms (~66.7 Hz) cadence matching Switch 3x5ms framing.
+            resolved_imu = imu_source_getter() if imu_source_getter is not None else imu_source
+            if resolved_imu is not active_imu_source:
+                active_imu_source = resolved_imu
+                imu_cursor = 0
             imu_on = protocol.imu_enabled and (
                 motion_allowed() if motion_allowed is not None else True
             )
             if on_imu_active is not None and imu_on != last_imu_active:
                 on_imu_active(imu_on)
                 last_imu_active = imu_on
-            if imu_on and imu_source is not None:
+            if imu_on and resolved_imu is not None:
                 now = perf_counter()
                 if now >= next_imu_at:
-                    imu_cursor, samples = imu_source.read_imu_since(imu_cursor)
+                    imu_cursor, samples = resolved_imu.read_imu_since(imu_cursor)
                     if samples:
                         protocol.set_imu_inputs(
                             pack_imu_frames(
@@ -272,13 +280,22 @@ async def run_mainloop(
             allowed = rumble_enabled and protocol.vibration_enabled
             if vibration_allowed is not None:
                 allowed = allowed and vibration_allowed()
-            if controller_service is not None:
+            resolved_rumble = (
+                controller_service_getter()
+                if controller_service_getter is not None
+                else controller_service
+            )
+            if resolved_rumble is not active_rumble_service:
+                if active_rumble_service is not None:
+                    active_rumble_service.set_rumble(None)
+                active_rumble_service = resolved_rumble
+            if resolved_rumble is not None:
                 if not allowed:
-                    controller_service.set_rumble(None)
+                    resolved_rumble.set_rumble(None)
                 elif reply:
                     rumble = parse_rumble(reply)
                     if rumble is not None:
-                        controller_service.set_rumble(rumble)
+                        resolved_rumble.set_rumble(rumble)
 
             try:
                 if report[3:] != cached:
@@ -303,7 +320,9 @@ async def run_mainloop(
     finally:
         if on_imu_active is not None:
             on_imu_active(False)
-        if controller_service is not None:
+        if active_rumble_service is not None:
+            active_rumble_service.set_rumble(None)
+        elif controller_service is not None:
             controller_service.set_rumble(None)
 
 
@@ -1179,7 +1198,6 @@ async def run_powered_adapter(
                 if variant == ControllerVariant.PRO else default_colours(variant)
             )
             protocol.set_colours(**colours)
-            owner = session.input_owner
             single_joycon = session.mapping_variant().is_single_joycon
             session.reset_grip(pairing=bluetooth.pairing)
 
@@ -1207,11 +1225,11 @@ async def run_powered_adapter(
                     state.incoming,
                     state.session_stop,
                     command_queue,
-                    controller_service=controller_service if owner is session else None,
+                    controller_service_getter=lambda: controller_service if session.input_owner is session else None,
                     tick_rate_hz=config.tick_rate_hz,
                     vibration_allowed=vibration_allowed,
                     motion_allowed=motion_allowed,
-                    imu_source=owner.controller,
+                    imu_source_getter=lambda: session.input_owner.controller,
                     on_imu_active=lambda active: setattr(session, "imu_active", active),
                     horizontal_imu=single_joycon,
                     player_changed=lambda number: setattr(

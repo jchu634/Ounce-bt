@@ -51,6 +51,7 @@ from lib.input.presets import (
     save_preset_text,
     validate_preset,
 )
+from lib.input.state import filter_joycon_state
 from lib.server.files import (
     DocError,
     JsonDocStore,
@@ -104,7 +105,18 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
     managers.update({
         slot.id: slot.input_manager for slot in sessions.values() if slot.input_manager
     })
-    selected = ("primary",)
+    def expand_selected(adapter_ids: tuple[str, ...]) -> tuple[str, ...]:
+        expanded: list[str] = []
+        for adapter_id in adapter_ids:
+            if adapter_id not in expanded:
+                expanded.append(adapter_id)
+            slot = sessions.get(adapter_id)
+            partner = slot.combined_partner if slot else None
+            if partner is not None and partner.id in managers and partner.id not in expanded:
+                expanded.append(partner.id)
+        return tuple(expanded)
+
+    selected = expand_selected(("primary",))
     manual_targets: set[InputManager] = set()
 
     def target_for(adapter_id: str) -> str:
@@ -112,20 +124,21 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
         return slot.input_owner.id if slot else adapter_id
 
     def selection_status() -> dict:
+        current = expand_selected(selected)
         has_joycons = any(
             adapter_id in sessions and sessions[adapter_id].mapping_variant() != ControllerVariant.PRO
-            for adapter_id in selected
+            for adapter_id in current
         )
         output = {"has_joycons": True} if has_joycons else {}
-        if len(selected) == 1 and target_for(selected[0]) == selected[0]:
-            return {**managers[selected[0]].status_payload(), **output}
+        if len(current) == 1 and target_for(current[0]) == current[0]:
+            return {**managers[current[0]].status_payload(), **output}
         statuses = {
-            adapter_id: managers[target_for(adapter_id)].status() for adapter_id in selected
+            adapter_id: managers[target_for(adapter_id)].status() for adapter_id in current
         }
         return {
             "type": "status",
-            "adapter_id": selected[0],
-            **statuses[selected[0]],
+            "adapter_id": current[0],
+            **statuses[current[0]],
             "adapter_statuses": statuses,
             **output,
         }
@@ -178,11 +191,12 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
                     if isinstance(message, SelectAdapter):
                         if any(adapter_id not in managers for adapter_id in message.adapter_ids):
                             raise ProtocolError("Unknown adapter")
-                        if set(selected) != set(message.adapter_ids):
+                        next_selected = expand_selected(message.adapter_ids)
+                        if set(expand_selected(selected)) != set(next_selected):
                             for manager in manual_targets:
                                 manager.release_manual_input()
                             manual_targets.clear()
-                            selected = message.adapter_ids
+                        selected = next_selected
                         await websocket.send_text(frame_text(selection_status()))
                     elif isinstance(message, (EventMessage, StateMessage)):
                         state = (
@@ -190,7 +204,7 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
                             if isinstance(message, EventMessage) else message.to_state()
                         )
                         accepted = False
-                        for adapter_id in dict.fromkeys(map(target_for, selected)):
+                        for adapter_id in dict.fromkeys(map(target_for, expand_selected(selected))):
                             manager = managers[adapter_id]
                             if manager.submit_state(state):
                                 accepted = True
@@ -200,9 +214,10 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
                                 error_frame("manual input disabled while macro running")
                             )
                     else:
-                        targets = tuple(dict.fromkeys(map(target_for, selected)))
+                        targets = tuple(dict.fromkeys(map(target_for, expand_selected(selected))))
                         error = _dispatch_macro(
-                            message, [managers[target] for target in targets],
+                            message,
+                            [(managers[target], sessions.get(target)) for target in targets],
                             {sessions[target].mapping_variant() if target in sessions
                              else ControllerVariant.PRO for target in targets},
                         )
@@ -225,7 +240,7 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
                 payload = status_task.result()
                 status_task = asyncio.create_task(status_q.get())
                 if payload["type"] == "status":
-                    if payload.get("adapter_id", "primary") not in map(target_for, selected):
+                    if payload.get("adapter_id", "primary") not in map(target_for, expand_selected(selected)):
                         continue
                     payload = selection_status()
                 try:
@@ -249,11 +264,17 @@ async def macro_ws_endpoint(websocket: WebSocket) -> None:
 
 
 def _dispatch_macro(
-    msg: InboundMessage, managers: list[InputManager], variants: set[ControllerVariant],
+    msg: InboundMessage,
+    targets: list[tuple[InputManager, AdapterSession | None]],
+    variants: set[ControllerVariant],
 ) -> str | None:
     if isinstance(msg, (MacroStartInline, MacroStartByName)):
         try:
-            macro = msg.macro if isinstance(msg, MacroStartInline) else managers[0].read_named_macro(msg.name)
+            macro = (
+                msg.macro
+                if isinstance(msg, MacroStartInline)
+                else targets[0][0].read_named_macro(msg.name)
+            )
             validate_macro(macro)
             for variant in sorted(variants):
                 validate_macro_capabilities(macro, variant)
@@ -264,10 +285,18 @@ def _dispatch_macro(
             if isinstance(msg, MacroStartInline):
                 return error_frame("invalid macro", detail=str(e))
             return error_frame(f"could not load macro: {e}")
-        for manager in managers:
-            manager.start_macro(macro)
+        for manager, session in targets:
+            state_filter = None
+            if (
+                session is not None
+                and session.combined_partner is not None
+                and session.combined_input_mode == "individual"
+            ):
+                side_type = session.bluetooth.controller_type.bluetooth_type
+                state_filter = lambda state, ct=side_type: filter_joycon_state(state, ct)
+            manager.start_macro(macro, state_filter=state_filter)
     else:
-        for manager in managers:
+        for manager, _session in targets:
             if isinstance(msg, MacroCancel):
                 manager.cancel_macro()
             elif isinstance(msg, MacroPause):
@@ -342,12 +371,21 @@ async def bluetooth_control(request: Request) -> Response:
 
 async def adapters_get(request: Request) -> Response:
     try:
-        return JSONResponse(await adapter_inventory(request.app.state.adapter_sessions))
+        return JSONResponse(
+            await adapter_inventory(
+                request.app.state.adapter_sessions,
+                joycon_pairing_enabled=request.app.state.config_store.config.joycon_pairing_enabled,
+            )
+        )
     except RuntimeError as error:
         return _error(str(error), status=503)
 
 
-async def adapter_inventory(sessions: dict[str, AdapterSession]) -> dict:
+async def adapter_inventory(
+    sessions: dict[str, AdapterSession],
+    *,
+    joycon_pairing_enabled: bool = False,
+) -> dict:
     primary = sessions.get("primary")
     controllers = (
         await asyncio.to_thread(primary.controller.status)
@@ -365,6 +403,7 @@ async def adapter_inventory(sessions: dict[str, AdapterSession]) -> dict:
                 "error": session.error,
                 "controller_type": session.bluetooth.controller_type,
                 "combined_with": session.combined_partner.id if session.combined_partner else None,
+                "combined_input_mode": session.combined_input_mode,
                 "preset": (
                     session.controller.preset_name
                     if isinstance(session.controller, ControllerRoute)
@@ -373,7 +412,8 @@ async def adapter_inventory(sessions: dict[str, AdapterSession]) -> dict:
                     else None
                 ),
                 "macro_mode": bool(
-                    session.input_manager and session.input_manager.status()["mode"] == "macro"
+                    session.input_owner.input_manager
+                    and session.input_owner.input_manager.status()["mode"] == "macro"
                 ),
             }
             for session in sessions.values()
@@ -392,6 +432,7 @@ async def adapter_inventory(sessions: dict[str, AdapterSession]) -> dict:
             if pad.get("instance_id") is not None
         ],
         "controllers_available": controllers.get("available", False),
+        "joycon_pairing_enabled": joycon_pairing_enabled,
     }
 
 
@@ -472,6 +513,26 @@ async def adapter_colours(request: Request) -> Response:
     })
 
 
+async def _sync_combined_controllers(
+    sessions: dict[str, AdapterSession], left: AdapterSession, right: AdapterSession
+) -> None:
+    """When entering shared combined mode, ensure the follower does not hold a separate controller."""
+    primary = sessions.get("primary")
+    service = primary.controller if primary else None
+    if service is None:
+        return
+    try:
+        assignments = (await asyncio.to_thread(service.status)).get("assignments", {})
+        left_id = assignments.get(left.id)
+        right_id = assignments.get(right.id)
+        if right_id is not None:
+            await asyncio.to_thread(service.assign, right.id, None)
+            if left_id is None:
+                await asyncio.to_thread(service.assign, left.id, right_id)
+    except (RuntimeError, ValueError):
+        pass
+
+
 async def adapter_controller_type(request: Request) -> Response:
     sessions: dict[str, AdapterSession] = request.app.state.adapter_sessions
     slot = sessions.get(request.path_params["session_id"])
@@ -489,10 +550,13 @@ async def adapter_controller_type(request: Request) -> Response:
     profiles = store.config.adapter_profiles
     index = slot.profile_index
     previous_partner = profiles[index].combined_with
-    changes = {index: {"controller_type": variant, "combined_with": None}}
+    changes = {index: {"controller_type": variant, "combined_with": None, "combined_input_mode": "combined"}}
     if previous_partner is not None:
-        changes[previous_partner] = {"combined_with": None}
+        changes[previous_partner] = {"combined_with": None, "combined_input_mode": "combined"}
+    combined_pair: tuple[AdapterSession, AdapterSession] | None = None
     if variant == ControllerVariant.COMBINED:
+        if not store.config.joycon_pairing_enabled:
+            return _error("Enable Joy-Con pairing in Advanced settings first.", status=403)
         companion_id = body.get("companion_id")
         companion = sessions.get(companion_id) if isinstance(companion_id, str) else None
         if (
@@ -503,8 +567,17 @@ async def adapter_controller_type(request: Request) -> Response:
         right = companion.profile_index
         if profiles[right].combined_with not in (None, index):
             return _error("The second adapter already belongs to a Joycons pair", status=409)
-        changes[index] = {"controller_type": ControllerVariant.LEFT, "combined_with": right}
-        changes[right] = {"controller_type": ControllerVariant.RIGHT, "combined_with": index}
+        changes[index] = {
+            "controller_type": ControllerVariant.LEFT,
+            "combined_with": right,
+            "combined_input_mode": "combined",
+        }
+        changes[right] = {
+            "controller_type": ControllerVariant.RIGHT,
+            "combined_with": index,
+            "combined_input_mode": "combined",
+        }
+        combined_pair = (slot, companion)
 
     affected = [item for item in sessions.values() if item.profile_index in changes]
     try:
@@ -514,6 +587,8 @@ async def adapter_controller_type(request: Request) -> Response:
                 raise ValueError("Stop the macro before changing controller type.")
         store.update_adapter_profiles(changes)
         configure_adapter_outputs(sessions, store.config.adapter_profiles)
+        if combined_pair is not None:
+            await _sync_combined_controllers(sessions, *combined_pair)
         for item in affected:
             if item.input_manager:
                 item.input_manager.release_manual_input()
@@ -522,6 +597,159 @@ async def adapter_controller_type(request: Request) -> Response:
         return _error(str(error), status=409)
     except OSError as error:
         return _error(f"Could not save controller type: {error}", status=503)
+    return await adapters_get(request)
+
+
+async def adapter_pair(request: Request) -> Response:
+    store: ConfigStore = request.app.state.config_store
+    if not store.config.joycon_pairing_enabled:
+        return _error("Enable Joy-Con pairing in Advanced settings first.", status=403)
+    sessions: dict[str, AdapterSession] = request.app.state.adapter_sessions
+    try:
+        body = await request.json()
+    except ValueError:
+        return _error("invalid JSON body")
+    adapter_ids = body.get("adapter_ids") if isinstance(body, dict) else None
+    if (
+        not isinstance(adapter_ids, list)
+        or len(adapter_ids) != 2
+        or any(not isinstance(item, str) for item in adapter_ids)
+        or adapter_ids[0] == adapter_ids[1]
+    ):
+        return _error("Select two distinct Joy-Con adapters to pair")
+
+    first = sessions.get(adapter_ids[0])
+    second = sessions.get(adapter_ids[1])
+    if first is None or second is None:
+        return _error("Unknown adapter", status=404)
+    for item in (first, second):
+        if item.profile_index is None or item.bluetooth.device is None or item.error:
+            return _error("Bluetooth is not ready", status=503)
+
+    types = {first.bluetooth.controller_type, second.bluetooth.controller_type}
+    if types != {ControllerVariant.LEFT, ControllerVariant.RIGHT}:
+        return _error("Select one Joy-Con L and one Joy-Con R adapter to pair")
+
+    left = first if first.bluetooth.controller_type == ControllerVariant.LEFT else second
+    right = second if left is first else first
+    profiles = store.config.adapter_profiles
+    left_index = left.profile_index
+    right_index = right.profile_index
+    assert left_index is not None and right_index is not None
+    if profiles[left_index].combined_with not in (None, right_index) or profiles[right_index].combined_with not in (None, left_index):
+        return _error("One of the selected adapters is already paired", status=409)
+
+    changes = {
+        left_index: {
+            "controller_type": ControllerVariant.LEFT,
+            "combined_with": right_index,
+            "combined_input_mode": "combined",
+        },
+        right_index: {
+            "controller_type": ControllerVariant.RIGHT,
+            "combined_with": left_index,
+            "combined_input_mode": "combined",
+        },
+    }
+    try:
+        for item in (left, right):
+            item.bluetooth.check_output_change()
+            if item.input_manager and item.input_manager.status()["mode"] == "macro":
+                raise ValueError("Stop the macro before pairing adapters.")
+        store.update_adapter_profiles(changes)
+        configure_adapter_outputs(sessions, store.config.adapter_profiles)
+        await _sync_combined_controllers(sessions, left, right)
+        for item in (left, right):
+            if item.input_manager:
+                item.input_manager.release_manual_input()
+                item.input_manager.broadcast_status()
+    except ValueError as error:
+        return _error(str(error), status=409)
+    except OSError as error:
+        return _error(f"Could not save adapter pairing: {error}", status=503)
+    return await adapters_get(request)
+
+
+async def adapter_unpair(request: Request) -> Response:
+    sessions: dict[str, AdapterSession] = request.app.state.adapter_sessions
+    slot = sessions.get(request.path_params["session_id"])
+    if slot is None:
+        return _error("Unknown adapter", status=404)
+    if slot.profile_index is None:
+        return _error("Bluetooth is not ready", status=503)
+
+    store: ConfigStore = request.app.state.config_store
+    profiles = store.config.adapter_profiles
+    index = slot.profile_index
+    partner_index = profiles[index].combined_with
+    if partner_index is None:
+        return _error("Adapter is not paired", status=409)
+
+    changes = {
+        index: {"combined_with": None, "combined_input_mode": "combined"},
+        partner_index: {"combined_with": None, "combined_input_mode": "combined"},
+    }
+    affected = [item for item in sessions.values() if item.profile_index in changes]
+    try:
+        for item in affected:
+            item.bluetooth.check_output_change()
+            if item.input_manager and item.input_manager.status()["mode"] == "macro":
+                raise ValueError("Stop the macro before unpairing adapters.")
+        store.update_adapter_profiles(changes)
+        configure_adapter_outputs(sessions, store.config.adapter_profiles)
+        for item in affected:
+            if item.input_manager:
+                item.input_manager.release_manual_input()
+                item.input_manager.broadcast_status()
+    except ValueError as error:
+        return _error(str(error), status=409)
+    except OSError as error:
+        return _error(f"Could not save adapter unpairing: {error}", status=503)
+    return await adapters_get(request)
+
+
+async def adapter_pair_mode(request: Request) -> Response:
+    sessions: dict[str, AdapterSession] = request.app.state.adapter_sessions
+    slot = sessions.get(request.path_params["session_id"])
+    if slot is None:
+        return _error("Unknown adapter", status=404)
+    if slot.profile_index is None or slot.combined_partner is None:
+        return _error("Adapter is not paired", status=409)
+    try:
+        body = await request.json()
+    except ValueError:
+        return _error("invalid JSON body")
+    input_mode = body.get("input_mode") if isinstance(body, dict) else None
+    if input_mode not in ("combined", "individual"):
+        return _error("Select combined or individual input mode")
+
+    partner = slot.combined_partner
+    if partner.profile_index is None:
+        return _error("Paired adapter is not ready", status=503)
+
+    left = slot if slot.bluetooth.controller_type == ControllerVariant.LEFT else partner
+    right = partner if left is slot else slot
+    store: ConfigStore = request.app.state.config_store
+    changes = {
+        slot.profile_index: {"combined_input_mode": input_mode},
+        partner.profile_index: {"combined_input_mode": input_mode},
+    }
+    try:
+        for item in (left, right):
+            if item.input_manager and item.input_manager.status()["mode"] == "macro":
+                raise ValueError("Stop the macro before changing input mode.")
+        store.update_adapter_profiles(changes)
+        configure_adapter_outputs(sessions, store.config.adapter_profiles)
+        if input_mode == "combined":
+            await _sync_combined_controllers(sessions, left, right)
+        for item in (left, right):
+            if item.input_manager:
+                item.input_manager.release_manual_input()
+                item.input_manager.broadcast_status()
+    except ValueError as error:
+        return _error(str(error), status=409)
+    except OSError as error:
+        return _error(f"Could not save input mode: {error}", status=503)
     return await adapters_get(request)
 
 
@@ -982,7 +1210,7 @@ async def config_patch(request: Request) -> Response:
         return _error(
             "These settings require Save and restart in the Debug tab", status=409
         )
-    for flag in ("vibration_enabled", "motion_enabled"):
+    for flag in ("vibration_enabled", "motion_enabled", "joycon_pairing_enabled"):
         if flag in body and not isinstance(body[flag], bool):
             return _error(f"{flag} must be a boolean")
     for key, normalize in (
@@ -1170,6 +1398,9 @@ def build_app(
             methods=["GET", "PUT", "POST", "DELETE", "PATCH"],
         ),
         Route("/api/adapters", adapters_get, methods=["GET"]),
+        Route("/api/adapters/pair", adapter_pair, methods=["POST"]),
+        Route("/api/adapters/{session_id}/pair", adapter_unpair, methods=["DELETE"]),
+        Route("/api/adapters/{session_id}/pair-mode", adapter_pair_mode, methods=["PUT"]),
         Route("/api/adapters/{session_id}/controller", adapter_assign, methods=["PUT"]),
         Route("/api/adapters/{session_id}/colours", adapter_colours, methods=["GET", "PATCH"]),
         Route("/api/adapters/{session_id}/type", adapter_controller_type, methods=["PUT"]),

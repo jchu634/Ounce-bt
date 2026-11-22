@@ -133,6 +133,7 @@ class AdapterProfile:
     legacy_keystore: bool = False
     controller_type: ControllerVariant = ControllerVariant.PRO
     combined_with: int | None = None
+    combined_input_mode: str = "combined"
     joycon_colours: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def colours_for(self, variant: ControllerVariant) -> dict[str, str]:
@@ -184,6 +185,9 @@ def _adapter_profiles(value: object) -> list[AdapterProfile]:
             type(partner) is not int or not 0 <= partner < len(value) or partner == len(profiles)
         ):
             raise ValueError("invalid combined adapter index")
+        if profile.combined_input_mode not in ("combined", "individual"):
+            raise ValueError("invalid combined input mode")
+        input_mode = profile.combined_input_mode if partner is not None else "combined"
         if not isinstance(profile.joycon_colours, dict):
             raise TypeError("joycon_colours must be an object")
         joycon_colours = {}
@@ -196,7 +200,7 @@ def _adapter_profiles(value: object) -> list[AdapterProfile]:
         addresses.add(address)
         profiles.append(replace(
             profile, address=address, colours=normalize_controller_colours(profile.colours),
-            controller_type=variant, joycon_colours=joycon_colours,
+            controller_type=variant, combined_input_mode=input_mode, joycon_colours=joycon_colours,
         ))
     for index, profile in enumerate(profiles):
         if profile.combined_with is not None:
@@ -207,6 +211,8 @@ def _adapter_profiles(value: object) -> list[AdapterProfile]:
                 != {ControllerVariant.LEFT, ControllerVariant.RIGHT}
             ):
                 raise ValueError("combined adapters must link a left and right Joy-Con")
+            if partner.combined_input_mode != profile.combined_input_mode:
+                raise ValueError("combined adapters must share the same input mode")
     return profiles
 
 
@@ -231,6 +237,7 @@ class Config:
     presets_dir: str = "presets"
     pairing_dir: str | None = None
     debug_enabled: bool = False
+    joycon_pairing_enabled: bool = False
     bumble_logging: bool = True
     nolog: bool = False
     last_camera_device_id: str = ""
@@ -253,6 +260,8 @@ class Config:
             raise TypeError("vibration_enabled must be a boolean")
         if not isinstance(self.motion_enabled, bool):
             raise TypeError("motion_enabled must be a boolean")
+        if not isinstance(self.joycon_pairing_enabled, bool):
+            raise TypeError("joycon_pairing_enabled must be a boolean")
         self.controller_presets = _normalize_controller_presets(self.controller_presets)
         self.controller_vibration = normalize_controller_vibration(self.controller_vibration)
         self.controller_motion = normalize_controller_motion(self.controller_motion)
@@ -345,7 +354,7 @@ class Config:
             except (TypeError, ValueError) as e:
                 logger.warning(f"Invalid {key}: {e}; using defaults")
                 del filtered[key]
-        for flag in ("vibration_enabled", "motion_enabled"):
+        for flag in ("vibration_enabled", "motion_enabled", "joycon_pairing_enabled"):
             if flag in filtered and not isinstance(filtered[flag], bool):
                 logger.warning(f"Invalid {flag}; using default")
                 del filtered[flag]
@@ -452,7 +461,7 @@ class ConfigStore:
     def update(self, changes: dict) -> dict:
         """Apply a partial update and persist. Returns the actually-changed
         key/value pairs (keys that were unknown or unchanged are skipped)."""
-        for flag in ("vibration_enabled", "motion_enabled"):
+        for flag in ("vibration_enabled", "motion_enabled", "joycon_pairing_enabled"):
             if flag in changes and not isinstance(changes[flag], bool):
                 raise TypeError(f"{flag} must be a boolean")
         valid = Config._valid_keys()
