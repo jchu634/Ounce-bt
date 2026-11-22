@@ -1,4 +1,5 @@
-import { BUTTON_NAMES, type ButtonName, type MacroAction, type MacroDoc } from "@/src/lib/types";
+import { parseMacroButtonName } from "@/src/lib/button-names";
+import type { MacroAction, MacroDoc } from "@/src/lib/types";
 
 export type MacroPath = (string | number)[];
 
@@ -25,10 +26,6 @@ const ACTION_KEYS = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isButtonName(value: unknown): value is ButtonName {
-  return typeof value === "string" && BUTTON_NAMES.some((buttonName) => buttonName === value);
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -58,12 +55,14 @@ function parseActions(
 
     switch (candidate.do) {
       case "press":
-      case "release":
-        if (!isButtonName(candidate.button)) {
+      case "release": {
+        const button = parseMacroButtonName(candidate.button);
+        if (button === undefined) {
           return invalid(`Unknown button for '${candidate.do}'.`, [...actionPath, "button"]);
         }
-        actions.push({ do: candidate.do, button: candidate.button });
+        actions.push({ do: candidate.do, button });
         break;
+      }
       case "wait":
         if (!isFiniteNumber(candidate.ms) || candidate.ms < 0) {
           return invalid("Wait duration must be a non-negative number.", [...actionPath, "ms"]);

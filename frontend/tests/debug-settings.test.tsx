@@ -60,7 +60,7 @@ describe("debug settings", () => {
       local_address: "98:B6:E9:12:34:56",
       controller_id: 1,
       controller_name: "Nintendo Switch Pro Controller",
-      preset: "switch_pro",
+      preset: "switch",
       error: null,
       macro_mode: false,
       address_regeneration_available: true,

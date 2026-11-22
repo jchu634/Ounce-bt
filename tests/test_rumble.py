@@ -4,9 +4,10 @@ from unittest.mock import Mock
 
 import pytest
 
-from app.input.pygame_source import PygameInputThread
+from app.input.controller_service import ControllerRoute, ControllerService
 from app.main import run_mainloop
 from lib.controller import ControllerTypes
+from lib.input.presets import PresetConfig
 from lib.input.rumble import parse_rumble
 from lib.switch_protocol import ControllerProtocol
 
@@ -71,39 +72,39 @@ def test_console_enable_disable_and_padded_rumble_are_distinct():
 
 def test_playback_refresh_neutral_restart_and_timeout(monkeypatch):
     now = [10.0]
-    monkeypatch.setattr("app.input.pygame_source.time.monotonic", lambda: now[0])
-    capture = PygameInputThread(queue.Queue())
-    stick = Mock()
-    stick.rumble.return_value = True
+    monkeypatch.setattr("app.input.controller_service.time.monotonic", lambda: now[0])
+    route = ControllerRoute("primary", PresetConfig.default(), "xbox")
+    device = Mock()
+    device.rumble.return_value = True
     rumble = parse_rumble(packet(bytes.fromhex("00 81 40 40")))
-    capture.set_rumble(rumble)
-    capture._update_rumble(stick)
-    stick.rumble.assert_called_once_with(0.0, 0.459817, 100)
-    capture._update_rumble(stick)
-    assert stick.rumble.call_count == 1
+    route.set_rumble(rumble)
+    route.update_rumble(device)
+    device.rumble.assert_called_once_with(0.0, 0.459817, 100)
+    route.update_rumble(device)
+    assert device.rumble.call_count == 1
     now[0] += 0.06
-    capture.set_rumble(rumble)
-    capture._update_rumble(stick)
-    assert stick.rumble.call_count == 2
-    capture.set_rumble(None)
-    capture._update_rumble(stick)
-    stick.stop_rumble.assert_called_once()
-    capture.set_rumble(rumble)
-    capture._update_rumble(stick)
-    assert stick.rumble.call_count == 3
+    route.set_rumble(rumble)
+    route.update_rumble(device)
+    assert device.rumble.call_count == 2
+    route.set_rumble(None)
+    route.update_rumble(device)
+    device.stop_rumble.assert_called_once()
+    route.set_rumble(rumble)
+    route.update_rumble(device)
+    assert device.rumble.call_count == 3
     now[0] += 0.26
-    capture._update_rumble(stick)
-    assert stick.stop_rumble.call_count == 2
+    route.update_rumble(device)
+    assert device.stop_rumble.call_count == 2
 
 
 def test_unsupported_controller_is_not_retried():
-    capture = PygameInputThread(queue.Queue())
-    stick = Mock()
-    stick.rumble.return_value = False
-    capture.set_rumble(parse_rumble(packet(bytes.fromhex("00 81 40 40"))))
-    capture._update_rumble(stick)
-    capture._update_rumble(stick)
-    assert stick.rumble.call_count == 1
+    route = ControllerRoute("primary", PresetConfig.default(), "xbox")
+    device = Mock()
+    device.rumble.return_value = False
+    route.set_rumble(parse_rumble(packet(bytes.fromhex("00 81 40 40"))))
+    route.update_rumble(device)
+    route.update_rumble(device)
+    assert device.rumble.call_count == 1
 
 
 def test_mainloop_live_setting_and_cleanup(monkeypatch):
@@ -172,36 +173,23 @@ def test_mainloop_cancellation_stops_rumble():
     asyncio.run(exercise())
 
 
-def test_joystick_cleanup_stops_effect_before_close(monkeypatch):
-    capture = PygameInputThread(queue.Queue(), pump=False)
-    stick = Mock()
-    stick.get_guid.return_value = "0300938d5e040000ff02000000007200"
-    monkeypatch.setattr("app.input.pygame_source.joystick.get_count", lambda: 1)
-    monkeypatch.setattr("app.input.pygame_source.joystick.Joystick", lambda _: stick)
-
-    def loop(device):
-        capture.set_rumble(parse_rumble(packet(bytes.fromhex("00 81 40 40"))))
-        capture._update_rumble(device)
-        raise RuntimeError("disconnected")
-
-    monkeypatch.setattr(capture, "_loop", loop)
-    capture.run()
-    names = [call[0] for call in stick.method_calls]
-    assert names[-2:] == ["stop_rumble", "quit"]
-
-
-def test_rumble_service_routes_only_to_selected_capture():
-    from app.input.controller_service import ControllerService
-
+def test_device_cleanup_stops_effect_before_close():
     service = ControllerService(queue.Queue())
-    effect = parse_rumble(packet())
-    service.set_rumble(effect)  # No selected device is a valid state.
-    first = Mock()
-    second = Mock()
-    service._capture = first
+    device = Mock()
+    service._devices[7] = device
+    service._close_device(7)
+    names = [call[0] for call in device.method_calls]
+    assert names == ["stop_rumble", "close"]
+
+
+def test_rumble_service_routes_independently_per_adapter():
+    service = ControllerService(queue.Queue())
+    route = service.add_route("adapter-2")
+    effect = parse_rumble(packet(bytes.fromhex("00 81 40 40")))
     service.set_rumble(effect)
-    first.set_rumble.assert_called_once_with(effect)
-    service._capture = second
+    assert service.primary._rumble == effect.strengths()
+    assert route._rumble == (0.0, 0.0)
+    route.set_rumble(effect)
     service.set_rumble(None)
-    second.set_rumble.assert_called_once_with(None)
-    assert first.set_rumble.call_count == 1
+    assert service.primary._rumble == (0.0, 0.0)
+    assert route._rumble == effect.strengths()

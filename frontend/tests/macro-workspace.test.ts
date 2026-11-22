@@ -237,6 +237,33 @@ describe("macro workspace conversion", () => {
     expect(result).toMatchObject({ kind: "valid", document });
   });
 
+  it("round trips SL_OR_L and SR_OR_R in button and press-and-hold blocks", () => {
+    const document: MacroDoc = {
+      version: 1,
+      name: "adaptive-shoulders",
+      repeat: 1,
+      actions: [
+        { do: "press", button: "SL_OR_L" },
+        { do: "release", button: "SL_OR_L" },
+        {
+          do: "loop",
+          count: 1,
+          actions: [
+            { do: "press", button: "SR_OR_R" },
+            { do: "wait", ms: 50, unit: "ms" },
+            { do: "release", button: "SR_OR_R" },
+          ],
+        },
+      ],
+    };
+    const workspace = createWorkspace();
+
+    loadMacroWorkspace({ workspace, document });
+    const result = readMacroWorkspace({ workspace, name: document.name });
+
+    expect(result).toMatchObject({ kind: "valid", document });
+  });
+
   it("rejects a detached action block", () => {
     const workspace = createWorkspace();
     loadMacroWorkspace({ workspace, document: { version: 1, actions: [] } });

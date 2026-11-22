@@ -11,17 +11,46 @@ import {
   TooltipTrigger,
 } from "@/src/components/ui/tooltip";
 
-function readVibration(config: Record<string, unknown>): boolean {
-  if (typeof config.vibration_enabled !== "boolean") {
-    throw new Error("Invalid vibration setting received from the server");
+type FeatureSpec = {
+  globalKey: "vibration_enabled" | "motion_enabled";
+  perControllerKey: "controller_vibration" | "controller_motion";
+  globalLabel: string;
+  individualLabel: string;
+  noun: string;
+};
+
+const VIBRATION_FEATURE: FeatureSpec = {
+  globalKey: "vibration_enabled",
+  perControllerKey: "controller_vibration",
+  globalLabel: "Vibration (All Controllers)",
+  individualLabel: "Controller vibration",
+  noun: "vibration",
+};
+
+const MOTION_FEATURE: FeatureSpec = {
+  globalKey: "motion_enabled",
+  perControllerKey: "controller_motion",
+  globalLabel: "Motion / Gyro (All Controllers)",
+  individualLabel: "Controller motion (gyro)",
+  noun: "motion",
+};
+
+function readFlag(config: Record<string, unknown>, spec: FeatureSpec): boolean {
+  const value = config[spec.globalKey];
+  if (typeof value !== "boolean") {
+    throw new Error(`Invalid ${spec.noun} setting received from the server`);
   }
-  return config.vibration_enabled;
+  return value;
 }
 
-export function VibrationSetting({
+function ControllerFeatureSetting({
+  spec,
   controllerGuid,
+  supported = true,
 }: {
+  spec: FeatureSpec;
   controllerGuid?: string | null;
+  supported?: boolean;
 }) {
   const id = useId();
   const [config, setConfig] = useState<Record<string, unknown> | null>(null);
@@ -33,10 +62,10 @@ export function VibrationSetting({
     let disposed = false;
     setError(null);
     void Effect.runPromise(getConfig())
-      .then((config) => {
-        readVibration(config);
+      .then((loaded) => {
+        readFlag(loaded, spec);
         if (!disposed) {
-          setConfig(config);
+          setConfig(loaded);
         }
       })
       .catch((cause: unknown) => {
@@ -45,7 +74,7 @@ export function VibrationSetting({
     return () => {
       disposed = true;
     };
-  }, [attempt]);
+  }, [attempt, spec]);
 
   async function save(value: boolean) {
     if (controllerGuid === null) return;
@@ -55,11 +84,11 @@ export function VibrationSetting({
       const result = await Effect.runPromise(
         patchConfig(
           controllerGuid
-            ? { controller_vibration: { [controllerGuid]: value } }
-            : { vibration_enabled: value },
+            ? { [spec.perControllerKey]: { [controllerGuid]: value } }
+            : { [spec.globalKey]: value },
         ),
       );
-      readVibration(result.config);
+      readFlag(result.config, spec);
       setConfig(result.config);
     } catch (cause: unknown) {
       setError(errorMessage(cause));
@@ -68,15 +97,18 @@ export function VibrationSetting({
     }
   }
 
-  const globalEnabled = config?.vibration_enabled === true;
+  const globalEnabled = config?.[spec.globalKey] === true;
   const individual = controllerGuid !== undefined;
+  const unsupported = individual && !!controllerGuid && !supported;
   const globalDisabled = individual && config !== null && !globalEnabled;
-  const disabledReason = globalDisabled
-    ? "Enable Vibration (All Controllers) in Settings to change this controller’s vibration."
-    : controllerGuid === null
-      ? "Connect and select a controller to change its vibration."
-      : null;
-  const preferences = config?.controller_vibration;
+  const disabledReason = unsupported
+    ? `This controller does not report ${spec.noun} sensors.`
+    : globalDisabled
+      ? `Enable ${spec.globalLabel} in Settings to change this controller’s ${spec.noun}.`
+      : controllerGuid === null
+        ? `Connect and select a controller to change its ${spec.noun}.`
+        : null;
+  const preferences = config?.[spec.perControllerKey];
   const preference =
     preferences && typeof preferences === "object"
       ? Object.entries(preferences).find(
@@ -84,12 +116,14 @@ export function VibrationSetting({
         )?.[1]
       : undefined;
   const disabled =
-    !config || saving || globalDisabled || controllerGuid === null;
+    !config || saving || globalDisabled || unsupported || controllerGuid === null;
   const checkbox = (
     <Checkbox
       id={id}
       checked={
-        individual ? !!controllerGuid && preference !== false : globalEnabled
+        individual
+          ? !!controllerGuid && supported && preference !== false
+          : globalEnabled
       }
       disabled={disabled}
       onCheckedChange={(value) => void save(value)}
@@ -105,7 +139,7 @@ export function VibrationSetting({
           }
           htmlFor={id}
         >
-          {individual ? "Controller vibration" : "Vibration (All Controllers)"}
+          {individual ? spec.individualLabel : spec.globalLabel}
         </Label>
         {disabled && disabledReason ? (
           <Tooltip>
@@ -116,7 +150,7 @@ export function VibrationSetting({
                   tabIndex={0}
                 />
               }
-              aria-label="Controller vibration unavailable"
+              aria-label={`${spec.individualLabel} unavailable`}
             >
               {checkbox}
             </TooltipTrigger>
@@ -140,5 +174,34 @@ export function VibrationSetting({
         </Button>
       )}
     </div>
+  );
+}
+
+export function VibrationSetting({
+  controllerGuid,
+}: {
+  controllerGuid?: string | null;
+}) {
+  return (
+    <ControllerFeatureSetting
+      spec={VIBRATION_FEATURE}
+      controllerGuid={controllerGuid}
+    />
+  );
+}
+
+export function MotionSetting({
+  controllerGuid,
+  supported = true,
+}: {
+  controllerGuid?: string | null;
+  supported?: boolean;
+}) {
+  return (
+    <ControllerFeatureSetting
+      spec={MOTION_FEATURE}
+      controllerGuid={controllerGuid}
+      supported={supported}
+    />
   );
 }

@@ -61,11 +61,9 @@ class WindowsDesktopBridge(DesktopBridge):
 
     def start_capture_audio(self, label):
         self._check_origin()
-        from pygame import error as pygame_error
-
         try:
             return self._audio.start(label)
-        except (OSError, pygame_error, RuntimeError) as error:
+        except (OSError, RuntimeError) as error:
             logger.warning("Native capture audio unavailable: %s", error)
             return None
 

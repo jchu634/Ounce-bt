@@ -1,14 +1,17 @@
 import {
   BluetoothIcon,
+  LinkBreakIcon,
+  LinkIcon,
   PencilSimpleIcon,
   PlugsConnectedIcon,
   PlugsIcon,
   SpinnerGapIcon,
   TrashIcon,
 } from "@phosphor-icons/react";
-import { useEffect, useId, useRef, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type MouseEvent } from "react";
 import type { PresetInfo } from "@/src/lib/types";
 import { ControllerColoursDialog } from "@/src/components/settings/controller-colours-dialog";
+import { CONFIG_CHANGED_EVENT } from "@/src/components/settings/advanced-settings";
 import {
   ControllerMappingDialog,
   type MappingSettings,
@@ -27,6 +30,7 @@ import {
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -41,8 +45,15 @@ import {
   type Adapter,
   type AdapterChange,
   type AdapterInventory,
+  type CombinedInputMode,
 } from "@/src/lib/adapters";
 import { connectionDetail, deviceName, type BluetoothStatus } from "@/src/lib/bluetooth";
+import {
+  CONTROLLER_VARIANTS,
+  CONTROLLER_VARIANT_NAMES,
+  isBluetoothControllerType,
+  type BluetoothControllerType,
+} from "@/src/lib/controller-variants";
 import { errorMessage } from "@/src/lib/errors";
 import { useSwitchConnection } from "@/src/lib/switch-connection";
 import { cn } from "cn";
@@ -172,6 +183,31 @@ function ConnectionStatus({
   );
 }
 
+type AdapterDisplayItem =
+  | { kind: "single"; adapter: Adapter }
+  | { kind: "pair"; left: Adapter; right: Adapter };
+
+function groupAdapters(adapters: Adapter[]): AdapterDisplayItem[] {
+  const byId = new Map(adapters.map((adapter) => [adapter.id, adapter]));
+  const seen = new Set<string>();
+  const items: AdapterDisplayItem[] = [];
+  for (const adapter of adapters) {
+    if (seen.has(adapter.id)) continue;
+    const partner = adapter.combined_with ? byId.get(adapter.combined_with) : undefined;
+    if (partner && partner.combined_with === adapter.id && !seen.has(partner.id)) {
+      seen.add(adapter.id);
+      seen.add(partner.id);
+      const left = adapter.controller_type === "joycon_l" ? adapter : partner;
+      const right = left === adapter ? partner : adapter;
+      items.push({ kind: "pair", left, right });
+    } else {
+      seen.add(adapter.id);
+      items.push({ kind: "single", adapter });
+    }
+  }
+  return items;
+}
+
 export function ConnectionPanel({ onEditPreset }: { onEditPreset: (preset: PresetInfo) => void }) {
   const controller = useControllers();
   const { status, adapterStatuses, lastError, send } = useSocket();
@@ -179,9 +215,18 @@ export function ConnectionPanel({ onEditPreset }: { onEditPreset: (preset: Prese
   const [inventory, setInventory] = useState<AdapterInventory | null>(null);
   const [settingsError, setSettingsError] = useState<{ id: string; message: string } | null>(null);
   const [pending, setPending] = useState<AdapterChange | null>(null);
+  const [unpairingPair, setUnpairingPair] = useState<{ left: Adapter; right: Adapter } | null>(null);
+  const [busyBluetooth, setBusyBluetooth] = useState<Record<string, boolean>>({});
   const inventoryVersion = useRef(0);
   const selectionAnchor = useRef<string | null>(null);
   const pendingSelection = useRef<string[] | null>(null);
+
+  const reportBluetoothBusy = useCallback((adapterId: string, isBusy: boolean) => {
+    setBusyBluetooth((current) => {
+      if (!!current[adapterId] === isBusy) return current;
+      return { ...current, [adapterId]: isBusy };
+    });
+  }, []);
 
   useEffect(() => {
     const pending = pendingSelection.current;
@@ -214,10 +259,16 @@ export function ConnectionPanel({ onEditPreset }: { onEditPreset: (preset: Prese
         if (!disposed) timer = setTimeout(() => void refresh(), 1000);
       }
     }
+    const handleConfigChanged = () => {
+      clearTimeout(timer);
+      void refresh();
+    };
+    window.addEventListener(CONFIG_CHANGED_EVENT, handleConfigChanged);
     void refresh();
     return () => {
       disposed = true;
       clearTimeout(timer);
+      window.removeEventListener(CONFIG_CHANGED_EVENT, handleConfigChanged);
     };
   }, []);
 
@@ -226,39 +277,65 @@ export function ConnectionPanel({ onEditPreset }: { onEditPreset: (preset: Prese
     inventoryVersion.current++;
     setPending(change);
     setSettingsError(null);
+    const errorTarget =
+      change.kind === "pair" || change.kind === "unpair" || change.kind === "pair_mode"
+        ? "__pair__"
+        : change.adapterId;
     try {
       setInventory(await requestAdapters(change));
     } catch (cause) {
-      setSettingsError({ id: change.adapterId, message: errorMessage(cause) });
+      setSettingsError({ id: errorTarget, message: errorMessage(cause) });
     } finally {
       inventoryVersion.current++;
       setPending(null);
     }
   }
 
+  const displayItems = inventory ? groupAdapters(inventory.adapters) : [];
+  const displayedAdapterIds = displayItems.flatMap((item) =>
+    item.kind === "pair" ? [item.left.id, item.right.id] : [item.adapter.id],
+  );
+
+  function pairMembers(targetId: string): string[] {
+    for (const item of displayItems) {
+      if (item.kind === "pair" && (item.left.id === targetId || item.right.id === targetId)) {
+        return [item.left.id, item.right.id];
+      }
+    }
+    return [targetId];
+  }
+
+  function expandWithPairs(ids: string[]): string[] {
+    const selectedSet = new Set(ids);
+    for (const item of displayItems) {
+      if (item.kind === "pair" && (selectedSet.has(item.left.id) || selectedSet.has(item.right.id))) {
+        selectedSet.add(item.left.id);
+        selectedSet.add(item.right.id);
+      }
+    }
+    return displayedAdapterIds.filter((adapterId) => selectedSet.has(adapterId));
+  }
+
   function selectAdapter(id: string, modifiers: AdapterSelectionModifiers) {
     if (!inventory) return;
-    const adapterIds = inventory.adapters.map((adapter) => adapter.id);
+    const adapterIds = displayedAdapterIds;
     const current = pendingSelection.current ?? selectedAdapters;
     const additive = modifiers.ctrlKey || modifiers.metaKey;
-    let next = [id];
+    const members = pairMembers(id);
+    let next = members;
     if (modifiers.shiftKey) {
       const anchorId = selectionAnchor.current ?? current[0];
       const index = adapterIds.indexOf(id);
       const anchor = anchorId ? adapterIds.indexOf(anchorId) : -1;
       const start = anchor < 0 ? index : anchor;
       const range = adapterIds.slice(Math.min(start, index), Math.max(start, index) + 1);
-      next = additive
-        ? adapterIds.filter(
-            (adapterId) => current.includes(adapterId) || range.includes(adapterId),
-          )
-        : range;
+      next = expandWithPairs(additive ? [...current, ...range] : range);
     } else {
       selectionAnchor.current = id;
       if (additive) {
-        next = current.includes(id)
-          ? current.filter((adapterId) => adapterId !== id)
-          : adapterIds.filter((adapterId) => current.includes(adapterId) || adapterId === id);
+        next = members.some((member) => current.includes(member))
+          ? current.filter((adapterId) => !members.includes(adapterId))
+          : expandWithPairs([...current, ...members]);
         if (next.length === 0) return;
       }
     }
@@ -274,72 +351,239 @@ export function ConnectionPanel({ onEditPreset }: { onEditPreset: (preset: Prese
 
   const legacyMapping: MappingSettings = {
     available: controller.available,
-    options: controller.controllers.map((pad) => ({ id: pad.guid, name: pad.name })),
-    active: controller.active,
+    options: controller.controllers.map((pad) => ({
+      id: pad.instance_id.toString(),
+      name: pad.name,
+    })),
+    active: controller.activeInfo?.instance_id.toString() ?? null,
     controllerGuid: controller.activeInfo?.guid ?? null,
+    hasGyro: controller.activeInfo?.has_gyro,
     preset: controller.preset,
     error: controller.error,
     pending: controller.pending,
     macroMode: status?.mode === "macro",
-    allowUnassign: false,
-    selectController: (id) => {
-      if (id !== null) void controller.update({ kind: "selecting", id });
-    },
+    allowUnassign: true,
+    selectController: (id) => void controller.update({ kind: "selecting", id }),
     applyPreset: (preset) => void controller.update({ kind: "applying", preset }),
   };
 
+  const adaptersById = new Map((inventory?.adapters ?? []).map((adapter) => [adapter.id, adapter]));
+  const selectedAdapterList = selectedAdapters
+    .map((adapterId) => adaptersById.get(adapterId))
+    .filter((adapter): adapter is Adapter => adapter !== undefined);
+
+  let selectedPair: { left: Adapter; right: Adapter } | null = null;
+  let canPairSelected = false;
+  let pairActionTitle = "Select a Joy-Con L and Joy-Con R adapter to pair";
+  if (selectedAdapterList.length === 2) {
+    const [first, second] = selectedAdapterList;
+    const btBusy = !!busyBluetooth[first.id] || !!busyBluetooth[second.id];
+    const macroBusy = first.macro_mode || second.macro_mode;
+    if (first.combined_with === second.id && second.combined_with === first.id) {
+      const left = first.controller_type === "joycon_l" ? first : second;
+      const right = left === first ? second : first;
+      selectedPair = { left, right };
+      pairActionTitle = btBusy
+        ? "Disconnect and stop pairing before unpairing adapters"
+        : macroBusy
+          ? "Stop running macros before unpairing adapters"
+          : "Unpair selected Joy-Con adapters";
+    } else if (
+      !first.combined_with &&
+      !second.combined_with &&
+      !first.error &&
+      !second.error &&
+      first.local_address &&
+      second.local_address &&
+      ((first.controller_type === "joycon_l" && second.controller_type === "joycon_r") ||
+        (first.controller_type === "joycon_r" && second.controller_type === "joycon_l"))
+    ) {
+      canPairSelected = !btBusy && !macroBusy && pending === null;
+      pairActionTitle = btBusy
+        ? "Disconnect and stop pairing before pairing adapters"
+        : macroBusy
+          ? "Stop running macros before pairing adapters"
+          : "Pair selected Joy-Con L and Joy-Con R as a combined Joy-Con";
+    }
+  }
+  const canUnpairSelected =
+    selectedPair !== null &&
+    !busyBluetooth[selectedPair.left.id] &&
+    !busyBluetooth[selectedPair.right.id] &&
+    !selectedPair.left.macro_mode &&
+    !selectedPair.right.macro_mode &&
+    pending === null;
+
+  function renderAdapterCard(adapter: Adapter, partner?: Adapter) {
+    if (!inventory) return null;
+    const combined = !!partner;
+    const inputMode: CombinedInputMode = combined
+      ? (adapter.combined_input_mode ?? "combined")
+      : "combined";
+    const combinedShared = combined && inputMode === "combined";
+    const isSharedFollower = combinedShared && adapter.controller_type === "joycon_r";
+    const source = isSharedFollower && partner ? partner : adapter;
+    const pad = inventory.controllers.find((entry) => entry.id === source.controller_id);
+    const multiple = inventory.adapters.length > 1;
+    const mapping: MappingSettings = {
+      available: inventory.controllers_available,
+      options: inventory.controllers.map((entry) => ({
+        id: entry.id.toString(),
+        name: inventory.controllers.some(
+          (other) => other.id !== entry.id && other.name === entry.name,
+        )
+          ? `${entry.name} (${entry.id})`
+          : entry.name,
+        disabled: inventory.adapters.some(
+          (slot) => slot.id !== source.id && slot.controller_id === entry.id,
+        ),
+      })),
+      active: source.controller_id?.toString() ?? null,
+      controllerGuid: pad?.guid ?? null,
+      hasGyro: pad?.has_gyro,
+      preset: source.preset,
+      presetLabel:
+        partner && inputMode === "individual"
+          ? source.controller_type === "joycon_r"
+            ? "Joycon (R)"
+            : "Joycon (L)"
+          : undefined,
+      pending:
+        pending?.kind === "assign"
+          ? "selecting"
+          : pending?.kind === "preset"
+            ? "applying"
+            : null,
+      error:
+        settingsError?.id === adapter.id || settingsError?.id === source.id
+          ? settingsError.message
+          : null,
+      macroMode: source.macro_mode,
+      allowUnassign: true,
+      selectController: (id) =>
+        void saveSettings({
+          kind: "assign",
+          adapterId: source.id,
+          controllerId: id === null ? null : Number(id),
+        }),
+      applyPreset: (preset) =>
+        void saveSettings({ kind: "preset", adapterId: source.id, preset }),
+      partnerPreset:
+        partner && inputMode === "individual"
+          ? {
+              label:
+                partner.controller_type === "joycon_r"
+                  ? "Joycon (R)"
+                  : "Joycon (L)",
+              preset: partner.preset,
+              macroMode: partner.macro_mode,
+              applyPreset: (preset) =>
+                void saveSettings({ kind: "preset", adapterId: partner.id, preset }),
+            }
+          : undefined,
+    };
+
+    const controllerName = isSharedFollower
+      ? `↳ Shared with ${pad?.name ?? "Joy-Con L"}`
+      : pad?.name;
+
+    return (
+      <ConnectionCard
+        key={adapter.id}
+        adapter={adapter}
+        controllerName={controllerName}
+        mutedTitle={isSharedFollower}
+        combinedShared={combinedShared}
+        mapping={mapping}
+        onChangeOutput={(output) =>
+          void saveSettings({
+            kind: "type",
+            adapterId: adapter.id,
+            output,
+          })
+        }
+        changingOutput={pending !== null}
+        onEditPreset={onEditPreset}
+        onBluetoothBusyChange={reportBluetoothBusy}
+        inputTarget={
+          multiple
+            ? {
+                selected: selectedAdapters.includes(adapter.id),
+                select: (modifiers) => selectAdapter(adapter.id, modifiers),
+              }
+            : undefined
+        }
+      />
+    );
+  }
+
+  const joyconPairingEnabled = inventory?.joycon_pairing_enabled === true;
+
   return (
     <section aria-label="Connection" className="min-w-0 space-y-2">
-      <h2 className="text-lg font-semibold">Connection</h2>
-      {inventory?.adapters.length ? (
-        inventory.adapters.map((adapter) => {
-          const pad = inventory.controllers.find((entry) => entry.id === adapter.controller_id);
-          const multiple = inventory.adapters.length > 1;
-          const mapping: MappingSettings = {
-            available: inventory.controllers_available,
-            options: inventory.controllers.map((entry) => ({
-              id: entry.id.toString(),
-              name: inventory.controllers.some(
-                (other) => other.id !== entry.id && other.name === entry.name,
-              )
-                ? `${entry.name} (${entry.id})`
-                : entry.name,
-              disabled: inventory.adapters.some(
-                (slot) => slot.id !== adapter.id && slot.controller_id === entry.id,
-              ),
-            })),
-            active: adapter.controller_id?.toString() ?? null,
-            controllerGuid: pad?.guid ?? null,
-            preset: adapter.preset,
-            pending: pending ? (pending.kind === "assign" ? "selecting" : "applying") : null,
-            error: settingsError?.id === adapter.id ? settingsError.message : null,
-            macroMode: adapter.macro_mode,
-            allowUnassign: true,
-            selectController: (id) =>
-              void saveSettings({
-                kind: "assign",
-                adapterId: adapter.id,
-                controllerId: id === null ? null : Number(id),
-              }),
-            applyPreset: (preset) =>
-              void saveSettings({ kind: "preset", adapterId: adapter.id, preset }),
-          };
-          return (
-            <ConnectionCard
-              key={adapter.id}
-              adapter={adapter}
-              controllerName={pad?.name}
-              mapping={mapping}
-              onEditPreset={onEditPreset}
-              inputTarget={
-                multiple
-                  ? {
-                      selected: selectedAdapters.includes(adapter.id),
-                      select: (modifiers) => selectAdapter(adapter.id, modifiers),
-                    }
-                  : undefined
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-lg font-semibold">Connection</h2>
+        {inventory && inventory.adapters.length > 1 && (joyconPairingEnabled || selectedPair !== null) && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1.5 rounded-lg px-2.5 text-xs"
+            title={pairActionTitle}
+            disabled={selectedPair ? !canUnpairSelected : !canPairSelected}
+            onClick={() => {
+              if (selectedPair) {
+                setUnpairingPair(selectedPair);
+              } else if (selectedAdapterList.length === 2) {
+                void saveSettings({
+                  kind: "pair",
+                  adapterIds: [selectedAdapterList[0].id, selectedAdapterList[1].id],
+                });
               }
-            />
+            }}
+          >
+            {selectedPair ? <LinkBreakIcon className="size-3.5" /> : <LinkIcon className="size-3.5" />}
+            {selectedPair ? "Unpair" : "Pair"}
+          </Button>
+        )}
+      </div>
+      {settingsError?.id === "__pair__" && (
+        <p role="alert" className="text-xs text-destructive">
+          {settingsError.message}
+        </p>
+      )}
+      {displayItems.length ? (
+        displayItems.map((item) => {
+          if (item.kind === "single") {
+            return renderAdapterCard(item.adapter);
+          }
+          const { left, right } = item;
+          const inputMode: CombinedInputMode = left.combined_input_mode ?? "combined";
+          const modeDisabled = pending !== null || left.macro_mode || right.macro_mode;
+          const unlinkDisabled =
+            modeDisabled || !!busyBluetooth[left.id] || !!busyBluetooth[right.id];
+          return (
+            <div key={`${left.id}:${right.id}`} className="flex flex-col">
+              {renderAdapterCard(left, right)}
+              <PairConnectorBar
+                left={left}
+                right={right}
+                inputMode={inputMode}
+                modeDisabled={modeDisabled}
+                unlinkDisabled={unlinkDisabled}
+                onChangeMode={(nextMode) => {
+                  if (nextMode !== inputMode) {
+                    void saveSettings({
+                      kind: "pair_mode",
+                      adapterId: left.id,
+                      inputMode: nextMode,
+                    });
+                  }
+                }}
+                onRequestUnpair={() => setUnpairingPair({ left, right })}
+              />
+              {renderAdapterCard(right, left)}
+            </div>
           );
         })
       ) : (
@@ -350,7 +594,118 @@ export function ConnectionPanel({ onEditPreset }: { onEditPreset: (preset: Prese
           onEditPreset={onEditPreset}
         />
       )}
+
+      <Dialog
+        open={unpairingPair !== null}
+        onOpenChange={(open) => {
+          if (!open && pending?.kind !== "unpair") setUnpairingPair(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Unpair Joy-Con adapters?</DialogTitle>
+            <DialogDescription>
+              Separating {unpairingPair?.left.transport} and {unpairingPair?.right.transport} will
+              return them to standalone Joy-Con L and Joy-Con R adapters.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose render={<Button variant="outline" disabled={pending?.kind === "unpair"} />}>
+              Cancel
+            </DialogClose>
+            <Button
+              variant="destructive"
+              disabled={!unpairingPair || pending !== null}
+              onClick={() => {
+                if (!unpairingPair) return;
+                const adapterId = unpairingPair.left.id;
+                setUnpairingPair(null);
+                void saveSettings({ kind: "unpair", adapterId });
+              }}
+            >
+              Unpair
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
+  );
+}
+
+function PairConnectorBar({
+  left,
+  right,
+  inputMode,
+  modeDisabled,
+  unlinkDisabled,
+  onChangeMode,
+  onRequestUnpair,
+}: {
+  left: Adapter;
+  right: Adapter;
+  inputMode: CombinedInputMode;
+  modeDisabled: boolean;
+  unlinkDisabled: boolean;
+  onChangeMode: (mode: CombinedInputMode) => void;
+  onRequestUnpair: () => void;
+}) {
+  return (
+    <div className="relative grid grid-cols-[1fr_auto_1fr] items-center py-1">
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute -top-px -bottom-px left-11 w-0.5 bg-primary/65"
+      />
+      <div />
+      <div
+        role="group"
+        aria-label="Paired Joy-Con input mode"
+        className="relative z-10 inline-flex items-center gap-0.5 rounded-full border border-border bg-card p-0.5 text-xs shadow-xs"
+      >
+        <LinkIcon aria-hidden="true" className="mx-1.5 size-3.5 shrink-0 text-primary" />
+        <button
+          type="button"
+          aria-pressed={inputMode === "combined"}
+          disabled={modeDisabled}
+          onClick={() => onChangeMode("combined")}
+          className={cn(
+            "rounded-full px-2.5 py-0.5 font-medium transition-colors disabled:opacity-50",
+            inputMode === "combined"
+              ? "bg-primary text-primary-foreground"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          Combined
+        </button>
+        <button
+          type="button"
+          aria-pressed={inputMode === "individual"}
+          disabled={modeDisabled}
+          onClick={() => onChangeMode("individual")}
+          className={cn(
+            "rounded-full px-2.5 py-0.5 font-medium transition-colors disabled:opacity-50",
+            inputMode === "individual"
+              ? "bg-primary text-primary-foreground"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          Individual
+        </button>
+      </div>
+      <div className="relative z-10 flex justify-end pr-0.5">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className="action-hover size-7 rounded-lg text-muted-foreground"
+          aria-label={`Unpair ${left.transport} and ${right.transport}`}
+          title="Unpair Joy-Con adapters"
+          disabled={unlinkDisabled}
+          onClick={onRequestUnpair}
+        >
+          <LinkBreakIcon />
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -359,15 +714,25 @@ type AdapterSelectionModifiers = Pick<MouseEvent, "shiftKey" | "ctrlKey" | "meta
 function ConnectionCard({
   adapter,
   controllerName = "No controller selected",
+  mutedTitle = false,
+  combinedShared = false,
   mapping,
   onEditPreset,
   inputTarget,
+  onChangeOutput,
+  changingOutput,
+  onBluetoothBusyChange,
 }: {
   adapter?: Adapter;
   controllerName?: string;
+  mutedTitle?: boolean;
+  combinedShared?: boolean;
   mapping: MappingSettings;
   onEditPreset: (preset: PresetInfo) => void;
   inputTarget?: { selected: boolean; select: (modifiers: AdapterSelectionModifiers) => void };
+  onChangeOutput?: (output: { controller_type: BluetoothControllerType }) => void;
+  changingOutput?: boolean;
+  onBluetoothBusyChange?: (adapterId: string, isBusy: boolean) => void;
 }) {
   const connection = useSwitchConnection(adapter?.id === "primary" ? undefined : adapter?.id);
   const {
@@ -388,6 +753,20 @@ function ConnectionCard({
   const [renameError, setRenameError] = useState<string | null>(null);
   const pairing = status?.pairing ?? false;
   const pairingAction = pairing ? "Stop pairing" : "Start pairing";
+  const controllerType = adapter?.controller_type ?? "pro";
+  const combined = !!adapter?.combined_with;
+  const outputOptions = CONTROLLER_VARIANTS.filter(isBluetoothControllerType).map((type) => ({
+    value: type,
+    label: CONTROLLER_VARIANT_NAMES[type],
+    variant: type,
+  }));
+  const controllerSelection = mapping.active ?? (mapping.allowUnassign ? "unassigned" : null);
+  const activeControllerName = mapping.options.find((option) => option.id === mapping.active)?.name;
+
+  useEffect(() => {
+    if (!adapter || !onBluetoothBusyChange) return;
+    onBluetoothBusyChange(adapter.id, active || pairing);
+  }, [adapter, active, pairing, onBluetoothBusyChange]);
 
   async function saveName() {
     if (!renaming || savingName || !renaming.name.trim()) return;
@@ -431,7 +810,13 @@ function ConnectionCard({
         />
       )}
       <div className="relative z-10 self-center">
-        <ControllerColoursDialog adapterId={adapter?.id} />
+        <ControllerColoursDialog
+          key={controllerType}
+          adapterId={adapter?.id}
+          variant={adapter?.controller_type}
+          upright={combined}
+          combinedShared={combinedShared}
+        />
         {!!status?.player_number && (
           <p className="pointer-events-none text-center text-xs text-muted-foreground">
             Player {status.player_number}
@@ -445,15 +830,61 @@ function ConnectionCard({
         )}
       >
         <div className="flex min-w-0 items-center gap-2">
-          <h3
-            id={`${id}-controller`}
-            className="max-w-3/5 min-w-0 truncate text-sm font-medium"
-            title={controllerName}
-          >
-            {controllerName}
-          </h3>
-          <ConnectionStatus status={status} statusError={statusError} />
-          <div className="ms-auto shrink-0">
+          {mutedTitle ? (
+            <h3
+              id={`${id}-controller`}
+              className="min-w-0 flex-1 truncate text-sm font-normal text-muted-foreground"
+              title={controllerName}
+            >
+              {controllerName}
+            </h3>
+          ) : (
+            <div className="min-w-44 flex-1">
+              <Select
+                value={controllerSelection}
+                disabled={
+                  !mapping.available ||
+                  mapping.options.length === 0 ||
+                  mapping.pending !== null ||
+                  mapping.macroMode
+                }
+                onValueChange={(value) => {
+                  if (value !== null && value !== controllerSelection) {
+                    mapping.selectController(value === "unassigned" ? null : value);
+                  }
+                }}
+              >
+                <SelectTrigger
+                  id={`${id}-controller`}
+                  size="sm"
+                  className="w-full min-w-0"
+                  aria-label="Select controller"
+                  title={activeControllerName ?? controllerName}
+                >
+                  <SelectValue placeholder="No controller selected" className="min-w-0">
+                    <span className="truncate">
+                      {activeControllerName ??
+                        (mapping.allowUnassign ? "No controller" : "No controller selected")}
+                    </span>
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent align="start">
+                  <SelectGroup>
+                    {mapping.allowUnassign && (
+                      <SelectItem value="unassigned">No controller</SelectItem>
+                    )}
+                    {mapping.options.map((entry) => (
+                      <SelectItem key={entry.id} value={entry.id} disabled={entry.disabled}>
+                        {entry.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <div className="ms-auto flex shrink-0 items-center gap-1.5">
+            <ConnectionStatus status={status} statusError={statusError} />
             <ControllerMappingDialog
               controller={mapping}
               usbAdapter={
@@ -462,6 +893,27 @@ function ConnectionCard({
                   : undefined
               }
               onEditPreset={onEditPreset}
+              bluetoothOutput={
+                adapter && onChangeOutput
+                  ? {
+                      value: controllerType,
+                      options: outputOptions,
+                      disabled:
+                        combined ||
+                        disabled ||
+                        active ||
+                        pairing ||
+                        !!changingOutput ||
+                        adapter.macro_mode,
+                      error: null,
+                      select: (value) => {
+                        if (isBluetoothControllerType(value)) {
+                          onChangeOutput({ controller_type: value });
+                        }
+                      },
+                    }
+                  : undefined
+              }
             />
           </div>
         </div>
@@ -478,7 +930,7 @@ function ConnectionCard({
             <Button
               variant="outline"
               size="icon-sm"
-              className="rounded-lg"
+              className="action-hover rounded-lg"
               aria-label={pairingAction}
               aria-pressed={pairing}
               title={pairingAction}
@@ -516,6 +968,7 @@ function ConnectionCard({
           <Button
             variant="ghost"
             size="icon-sm"
+            className="action-hover"
             aria-label="Rename Switch profile"
             title="Rename Switch profile"
             disabled={disabled || !address}
@@ -537,7 +990,7 @@ function ConnectionCard({
                   <Button
                     variant="outline"
                     size="icon-sm"
-                    className="rounded-lg text-destructive hover:text-destructive"
+                    className="switch-delete rounded-lg text-destructive dark:text-red-400"
                     aria-label="Delete Switch profile"
                     title="Delete Switch profile"
                     disabled={disabled || !address || status?.state === "reconnecting"}
@@ -579,6 +1032,11 @@ function ConnectionCard({
         {pairing && (
           <p className="text-xs text-muted-foreground">
             On the Switch, open Controllers → Change Grip/Order.
+          </p>
+        )}
+        {combined && pairing && (
+          <p className="text-xs text-muted-foreground">
+            Pair both Joy-Cons to the same Switch to register them together.
           </p>
         )}
         {statusError && <p className="text-xs text-destructive">{statusError}</p>}

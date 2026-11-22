@@ -60,7 +60,7 @@ export function MacroRunPanel({
           nativeButton={false}
           variant="outline"
           size="sm"
-          className={fillHeight ? "h-7" : undefined}
+          className={cn("action-hover", fillHeight && "h-7")}
         >
           <PencilSimpleIcon size={14} /> Edit macros
         </Button>
@@ -103,12 +103,12 @@ export function MacroRunPanel({
             />
           </Label>
           {(canPause || !canResume) && (
-            <Button size="sm" variant="outline" onClick={pause} disabled={!canPause}>
+            <Button size="sm" variant="outline" className="action-hover" onClick={pause} disabled={!canPause}>
               <PauseIcon size={14} weight="fill" /> Pause
             </Button>
           )}
           {canResume && (
-            <Button size="sm" variant="outline" onClick={resume}>
+            <Button size="sm" variant="outline" className="action-hover" onClick={resume}>
               <PlayIcon size={14} weight="fill" /> Resume
             </Button>
           )}
@@ -178,7 +178,7 @@ export function MacroRunPanel({
                     nativeButton={false}
                     size="xs"
                     variant="outline"
-                    className="relative z-10"
+                    className="action-hover relative z-10"
                     aria-label={`Edit ${name}`}
                   >
                     <PencilSimpleIcon size={12} /> Edit

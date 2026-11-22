@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from app.input.macro_source import MacroPlayerThread
-from app.input.pygame_source import PygameInputThread
+from lib.controller import ControllerVariant
 from lib.input.macros import load_macro, validate_macro
 from lib.input.presets import PresetConfig, PresetSelection, load_preset
 from lib.input.state import NEUTRAL, Button, ControllerState
@@ -45,10 +45,11 @@ class InputManager:
         self.macro_rate_hz = macro_rate_hz
         self.adapter_id = adapter_id
         self._manual_state = NEUTRAL
+        self.map_manual_input: Callable[[ControllerState], ControllerState] | None = None
         self._pause_capture = pause_capture
         self._resume_capture = resume_capture
         self.mode: Mode = "manual"
-        self.pygame_threads: list[PygameInputThread] = []
+        self.input_threads: list = []
         self._macro: MacroPlayerThread | None = None
         self._macro_name: str | None = None
         # Reentrant: ``on_finish`` fires from the macro thread while the
@@ -102,7 +103,7 @@ class InputManager:
                 except Exception:
                     logger.exception("status broadcast failed")
 
-    def _emit_status(self) -> None:
+    def broadcast_status(self) -> None:
         self._emit_frame(self.status_payload())
 
     def status_payload(self) -> dict:
@@ -128,10 +129,10 @@ class InputManager:
             return []
         return sorted(p.stem for p in self.macros_dir.glob("*.json") if p.is_file())
 
-    def attach_pygame_threads(self, threads: list) -> None:
-        """Register input threads (PygameInputThread or ControllerService —
+    def attach_input_threads(self, threads: list) -> None:
+        """Register input threads (ControllerService, MacroPlayerThread —
         anything with ``pause``/``resume``/``stop``)."""
-        self.pygame_threads.extend(threads)
+        self.input_threads.extend(threads)
 
     def set_controller_service(self, service: ControllerService) -> None:
         self._service = service
@@ -189,25 +190,6 @@ class InputManager:
             }
         )
 
-    def select_controller(self, ident: str | int) -> dict:
-        """Switch the active physical controller. Returns its info dict.
-
-        Raises :class:`MacroActiveError` while a macro runs and
-        ``ValueError`` when no device matches.
-        """
-        with self._lock:
-            if self.mode == "macro":
-                raise MacroActiveError(
-                    "cannot switch controllers while a macro is running"
-                )
-        if self._service is None:
-            raise ValueError("no controller service is attached")
-        info = self._service.select(ident)
-        try:
-            return info.to_dict()
-        finally:
-            self._emit_controllers()
-
     def apply_preset(self, source: str) -> PresetConfig:
         """Load, validate and apply a mapping preset at runtime.
 
@@ -235,7 +217,7 @@ class InputManager:
                 self._manual_state = NEUTRAL
                 if self._pause_capture:
                     self._pause_capture()
-                for t in self.pygame_threads:
+                for t in self.input_threads:
                     t.pause()
                 self.mode = "macro"
             else:  # -> manual
@@ -243,14 +225,20 @@ class InputManager:
                     self._macro.stop()
                     self._drain_and_neutralize()
                     self._clear_macro()
-                for t in self.pygame_threads:
+                for t in self.input_threads:
                     t.resume()
                 if self._resume_capture:
                     self._resume_capture()
                 self.mode = "manual"
-        self._emit_status()
+        self.broadcast_status()
 
-    def start_macro(self, macro: dict) -> None:
+    def start_macro(
+        self,
+        macro: dict,
+        *,
+        variant: ControllerVariant = ControllerVariant.PRO,
+        state_filter: Callable[[ControllerState], ControllerState] | None = None,
+    ) -> None:
         """Start a macro if this adapter has no active playback."""
         with self._lock:
             if self._macro is not None:
@@ -263,51 +251,56 @@ class InputManager:
                 self.command_queue,
                 rate_hz=self.macro_rate_hz,
                 on_finish=lambda: self._on_macro_finished(thread),
-                publish=lambda state: self._publish_macro_state(thread, state),
+                publish=lambda state: self._publish_macro_state(
+                    thread, state_filter(state) if state_filter is not None else state
+                ),
+                variant=variant,
             )
             self._macro = thread
             self._macro_name = name
             if self.mode != "macro":
                 if self._pause_capture:
                     self._pause_capture()
-                for t in self.pygame_threads:
+                for t in self.input_threads:
                     t.pause()
                 self.mode = "macro"
             thread.start()
         logger.info(f"Started macro '{name}'")
-        self._emit_status()
+        self.broadcast_status()
 
     def start_macro_by_name(self, name: str) -> None:
         with self._lock:
             if self._macro is not None:
                 return
-        path = self.macros_dir / f"{name}.json"
-        macro = load_macro(path)
+        self.start_macro(self.read_named_macro(name))
+
+    def read_named_macro(self, name: str) -> dict:
+        macro = load_macro(self.macros_dir / f"{name}.json")
         macro["name"] = name
-        self.start_macro(macro)
+        return macro
 
     def cancel_macro(self) -> None:
         with self._lock:
             self._cancel_internal()
             if self.mode == "macro":
-                for t in self.pygame_threads:
+                for t in self.input_threads:
                     t.resume()
                 if self._resume_capture:
                     self._resume_capture()
                 self.mode = "manual"
-        self._emit_status()
+        self.broadcast_status()
 
     def pause_macro(self) -> None:
         with self._lock:
             if self._macro is not None and not self._macro.is_paused():
                 self._macro.pause()
-        self._emit_status()
+        self.broadcast_status()
 
     def resume_macro(self) -> None:
         with self._lock:
             if self._macro is not None and self._macro.is_paused():
                 self._macro.resume()
-        self._emit_status()
+        self.broadcast_status()
 
     def submit_state(self, state: ControllerState) -> bool:
         """Enqueue an ad-hoc state. Returns True if accepted, False if the
@@ -315,6 +308,8 @@ class InputManager:
         with self._lock:
             if self.mode == "macro":
                 return False
+            if self.map_manual_input is not None:
+                state = self.map_manual_input(state)
             if self.adapter_id is None:
                 self.command_queue.put_nowait(state)
             else:
@@ -344,7 +339,7 @@ class InputManager:
             if self._macro is not None:
                 self._macro.stop()
                 self._clear_macro()
-            for t in self.pygame_threads:
+            for t in self.input_threads:
                 t.stop()
 
     def _cancel_internal(self) -> None:
@@ -391,13 +386,13 @@ class InputManager:
             name = self._macro_name
             self._clear_macro()
             if self.mode == "macro":
-                for t in self.pygame_threads:
+                for t in self.input_threads:
                     t.resume()
                 if self._resume_capture:
                     self._resume_capture()
                 self.mode = "manual"
         logger.info(f"Macro '{name}' finished; returning to manual mode")
-        self._emit_status()
+        self.broadcast_status()
 
 
 

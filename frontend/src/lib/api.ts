@@ -94,12 +94,6 @@ export const deleteMacro = (name: string) =>
 
 export const getControllers = () => requestJson<ControllersFrame>("/api/controllers");
 
-export const selectController = (ident: string | number) =>
-  requestJson<ControllersFrame & { applied?: string }>("/api/controllers/active", {
-    method: "PUT",
-    body: JSON.stringify(typeof ident === "number" ? { index: ident } : { guid: ident }),
-  });
-
 export type ControllerSelection = {
   controllers: ControllerInfo[];
   active: string | null;

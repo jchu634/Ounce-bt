@@ -1,0 +1,50 @@
+import type { ComponentType, SVGProps } from "react";
+import type { ButtonName } from "@/src/lib/types";
+import {
+  SwitchButtonA,
+  SwitchButtonB,
+  SwitchButtonHome,
+  SwitchButtonL,
+  SwitchButtonMinus,
+  SwitchButtonPlus,
+  SwitchButtonR,
+  SwitchButtonSl,
+  SwitchButtonSr,
+  SwitchButtonSync,
+  SwitchButtonX,
+  SwitchButtonY,
+  SwitchButtonZl,
+  SwitchButtonZr,
+  SwitchDpadDownOutline,
+  SwitchDpadLeftOutline,
+  SwitchDpadRightOutline,
+  SwitchDpadUpOutline,
+  SwitchStickLPress,
+  SwitchStickRPress,
+} from "@/src/assets/input-prompts/switch";
+
+export const BUTTON_ICONS: Record<
+  ButtonName,
+  ComponentType<SVGProps<SVGSVGElement>>
+> = {
+  A: SwitchButtonA,
+  B: SwitchButtonB,
+  X: SwitchButtonX,
+  Y: SwitchButtonY,
+  L: SwitchButtonL,
+  R: SwitchButtonR,
+  ZL: SwitchButtonZl,
+  ZR: SwitchButtonZr,
+  UP: SwitchDpadUpOutline,
+  DOWN: SwitchDpadDownOutline,
+  LEFT: SwitchDpadLeftOutline,
+  RIGHT: SwitchDpadRightOutline,
+  PLUS: SwitchButtonPlus,
+  MINUS: SwitchButtonMinus,
+  HOME: SwitchButtonHome,
+  CAPTURE: SwitchButtonSync,
+  STICK_L: SwitchStickLPress,
+  STICK_R: SwitchStickRPress,
+  SL: SwitchButtonSl,
+  SR: SwitchButtonSr,
+};

@@ -17,20 +17,27 @@ export const BUTTON_NAMES = [
   "CAPTURE",
   "STICK_L",
   "STICK_R",
-  "SR_R",
-  "SL_R",
-  "SR_L",
-  "SL_L",
+  "SL",
+  "SR",
 ] as const;
 
 export type ButtonName = (typeof BUTTON_NAMES)[number];
+
+export const MACRO_ONLY_BUTTON_NAMES = ["SL_OR_L", "SR_OR_R"] as const;
+
+export const MACRO_BUTTON_NAMES = [
+  ...BUTTON_NAMES,
+  ...MACRO_ONLY_BUTTON_NAMES,
+] as const;
+
+export type MacroButtonName = (typeof MACRO_BUTTON_NAMES)[number];
 
 export type EventAction =
   | { do: "press" | "release"; button: ButtonName }
   | { do: "stick"; side: "left" | "right"; x: number; y: number };
 
 export type MacroAction =
-  | { do: "press" | "release"; button: ButtonName }
+  | { do: "press" | "release"; button: MacroButtonName }
   | { do: "wait"; ms: number; unit?: "ms" | "seconds" }
   | { do: "stick"; side: "left" | "right"; x: number; y: number }
   | { do: "loop"; count: number; actions: MacroAction[] };
@@ -56,15 +63,17 @@ export type StatusFrame = AdapterInputStatus & {
   type: "status";
   adapter_id?: string;
   adapter_statuses?: Record<string, AdapterInputStatus>;
+  has_joycons?: boolean;
 };
 
 export type ControllerInfo = {
+  instance_id: number;
   guid: string;
-  index: number;
   name: string;
-  axes: number;
-  buttons: number;
-  hats: number;
+  gamepad_type?: string;
+  has_gyro?: boolean;
+  has_accel?: boolean;
+  has_rumble?: boolean;
 };
 
 export type ControllersFrame = {
@@ -79,6 +88,7 @@ export type ErrorFrame = {
   type: "error";
   message: string;
   detail?: string;
+  code?: "macro_capability";
 };
 
 export type ServerFrame = StatusFrame | ControllersFrame | ErrorFrame;

@@ -1,3 +1,10 @@
+import {
+  isBluetoothControllerType,
+  type BluetoothControllerType,
+} from "./controller-variants";
+
+export type CombinedInputMode = "combined" | "individual";
+
 export type Adapter = {
   id: string;
   transport: string;
@@ -6,14 +13,26 @@ export type Adapter = {
   error: string | null;
   preset: string | null;
   macro_mode: boolean;
+  controller_type?: BluetoothControllerType;
+  combined_with?: string | null;
+  combined_input_mode?: CombinedInputMode;
 };
 
-type Controller = { id: number; name: string; guid: string };
+type Controller = {
+  id: number;
+  name: string;
+  guid: string;
+  gamepad_type?: string;
+  has_gyro?: boolean;
+  has_accel?: boolean;
+  has_rumble?: boolean;
+};
 
 export type AdapterInventory = {
   adapters: Adapter[];
   controllers: Controller[];
   controllers_available: boolean;
+  joycon_pairing_enabled?: boolean;
 };
 
 function isAdapter(value: unknown): value is Adapter {
@@ -34,7 +53,12 @@ function isAdapter(value: unknown): value is Adapter {
     "preset" in value &&
     (value.preset === null || typeof value.preset === "string") &&
     "macro_mode" in value &&
-    typeof value.macro_mode === "boolean"
+    typeof value.macro_mode === "boolean" &&
+    (!("controller_type" in value) || isBluetoothControllerType(value.controller_type)) &&
+    (!("combined_with" in value) || value.combined_with === null || typeof value.combined_with === "string") &&
+    (!("combined_input_mode" in value) ||
+      value.combined_input_mode === "combined" ||
+      value.combined_input_mode === "individual")
   );
 }
 
@@ -62,6 +86,27 @@ export type AdapterChange =
       kind: "preset";
       adapterId: string;
       preset: string;
+    }
+  | {
+      kind: "type";
+      adapterId: string;
+      output: { controller_type: BluetoothControllerType } | {
+        controller_type: "combined";
+        companion_id: string;
+      };
+    }
+  | {
+      kind: "pair";
+      adapterIds: [string, string];
+    }
+  | {
+      kind: "unpair";
+      adapterId: string;
+    }
+  | {
+      kind: "pair_mode";
+      adapterId: string;
+      inputMode: CombinedInputMode;
     };
 
 async function readResponse(response: Response): Promise<unknown> {
@@ -90,6 +135,32 @@ export async function requestAdapters(change?: AdapterChange): Promise<AdapterIn
       `/api/adapters/${encodeURIComponent(change.adapterId)}/preset/${encodeURIComponent(change.preset)}`,
       { method: "POST", signal: AbortSignal.timeout(6000) },
     );
+  } else if (change?.kind === "type") {
+    response = await fetch(`/api/adapters/${encodeURIComponent(change.adapterId)}/type`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(change.output),
+      signal: AbortSignal.timeout(6000),
+    });
+  } else if (change?.kind === "pair") {
+    response = await fetch("/api/adapters/pair", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ adapter_ids: change.adapterIds }),
+      signal: AbortSignal.timeout(6000),
+    });
+  } else if (change?.kind === "unpair") {
+    response = await fetch(`/api/adapters/${encodeURIComponent(change.adapterId)}/pair`, {
+      method: "DELETE",
+      signal: AbortSignal.timeout(6000),
+    });
+  } else if (change?.kind === "pair_mode") {
+    response = await fetch(`/api/adapters/${encodeURIComponent(change.adapterId)}/pair-mode`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input_mode: change.inputMode }),
+      signal: AbortSignal.timeout(6000),
+    });
   } else {
     response = await fetch("/api/adapters", {
       cache: "no-store",
@@ -107,20 +178,29 @@ export async function requestAdapters(change?: AdapterChange): Promise<AdapterIn
     !Array.isArray(body.controllers) ||
     !body.controllers.every(isController) ||
     !("controllers_available" in body) ||
-    typeof body.controllers_available !== "boolean"
+    typeof body.controllers_available !== "boolean" ||
+    ("joycon_pairing_enabled" in body && typeof body.joycon_pairing_enabled !== "boolean")
   )
     throw new Error("Invalid adapter inventory");
   return {
     adapters: body.adapters,
     controllers: body.controllers,
     controllers_available: body.controllers_available,
+    joycon_pairing_enabled:
+      "joycon_pairing_enabled" in body && typeof body.joycon_pairing_enabled === "boolean"
+        ? body.joycon_pairing_enabled
+        : undefined,
   };
 }
 
-export async function requestAdapterColours(adapterId: string, colours?: Record<string, string>) {
+export async function requestAdapterColours(
+  adapterId: string,
+  colours?: Record<string, string>,
+  variant?: BluetoothControllerType,
+) {
   const body = await readResponse(
     await fetch(
-      `/api/adapters/${encodeURIComponent(adapterId)}/colours`,
+      `/api/adapters/${encodeURIComponent(adapterId)}/colours${variant ? `?controller_type=${variant}` : ""}`,
       colours
         ? {
             method: "PATCH",

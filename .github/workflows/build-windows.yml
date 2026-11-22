@@ -34,6 +34,11 @@ jobs:
         with:
           version: "0.11.13"
           enable-cache: true
+      - name: Cache libusb-enabled SDL3
+        uses: actions/cache@v4
+        with:
+          path: build/windows/sdl3-bin
+          key: sdl3-libusb-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build-sdl3.py') }}
       - name: Build with Nuitka
         run: ./scripts/build-windows.ps1
       - name: Smoke-test executable

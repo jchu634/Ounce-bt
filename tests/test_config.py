@@ -153,3 +153,78 @@ def test_store_rejects_non_boolean_vibration_before_other_updates():
         store.update({"preset": "changed", "vibration_enabled": 0})
     assert store.config.preset == "xbox"
     assert store.config.vibration_enabled is True
+
+
+def test_combined_input_mode_validation_and_persistence(tmp_path, monkeypatch):
+    import lib.config as module
+    from lib.config import AdapterProfile
+    from lib.controller import ControllerVariant
+
+    monkeypatch.setattr(module, "config_path", lambda: tmp_path / "config.json")
+    cfg = Config(adapter_profiles=[
+        AdapterProfile(
+            "02:00:00:00:00:01",
+            controller_type=ControllerVariant.LEFT,
+            combined_with=1,
+            combined_input_mode="individual",
+        ),
+        AdapterProfile(
+            "02:00:00:00:00:02",
+            controller_type=ControllerVariant.RIGHT,
+            combined_with=0,
+            combined_input_mode="individual",
+        ),
+    ])
+    cfg.save()
+    reloaded = Config.load()
+    assert [p.combined_input_mode for p in reloaded.adapter_profiles] == ["individual", "individual"]
+
+    # Unpaired profile normalizes combined_input_mode back to "combined".
+    unpaired = Config(adapter_profiles=[
+        AdapterProfile(
+            "02:00:00:00:00:01",
+            controller_type=ControllerVariant.LEFT,
+            combined_input_mode="individual",
+        ),
+    ])
+    assert unpaired.adapter_profiles[0].combined_input_mode == "combined"
+
+    # Mismatched modes between partners are rejected.
+    with pytest.raises(ValueError, match="same input mode"):
+        Config(adapter_profiles=[
+            AdapterProfile(
+                "02:00:00:00:00:01",
+                controller_type=ControllerVariant.LEFT,
+                combined_with=1,
+                combined_input_mode="combined",
+            ),
+            AdapterProfile(
+                "02:00:00:00:00:02",
+                controller_type=ControllerVariant.RIGHT,
+                combined_with=0,
+                combined_input_mode="individual",
+            ),
+        ])
+
+    # Unknown mode values are rejected.
+    with pytest.raises(ValueError, match="invalid combined input mode"):
+        Config(adapter_profiles=[
+            AdapterProfile(
+                "02:00:00:00:00:01",
+                controller_type=ControllerVariant.LEFT,
+                combined_input_mode="bogus",
+            ),
+        ])
+
+
+def test_joycon_pairing_enabled_defaults_false_and_validates(tmp_path, monkeypatch):
+    import lib.config as module
+
+    monkeypatch.setattr(module, "config_path", lambda: tmp_path / "config.json")
+    cfg = Config()
+    assert cfg.joycon_pairing_enabled is False
+    store = ConfigStore(cfg)
+    assert store.update({"joycon_pairing_enabled": True}) == {"joycon_pairing_enabled": True}
+    assert Config.load().joycon_pairing_enabled is True
+    with pytest.raises(TypeError, match="joycon_pairing_enabled"):
+        store.update({"joycon_pairing_enabled": "yes"})

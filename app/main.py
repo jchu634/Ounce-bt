@@ -23,12 +23,13 @@ from bumble.l2cap import ClassicChannelSpec
 from bumble.pairing import PairingConfig, PairingDelegate
 from starlette.applications import Starlette
 
-from app.bluetooth import AdapterSession
-from app.input.controller_service import ControllerService
+from app.bluetooth import AdapterSession, configure_adapter_outputs
+from app.input.controller_service import ControllerService, LatestInput
 from app.input.macro_source import MacroPlayerThread
 from app.input.manager import InputManager
 from app.server import build_app
 from lib.bluetooth_transport import WindowsUsbDevice, open_transport, prepare_hci_socket
+from lib.colours import default_colours
 from lib.config import (
     Config,
     ConfigStore,
@@ -37,7 +38,7 @@ from lib.config import (
     resolve_config_file,
     state_dir,
 )
-from lib.controller import ControllerTypes
+from lib.controller import ControllerVariant
 from lib.firmware import (
     CONFIG_NAME,
     FIRMWARE_NAME,
@@ -46,7 +47,8 @@ from lib.firmware import (
 )
 from lib.input import NEUTRAL, apply_to_protocol, parse_rumble
 from lib.input import presets as presets_module
-from lib.input.macros import load_macro
+from lib.input.imu import pack_imu_frames
+from lib.input.macros import load_macro, seed_default_macros
 from lib.input.presets import (
     PresetConfig,
     PresetSelection,
@@ -61,8 +63,23 @@ from lib.windows_adapters import discover_winusb_adapters
 HID_CONTROL_PSM = 0x0011
 HID_INTERRUPT_PSM = 0x0013
 TICK_RATE_HZ = 132
+IMU_REPORT_INTERVAL_SECONDS = 0.015
+# Cap unacknowledged ACL packets per adapter so continuous IMU or stick traffic
+# cannot build an unbounded FIFO backlog in Bumble or the adapter's TX buffers.
+# Keeping IMU-only reports at <= 1 in flight always leaves a priority slot for
+# button/stick transitions while still allowing full 66.7 Hz IMU on clean links.
+MAX_PENDING_IMU_PACKETS = 1
+MAX_PENDING_CONTROL_PACKETS = 2
 
 logger = logging.getLogger("switch_pair")
+
+
+def _pending_acl_packets(interrupt_channel) -> int:
+    """Return unacknowledged ACL packets on this channel's link (0 if unknown)."""
+    connection = getattr(interrupt_channel, "connection", None)
+    packet_queue = getattr(connection, "data_packet_queue", None)
+    pending = getattr(packet_queue, "pending", 0)
+    return pending if type(pending) is int and pending > 0 else 0
 
 
 def setup_logging(bumble_logging: bool = True):
@@ -88,25 +105,20 @@ def setup_logging(bumble_logging: bool = True):
 
 
 def controller_spec_info(specs) -> tuple[bool, int | None]:
-    """Scan input specs for controller entries.
-
-    Returns ``(enabled, index_hint)`` where ``enabled`` is True when any
-    ``controller[:idx]`` spec is present and ``index_hint`` is the first
-    explicit index (None otherwise).
-    """
+    """Scan input specs for controller entries."""
     for spec in specs:
         spec = spec.strip()
-        if spec == "controller":
+        if spec == "controller" or spec.startswith("controller:"):
             return True, None
-        if spec.startswith("controller:"):
-            try:
-                return True, int(spec.split(":", 1)[1])
-            except ValueError:
-                return True, None
     return False, None
 
 
-def build_input_sources(specs, command_queue):
+def build_input_sources(
+    specs,
+    command_queue,
+    *,
+    variant: ControllerVariant = ControllerVariant.PRO,
+):
     """Construct (not yet start) the daemon input threads for each --input spec.
 
     Spec formats:
@@ -122,17 +134,19 @@ def build_input_sources(specs, command_queue):
         elif spec.startswith("macro:"):
             path = spec.split(":", 1)[1]
             macro = load_macro(path)
-            threads.append(MacroPlayerThread(macro, command_queue))
+            threads.append(MacroPlayerThread(macro, command_queue, variant=variant))
         else:
             raise ValueError(f"Unknown --input spec: {spec!r}")
     return threads
 
 
-async def run_pairing_handshake(protocol, interrupt_channel, incoming):
+async def run_pairing_handshake(
+    protocol, interrupt_channel, incoming, pairing_grip=None, *, single_joycon=False,
+):
     """Exchange subcommands with the Switch until the handshake completes.
 
-    The Switch considers the controller ready once vibration has been
-    configured and a player number has been assigned.
+    A solo Joy-Con can send SL + SR only after reports are enabled,
+    and the Switch may wait for that chord before assigning player lights.
     """
     received_first_message = False
     while True:
@@ -146,16 +160,24 @@ async def run_pairing_handshake(protocol, interrupt_channel, incoming):
             logger.debug(f"Switch -> {reply.hex()}")
 
         protocol.process_commands(reply)
+        if pairing_grip is not None:
+            grip = pairing_grip(protocol, NEUTRAL)
+            if grip != NEUTRAL:
+                apply_to_protocol(protocol, grip)
         report = protocol.get_report()
         if report:
             logger.debug(f"Controller -> {report.hex()}")
             interrupt_channel.send_pdu(report)
 
+        ready = (
+            protocol.device_info_queried and protocol.mode == "standard"
+            if single_joycon else bool(protocol.player_number)
+        )
         if (
             reply
             and len(reply) > 45
             and protocol.vibration_configured
-            and protocol.player_number
+            and ready
         ):
             logger.info(f"Handshake complete (player {protocol.player_number})")
             return
@@ -176,27 +198,42 @@ async def run_mainloop(
     command_queue,
     rumble_enabled: bool = True,
     controller_service: ControllerService | None = None,
+    controller_service_getter: Callable[[], ControllerService | None] | None = None,
     vibration_allowed: Callable[[], bool] | None = None,
+    motion_allowed: Callable[[], bool] | None = None,
+    imu_source=None,
+    imu_source_getter: Callable[[], object] | None = None,
+    on_imu_active: Callable[[bool], None] | None = None,
+    horizontal_imu: bool = False,
     player_changed: Callable[[int | None], None] | None = None,
     mix_manual_input: Callable[[ControllerState], ControllerState] | None = None,
     tick_rate_hz: int = TICK_RATE_HZ,
+    output_input: Callable[[ControllerState], ControllerState] | None = None,
+    pairing_grip: Callable[[ControllerProtocol, ControllerState], ControllerState] | None = None,
 ):
     """Steady-state loop: apply the latest controller input, process one
-    Switch PDU per tick, forward rumble, and emit reports.
+    Switch PDU per tick, forward rumble and IMU motion, and emit reports.
 
     Caches the last report payload so we don't flood the Switch with
     identical packets (important on the "Change Grip/Order" menu), and
     sends a keepalive every 132 ticks (~1 s) regardless.
 
-    Console vibration state, the current preset and the saved setting gate playback.
+    Console vibration/IMU state, the current preset and saved settings gate playback.
     """
     tick = 0
     cached = None
+    cached_controls = None
     latest_state: ControllerState = NEUTRAL
-    duration_start = perf_counter()
+    tick_period = 1.0 / tick_rate_hz
+    imu_cursor = 0
+    next_imu_at = 0.0
+    last_imu_active: bool | None = None
+    active_imu_source = None
+    active_rumble_service = None
 
     try:
         while not stop_event.is_set():
+            tick_start = perf_counter()
             if (
                 not interrupt_channel
                 or interrupt_channel.state != interrupt_channel.State.OPEN
@@ -224,9 +261,52 @@ async def run_mainloop(
                 player_changed(protocol.player_number)
 
             # Apply the latest input state (buttons + sticks) to the report.
-            apply_to_protocol(
-                protocol, mix_manual_input(latest_state) if mix_manual_input else latest_state
+            state = mix_manual_input(latest_state) if mix_manual_input else latest_state
+            if output_input is not None:
+                state = output_input(state)
+            if pairing_grip is not None:
+                state = pairing_grip(protocol, state)
+            apply_to_protocol(protocol, state)
+
+            is_subcommand_reply = protocol.report[1] == 0x21
+            report_controls = bytes(protocol.report[3:14])
+            controls_changed = report_controls != cached_controls
+            pending = _pending_acl_packets(interrupt_channel)
+            can_send_control = controls_changed and pending < MAX_PENDING_CONTROL_PACKETS
+            can_send_imu = pending < MAX_PENDING_IMU_PACKETS
+
+            # Update IMU payload on a 15 ms (~66.7 Hz) cadence matching Switch 3x5ms framing.
+            # Only consume fresh samples when the link has ACL headroom to transmit them so
+            # congested links coalesce motion instead of building an unbounded FIFO backlog.
+            resolved_imu = imu_source_getter() if imu_source_getter is not None else imu_source
+            if resolved_imu is not active_imu_source:
+                active_imu_source = resolved_imu
+                imu_cursor = 0
+            imu_on = protocol.imu_enabled and (
+                motion_allowed() if motion_allowed is not None else True
             )
+            if on_imu_active is not None and imu_on != last_imu_active:
+                on_imu_active(imu_on)
+                last_imu_active = imu_on
+            if imu_on and resolved_imu is not None:
+                now = perf_counter()
+                if (
+                    now >= next_imu_at
+                    and not is_subcommand_reply
+                    and (can_send_control or can_send_imu)
+                ):
+                    imu_cursor, samples = resolved_imu.read_imu_since(imu_cursor)
+                    if samples:
+                        protocol.set_imu_inputs(
+                            pack_imu_frames(
+                                samples,
+                                protocol.controller_type,
+                                horizontal=horizontal_imu,
+                            )
+                        )
+                    next_imu_at = now + IMU_REPORT_INTERVAL_SECONDS
+            elif not imu_on:
+                protocol.set_imu_inputs(None)
 
             report = protocol.get_report()
 
@@ -234,20 +314,40 @@ async def run_mainloop(
             allowed = rumble_enabled and protocol.vibration_enabled
             if vibration_allowed is not None:
                 allowed = allowed and vibration_allowed()
-            if controller_service is not None:
+            resolved_rumble = (
+                controller_service_getter()
+                if controller_service_getter is not None
+                else controller_service
+            )
+            if resolved_rumble is not active_rumble_service:
+                if active_rumble_service is not None:
+                    active_rumble_service.set_rumble(None)
+                active_rumble_service = resolved_rumble
+            if resolved_rumble is not None:
                 if not allowed:
-                    controller_service.set_rumble(None)
+                    resolved_rumble.set_rumble(None)
                 elif reply:
                     rumble = parse_rumble(reply)
                     if rumble is not None:
-                        controller_service.set_rumble(rumble)
+                        resolved_rumble.set_rumble(rumble)
+
+            imu_changed = report[3:] != cached
+            if is_subcommand_reply:
+                should_send = True
+            elif controls_changed:
+                should_send = can_send_control
+            elif imu_changed:
+                should_send = can_send_imu
+            elif tick >= tick_rate_hz:
+                should_send = pending == 0
+            else:
+                should_send = False
 
             try:
-                if report[3:] != cached:
+                if should_send:
                     interrupt_channel.send_pdu(report)
-                    cached = report[3:]
-                elif tick >= tick_rate_hz:
-                    interrupt_channel.send_pdu(report)
+                    cached_controls = report_controls
+                    cached = None if is_subcommand_reply else report[3:]
                     tick = 0
             except Exception as e:
                 logger.warning(f"Failed to send report: {e}")
@@ -256,14 +356,15 @@ async def run_mainloop(
             tick += 1
 
             # Maintain the target tick rate, accounting for processing time.
-            duration_end = perf_counter()
-            elapsed = duration_end - duration_start
-            duration_start = duration_end
-            sleep_time = max(0.0, 1 / tick_rate_hz - elapsed)
-            await asyncio.sleep(sleep_time)
+            elapsed = perf_counter() - tick_start
+            await asyncio.sleep(max(0.0, tick_period - elapsed))
 
     finally:
-        if controller_service is not None:
+        if on_imu_active is not None:
+            on_imu_active(False)
+        if active_rumble_service is not None:
+            active_rumble_service.set_rumble(None)
+        elif controller_service is not None:
             controller_service.set_rumble(None)
 
 
@@ -453,7 +554,7 @@ def load_options():
     parser.add_argument(
         "--preset",
         default=None,
-        metavar="xbox|playstation|switch_pro|<path.json>",
+        metavar="xbox|playstation|switch|steam|<path.json>",
         help="controller mapping preset name or path to a JSON preset file "
         "(default: from config, or xbox)",
     )
@@ -541,7 +642,7 @@ async def main(
     logger.info(f"Config path: {config_path()}")
     logger.info(f"Config: {config_store.snapshot()}")
 
-    command_queue: queue.Queue[ControllerState] = queue.Queue()
+    command_queue = LatestInput()
     manager = InputManager(
         command_queue,
         config.resolve_folder(config.macros_dir),
@@ -558,6 +659,10 @@ async def main(
         return
 
     stop_event = shutdown_event or asyncio.Event()
+    try:
+        seed_default_macros(manager.macros_dir)
+    except OSError:
+        logger.exception("Could not install the default macro")
     app = build_app(
         manager,
         config_store,
@@ -655,7 +760,7 @@ async def run_bluetooth(
     profiles = config_store.ensure_adapter_profiles(transports, persist=not explicit_address)
     primary_preset_name = args.preset or profiles[0].preset or config.preset
 
-    # Load the configured preset as the initial fallback. Once pygame selects
+    # Load the configured preset as the initial fallback. Once SDL3 assigns
     # a controller, its saved GUID mapping or detected controller type replaces
     # this value. An explicit --preset keeps its session-wide override behavior.
     try:
@@ -669,24 +774,27 @@ async def run_bluetooth(
         f"(rumble {'on' if preset.rumble_enabled else 'off'})"
     )
 
-    # Physical gamepads are owned by the ControllerService (single pygame
-    # thread: enumeration, selection, hotplug). Macro specs still become
-    # standalone MacroPlayerThreads.
-    controllers_enabled, controller_index = controller_spec_info(config.input_specs)
+    # Physical gamepads are owned by the ControllerService (single SDL3
+    # thread: enumeration, assignment, hotplug, polling, sensors, rumble).
+    controllers_enabled, _controller_index = controller_spec_info(config.input_specs)
     controller_service: ControllerService | None = None
     if controllers_enabled:
-        initial_ident = profiles[0].controller_guid or controller_index
         if args.preset is not None:
 
-            def preset_resolver(_guid: str, _name: str) -> PresetSelection:
+            def preset_resolver(
+                _guid: str, _name: str, _gamepad_type: str = ""
+            ) -> PresetSelection:
                 return PresetSelection(args.preset, preset)
         else:
 
-            def preset_resolver(guid: str, name: str) -> PresetSelection:
+            def preset_resolver(
+                guid: str, name: str, gamepad_type: str = ""
+            ) -> PresetSelection:
                 return resolve_controller_preset(
                     guid,
                     name,
                     config_store.config.controller_presets,
+                    gamepad_type=gamepad_type,
                 )
 
         profile_indices = {
@@ -700,7 +808,6 @@ async def run_bluetooth(
         controller_service = ControllerService(
             command_queue,
             preset=preset,
-            initial_ident=initial_ident,
             on_change=manager.on_controllers_changed,
             preset_resolver=preset_resolver,
             on_preset_changed=manager.on_controller_preset_changed,
@@ -713,12 +820,7 @@ async def run_bluetooth(
         )
         manager.set_controller_service(controller_service)
 
-    input_threads = build_input_sources(config.input_specs, command_queue)
-    if controller_service is not None:
-        input_threads.append(controller_service)
-    manager.attach_pygame_threads(input_threads)
-
-    manager.adapter_id = "primary" if len(transports) > 1 else None
+    manager.adapter_id = "primary"
     primary = AdapterSession(
         "primary",
         transports[0],
@@ -757,6 +859,21 @@ async def run_bluetooth(
             legacy_keystore=profile.legacy_keystore,
         )
 
+    configure_adapter_outputs(sessions, profiles)
+    input_threads = build_input_sources(
+        config.input_specs,
+        command_queue,
+        variant=primary.mapping_variant(),
+    )
+    if controller_service is not None:
+        input_threads.append(controller_service)
+    manager.attach_input_threads(input_threads)
+    for session in sessions.values():
+        session.input_manager.map_manual_input = session.map_manual_input
+        if session.controller is not None:
+            session.controller.mapping_variant = session.mapping_variant
+            session.controller.imu_requested = session.imu_requested
+
     if app is not None:
         app.state.bluetooth = primary.bluetooth
         app.state.adapter_sessions = sessions
@@ -774,18 +891,32 @@ async def run_bluetooth(
                     thread.start()
 
     async def supervise(session, firmware_dir):
-        def vibration_allowed():
-            controller = session.controller
-            selected = (
+        def _selected_preset(target):
+            controller = target.controller
+            return (
                 (manager.current_preset or preset)
-                if session.primary
+                if target.primary
                 else (controller.preset if controller else preset)
             )
+
+        def vibration_allowed():
+            owner = session.input_owner
+            controller = owner.controller
             return (
                 config_store.config.allows_controller_vibration(
                     controller.active_guid if controller else None
                 )
-                and selected.rumble_enabled
+                and _selected_preset(owner).rumble_enabled
+            )
+
+        def motion_allowed():
+            owner = session.input_owner
+            controller = owner.controller
+            return (
+                config_store.config.allows_controller_motion(
+                    controller.active_guid if controller else None
+                )
+                and _selected_preset(owner).motion_enabled
             )
 
         try:
@@ -798,6 +929,7 @@ async def run_bluetooth(
                 addresses,
                 lambda: adapter_ready(session),
                 vibration_allowed,
+                motion_allowed,
             )
         except Exception as error:
             if app is None:
@@ -873,12 +1005,24 @@ class IncompleteHciResponse(HciStartupError):
 
 
 async def run_adapter(
-    session, config_store, power_lock, addresses, on_ready, vibration_allowed
+    session,
+    config_store,
+    power_lock,
+    addresses,
+    on_ready,
+    vibration_allowed,
+    motion_allowed=None,
 ):
     for attempt in range(3):
         try:
             await run_adapter_once(
-                session, config_store, power_lock, addresses, on_ready, vibration_allowed
+                session,
+                config_store,
+                power_lock,
+                addresses,
+                on_ready,
+                vibration_allowed,
+                motion_allowed,
             )
             return
         except HciStartupError as error:
@@ -909,7 +1053,13 @@ async def power_on_adapter(device):
 
 
 async def run_adapter_once(
-    session, config_store, power_lock, addresses, on_ready, vibration_allowed
+    session,
+    config_store,
+    power_lock,
+    addresses,
+    on_ready,
+    vibration_allowed,
+    motion_allowed=None,
 ):
     config = config_store.config
     bluetooth = session.bluetooth
@@ -925,6 +1075,11 @@ async def run_adapter_once(
         )
 
         # Classic / HID service configuration
+        pro_name = device.name
+        variant = bluetooth.controller_type
+        if variant != ControllerVariant.PRO:
+            device.name = variant.bluetooth_name
+            device.inquiry_response = None
         device.classic_enabled = True
         device.class_of_device = DEVICE_CLASS_GAMEPAD
         # Headless mode has no pairing button. Web sessions start idle.
@@ -938,7 +1093,7 @@ async def run_adapter_once(
                 io_capability=PairingDelegate.IoCapability.NO_OUTPUT_NO_INPUT
             ),
         )
-        device.sdp_service_records = sdp_record()
+        device.sdp_service_records = sdp_record(variant)
 
         state = SessionState()
 
@@ -992,6 +1147,8 @@ async def run_adapter_once(
                 on_ready,
                 vibration_allowed,
                 getattr(hci_transport.source, "wait_for_termination", None),
+                motion_allowed=motion_allowed,
+                pro_name=pro_name,
             )
         finally:
             addresses.discard(address)
@@ -1001,7 +1158,15 @@ async def run_adapter_once(
 
 
 async def run_powered_adapter(
-    session, config_store, device, state, on_ready, vibration_allowed, wait_transport
+    session,
+    config_store,
+    device,
+    state,
+    on_ready,
+    vibration_allowed,
+    wait_transport,
+    motion_allowed=None,
+    pro_name=None,
 ):
     config = config_store.config
     bluetooth = session.bluetooth
@@ -1027,7 +1192,7 @@ async def run_powered_adapter(
         )
     )
 
-    bluetooth.attach(device, state, make_l2cap_handler)
+    bluetooth.attach(device, state, make_l2cap_handler, pro_name=pro_name)
     on_ready()
     logger.info("Adapter %s ready at %s", session.transport, session.local_address)
 
@@ -1069,21 +1234,24 @@ async def run_powered_adapter(
 
             logger.info("Both HID channels open; starting controller session.")
             state.hid_opened = True
-            protocol = ControllerProtocol(
-                ControllerTypes.PRO_CONTROLLER, str(device.public_address)
-            )
+            variant = bluetooth.controller_type
+            protocol = ControllerProtocol(variant.bluetooth_type, str(device.public_address))
             colours = (
-                config.adapter_profiles[session.profile_index].colours
+                config.adapter_profiles[session.profile_index].colours_for(variant)
                 if session.profile_index is not None
                 else config.colours_for_adapter(session.transport, primary=session.primary)
+                if variant == ControllerVariant.PRO else default_colours(variant)
             )
             protocol.set_colours(**colours)
+            single_joycon = session.mapping_variant().is_single_joycon
+            session.reset_grip(pairing=bluetooth.pairing)
 
             try:
                 if not await run_until_disconnected(
                     asyncio.wait_for(
                         run_pairing_handshake(
-                            protocol, interrupt_channel, state.incoming
+                            protocol, interrupt_channel, state.incoming, session.apply_pairing_grip,
+                            single_joycon=single_joycon,
                         ),
                         timeout=30,
                     ),
@@ -1092,6 +1260,8 @@ async def run_powered_adapter(
                     continue
                 bluetooth.player_number = protocol.player_number
                 bluetooth.connected = True
+                if single_joycon and bluetooth.pairing:
+                    bluetooth.grip_reminder_id += 1
                 if config.web_enabled:
                     await bluetooth.set_pairing(False)
                 await run_mainloop(
@@ -1100,14 +1270,20 @@ async def run_powered_adapter(
                     state.incoming,
                     state.session_stop,
                     command_queue,
-                    controller_service=controller_service,
+                    controller_service_getter=lambda: controller_service if session.input_owner is session else None,
                     tick_rate_hz=config.tick_rate_hz,
                     vibration_allowed=vibration_allowed,
+                    motion_allowed=motion_allowed,
+                    imu_source_getter=lambda: session.input_owner.controller,
+                    on_imu_active=lambda active: setattr(session, "imu_active", active),
+                    horizontal_imu=single_joycon,
                     player_changed=lambda number: setattr(
                         bluetooth, "player_number", number
                     ),
                     mix_manual_input=session.input_manager.mix_manual_input
                     if session.input_manager else None,
+                    output_input=session.output_input,
+                    pairing_grip=session.apply_pairing_grip,
                 )
             except asyncio.CancelledError:
                 raise
@@ -1116,6 +1292,8 @@ async def run_powered_adapter(
             else:
                 logger.info("Session ended cleanly")
             finally:
+                session.combined_input = NEUTRAL
+                session.reset_grip()
                 bluetooth.connected = False
                 await cleanup_session(bluetooth)
 

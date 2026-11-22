@@ -45,6 +45,13 @@ try
     try
     {
         Invoke-Checked uv @('sync', '--locked', '--no-dev', '--group', 'build', '--python', $PythonVersion)
+        $sdl3BinDir = Join-Path $buildRoot 'sdl3-bin'
+        Invoke-Checked uv @('run', '--no-sync', '--python', $PythonVersion, 'python', 'scripts/build-sdl3.py', '--output-dir', $sdl3BinDir)
+        $sdl3Dll = Join-Path $sdl3BinDir 'SDL3.dll'
+        $libusbDll = Join-Path $sdl3BinDir 'libusb-1.0.dll'
+        if (-not (Test-Path $sdl3Dll) -or -not (Test-Path $libusbDll))
+        { throw "libusb-enabled SDL3 build outputs are missing in $sdl3BinDir"
+        }
         $arguments = @(
             'run', '--no-sync', '--python', $PythonVersion,
             'python', '-m', 'nuitka',
@@ -54,9 +61,12 @@ try
             '--windows-icon-from-ico=frontend/public/app.ico',
             '--include-package=uvicorn', '--include-package=bumble',
             '--include-data-dir=frontend/dist=frontend/dist',
+            "--include-data-files=$sdl3Dll=sdl3/bin/SDL3.dll",
+            "--include-data-files=$libusbDll=sdl3/bin/libusb-1.0.dll",
             '--include-data-files=presets/xbox.json=presets/xbox.json',
             '--include-data-files=presets/playstation.json=presets/playstation.json',
-            '--include-data-files=presets/switch_pro.json=presets/switch_pro.json',
+            '--include-data-files=presets/switch.json=presets/switch.json',
+            '--include-data-files=presets/steam.json=presets/steam.json',
             '--report=build/windows/nuitka-report.xml',
             'main.py'
         )
@@ -83,6 +93,13 @@ try
     {
         throw 'Nuitka did not produce Ounce-bt.exe.'
     }
+    $bundledSdl3 = Join-Path $distribution 'sdl3/bin/SDL3.dll'
+    $bundledLibusb = Join-Path $distribution 'sdl3/bin/libusb-1.0.dll'
+    if (-not (Test-Path $bundledSdl3) -or -not (Test-Path $bundledLibusb))
+    {
+        throw 'Bundled libusb-enabled SDL3 binaries are missing from main.dist/sdl3/bin.'
+    }
+    Invoke-Checked uv @('run', '--no-project', '--python', $PythonVersion, 'python', 'scripts/build-sdl3.py', '--verify', $bundledSdl3)
     Write-Host "Windows application: $distribution"
 } finally
 {

@@ -31,4 +31,44 @@ describe("controller preview", () => {
       expect(ids).toContain(match[1]);
     }
   });
+
+  it.each([
+    ["joycon_l", "rotate(-90 32 32)"],
+    ["joycon_r", "rotate(-90 32 32)"],
+  ] as const)("shows %s with the requested grip and colours", (variant, transform) => {
+    const markup = renderToStaticMarkup(
+      <ControllerPreview
+        variant={variant}
+        colours={{ ...DEFAULT_CONTROLLER_COLOURS, body: "#0044AA", buttons: "#B00BCA" }}
+      />,
+    );
+    expect(markup).toContain(`transform="${transform}"`);
+    expect(markup).toMatch(/data-region="body"[^>]*fill="#0044AA"/);
+    expect(markup).toMatch(/data-region="buttons"[^>]*fill="#B00BCA"/);
+    expect(markup).not.toContain("left_grip");
+  });
+
+  it("greys out the inactive side in combined Joy-Con preview", () => {
+    const leftMarkup = renderToStaticMarkup(
+      <ControllerPreview
+        variant="combined"
+        activeSide="joycon_l"
+        colours={{ ...DEFAULT_CONTROLLER_COLOURS, body: "#00B9D6", buttons: "#001E1E" }}
+      />,
+    );
+    expect(leftMarkup).toContain('data-side="joycon_l"');
+    expect(leftMarkup).toContain('data-side="joycon_r" data-inactive="true"');
+    expect(leftMarkup).toMatch(/data-region="body"[^>]*fill="#00B9D6"/);
+
+    const rightMarkup = renderToStaticMarkup(
+      <ControllerPreview
+        variant="combined"
+        activeSide="joycon_r"
+        colours={{ ...DEFAULT_CONTROLLER_COLOURS, body: "#FF3C28", buttons: "#1E0A0A" }}
+      />,
+    );
+    expect(rightMarkup).toContain('data-side="joycon_l" data-inactive="true"');
+    expect(rightMarkup).toContain('data-side="joycon_r"');
+    expect(rightMarkup).toMatch(/data-region="body"[^>]*fill="#FF3C28"/);
+  });
 });

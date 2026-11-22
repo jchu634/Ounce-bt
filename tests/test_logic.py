@@ -4,7 +4,14 @@ import json
 
 import pytest
 
-from lib.input.macros import MacroValidationError, validate_macro
+from lib.controller import ControllerVariant
+from lib.input.macros import (
+    MacroValidationError,
+    resolve_macro_button,
+    validate_macro,
+    validate_macro_capabilities,
+)
+from lib.input.state import Button
 from lib.input.presets import PresetValidationError, validate_preset
 from lib.server.files import (
     JsonDocStore,
@@ -99,6 +106,29 @@ def test_validate_macro_ok():
     validate_macro(_ok_macro())
 
 
+def test_validate_macro_adaptive_shoulder_buttons():
+    macro = {
+        "version": 1,
+        "actions": [
+            {"do": "press", "button": "SL_OR_L"},
+            {"do": "press", "button": "sr_or_r"},
+            {"do": "release", "button": "SL_OR_L"},
+            {"do": "release", "button": "SR_OR_R"},
+        ],
+    }
+    validate_macro(macro)
+    for variant in ControllerVariant:
+        validate_macro_capabilities(macro, variant)
+    assert resolve_macro_button("SL_OR_L", ControllerVariant.LEFT) == Button.SL
+    assert resolve_macro_button("SR_OR_R", ControllerVariant.LEFT) == Button.SR
+    assert resolve_macro_button("SL_OR_L", ControllerVariant.RIGHT) == Button.SL
+    assert resolve_macro_button("SR_OR_R", ControllerVariant.RIGHT) == Button.SR
+    assert resolve_macro_button("SL_OR_L", ControllerVariant.PRO) == Button.L
+    assert resolve_macro_button("SR_OR_R", ControllerVariant.PRO) == Button.R
+    assert resolve_macro_button("SL_OR_L", ControllerVariant.COMBINED) == Button.L
+    assert resolve_macro_button("SR_OR_R", ControllerVariant.COMBINED) == Button.R
+
+
 @pytest.mark.parametrize("unit", ["ms", "seconds"])
 def test_validate_macro_preserves_duration_presentation(unit):
     macro = {"version": 1, "actions": [{"do": "wait", "ms": 1500, "unit": unit}]}
@@ -154,31 +184,41 @@ def test_validate_macro_deep_nesting():
 
 def _ok_preset():
     return {
+        "version": 2,
         "name": "T",
         "rumble_enabled": False,
-        "buttons": {"0": "B", "1": "A"},
-        "triggers": {"4": "ZL"},
-        "left_stick": {"x_axis": 0, "y_axis": 1},
-        "right_stick": {"x_axis": 3, "y_axis": 4},
-        "dpad": {"hat": 0},
+        "motion_enabled": False,
+        "mappings": {
+            "pro": {
+                "buttons": {"south": "B", "east": "A"},
+                "triggers": {"left_trigger": "ZL"},
+                "sticks": {"left": "left", "right": "right"},
+            },
+            "joycon_l": {}, "joycon_r": {}, "combined": {},
+        },
     }
 
 
 def test_validate_preset_ok():
     preset = validate_preset(_ok_preset())
     assert preset.rumble_enabled is False
-    assert preset.button_map[0].name == "B"
+    assert preset.motion_enabled is False
+    assert preset.button_map["south"].name == "B"
 
 
 @pytest.mark.parametrize(
     ("mutate", "path"),
     [
-        (lambda p: p["buttons"].update({"2": "QQ"}), ["buttons", "2"]),
-        (lambda p: p["buttons"].update({"x": "A"}), ["buttons", "x"]),
-        (lambda p: p["triggers"].update({"9": 5}), ["triggers", "9"]),
-        (lambda p: p["left_stick"].update(x_axis=-1), ["left_stick", "x_axis"]),
-        (lambda p: p["dpad"].update(hat="zero"), ["dpad", "hat"]),
+        (lambda p: p["mappings"]["pro"]["buttons"].update({"west": "QQ"}), ["mappings", "pro", "buttons", "west"]),
+        (lambda p: p["mappings"]["pro"]["buttons"].update({"0": "A"}), ["mappings", "pro", "buttons", "0"]),
+        (lambda p: p["mappings"]["pro"]["triggers"].update({"right_trigger": 5}), ["mappings", "pro", "triggers", "right_trigger"]),
+        (lambda p: p["mappings"]["pro"]["sticks"].update(left="middle"), ["mappings", "pro", "sticks", "left"]),
         (lambda p: p.update(rumble_enabled="yes"), ["rumble_enabled"]),
+        (lambda p: p.update(motion_enabled="yes"), ["motion_enabled"]),
+        (lambda p: p.update(version=1), ["version"]),
+        (lambda p: p.pop("version"), ["version"]),
+        (lambda p: p["mappings"].pop("pro"), ["mappings", "pro"]),
+        (lambda p: p["mappings"].pop("joycon_r"), ["mappings", "joycon_r"]),
     ],
 )
 def test_validate_preset_failures(mutate, path):

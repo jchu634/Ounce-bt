@@ -181,10 +181,12 @@ def status_frame(mode: str, macro: dict | None) -> str:
     return json.dumps(payload)
 
 
-def error_frame(message: str, detail: str | None = None) -> str:
+def error_frame(message: str, detail: str | None = None, *, code: str | None = None) -> str:
     payload: dict = {"type": "error", "message": message}
     if detail is not None:
         payload["detail"] = detail
+    if code is not None:
+        payload["code"] = code
     return json.dumps(payload)
 
 

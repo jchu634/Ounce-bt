@@ -2,21 +2,30 @@
 
 from __future__ import annotations
 
+import json
 import queue
 import shutil
 import threading
 from pathlib import Path
-from unittest.mock import AsyncMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
+from bumble.keys import JsonKeyStore
 from starlette.testclient import TestClient
 
 import lib.input.presets as presets_module
 from app.bluetooth import AdapterSession
-from app.input.manager import InputManager, MacroActiveError
+from app.input.manager import InputManager
 from app.main import SessionState
 from app.server import build_app
 from lib.config import Config, ConfigStore
+from lib.controller import ControllerVariant
+from lib.input.macros import (
+    load_macro,
+    seed_default_macros,
+    validate_macro_capabilities,
+)
 from lib.input.state import NEUTRAL, Button, ControllerState
 from lib.server.files import JsonDocStore
 
@@ -32,17 +41,16 @@ class StubControllerService:
         return {
             "controllers": self._controllers,
             "active": self._active,
+            "assignments": {
+                "primary": next(
+                    (c["instance_id"] for c in self._controllers if c["guid"] == self._active),
+                    None,
+                )
+            },
             "available": True,
         }
 
-    def select(self, ident):
-        for c in self._controllers:
-            if c["guid"] == ident or c["name"] == ident or c["index"] == ident:
-                self._active = c["guid"]
-                return type("Info", (), {"to_dict": lambda self=self, c=c: c})()
-        raise ValueError(f"no controller matches {ident!r}")
-
-    def set_preset(self, preset, source=None):
+    def set_preset(self, preset, source=None, *, session_id="primary"):
         return None
 
 
@@ -73,20 +81,22 @@ class Fixture:
             StubControllerService(
                 [
                     {
+                        "instance_id": 1,
                         "guid": "g1",
-                        "index": 0,
                         "name": "Pad One",
-                        "axes": 6,
-                        "buttons": 11,
-                        "hats": 1,
+                        "gamepad_type": "switch_pro",
+                        "has_gyro": True,
+                        "has_accel": True,
+                        "has_rumble": True,
                     },
                     {
+                        "instance_id": 2,
                         "guid": "g2",
-                        "index": 1,
                         "name": "Pad Two",
-                        "axes": 4,
-                        "buttons": 9,
-                        "hats": 0,
+                        "gamepad_type": "xboxone",
+                        "has_gyro": False,
+                        "has_accel": False,
+                        "has_rumble": True,
                     },
                 ],
                 "g1",
@@ -328,6 +338,251 @@ def test_adapter_colours_are_saved_independently(fx):
         assert Config.load().adapter_colours["usb:1"]["body"] == "#AA0011"
 
 
+def test_joycon_output_changes_radio_identity_colours_and_combined_routing(fx, tmp_path):
+    fx.manager.adapter_id = "primary"
+    other = InputManager(queue.Queue(), fx.macros_dir, adapter_id="adapter-2")
+    sessions = {
+        manager.adapter_id: AdapterSession(
+            manager.adapter_id, f"usb:{index}", manager.command_queue, None,
+            input_manager=manager, profile_index=index,
+        )
+        for index, manager in enumerate((fx.manager, other))
+    }
+    fx.config_store.ensure_adapter_profiles(["usb:0", "usb:1"])
+    for slot in sessions.values():
+        device = SimpleNamespace(
+            name="Pro Controller", discoverable=False, on=Mock(),
+            set_discoverable=AsyncMock(), set_connectable=AsyncMock(),
+            send_sync_command=AsyncMock(),
+            keystore=JsonKeyStore(filename=str(tmp_path / f"{slot.id}.json")),
+        )
+        slot.bluetooth.attach(device, SessionState(), None, pro_name=device.name)
+        slot.input_manager.map_manual_input = slot.map_manual_input
+    primary, secondary = sessions.values()
+    pro_keystore = primary.bluetooth.device.keystore
+    app = build_app(
+        fx.manager, fx.config_store, Path("/nonexistent-dist"),
+        bluetooth=primary.bluetooth, adapter_sessions=sessions,
+    )
+    output = "/api/adapters/primary/type"
+    colours = "/api/adapters/primary/colours"
+    try:
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                assert "has_joycons" not in ws.receive_json()
+                assert ws.receive_json()["type"] == "controllers"
+                ws.send_json({
+                    "type": "select_adapters", "adapter_ids": [primary.id, secondary.id],
+                })
+                assert "has_joycons" not in ws.receive_json()
+                assert client.put(output, json={"controller_type": "joycon_r"}).status_code == 200
+                assert ws.receive_json()["has_joycons"] is True
+                ws.send_json({"type": "select_adapter", "adapter_id": secondary.id})
+                assert "has_joycons" not in ws.receive_json()
+            assert primary.mapping_variant() == ControllerVariant.RIGHT
+            assert client.get(colours).json()["controller_colours"]["body"] == "#FF3C28"
+            assert client.patch(colours, json={"body": "#fefa12"}).status_code == 200
+            assert client.patch(colours, json={"left_grip": "#FFFFFF"}).status_code == 400
+            assert client.put("/api/bluetooth", json={"pairing": True}).status_code == 200
+            device = primary.bluetooth.device
+            assert device.name == "Joy-Con (R)"
+            assert device.keystore.filename.name == "primary-joycon_r.json"
+            assert device.send_sync_command.call_args.args[0].local_name == b"Joy-Con (R)"
+            assert client.put(output, json={"controller_type": "pro"}).status_code == 409
+            assert client.put("/api/bluetooth", json={"pairing": False}).status_code == 200
+            assert client.put(output, json={"controller_type": "pro"}).status_code == 200
+            assert device.keystore is pro_keystore
+            assert client.get(colours).json()["controller_colours"]["body"] == "#000000"
+
+            # Combined pairing is locked behind the Advanced setting until enabled.
+            assert client.get("/api/adapters").json()["joycon_pairing_enabled"] is False
+            assert client.put(output, json={
+                "controller_type": "combined", "companion_id": secondary.id,
+            }).status_code == 403
+            assert client.post("/api/adapters/pair", json={
+                "adapter_ids": [primary.id, secondary.id],
+            }).status_code == 403
+            assert client.patch("/api/config", json={"joycon_pairing_enabled": True}).status_code == 200
+            assert client.get("/api/adapters").json()["joycon_pairing_enabled"] is True
+
+            response = client.put(output, json={
+                "controller_type": "combined", "companion_id": secondary.id,
+            })
+            assert response.status_code == 200
+            assert [(entry["controller_type"], entry["combined_with"])
+                    for entry in response.json()["adapters"]] == [
+                ("joycon_l", secondary.id), ("joycon_r", primary.id),
+            ]
+            reloaded = Config.load().adapter_profiles
+            assert reloaded[0].joycon_colours["joycon_r"]["body"] == "#FEFA12"
+            assert (reloaded[0].combined_with, reloaded[1].combined_with) == (1, 0)
+            assert primary.mapping_variant() == secondary.mapping_variant() == ControllerVariant.COMBINED
+            with client.websocket_connect("/ws") as ws:
+                initial = ws.receive_json()
+                assert initial["has_joycons"] is True
+                assert set(initial["adapter_statuses"]) == {primary.id, secondary.id}
+                assert ws.receive_json()["type"] == "controllers"
+                ws.send_json({"type": "select_adapter", "adapter_id": secondary.id})
+                selected_frame = ws.receive_json()
+                assert selected_frame["adapter_id"] == secondary.id
+                assert set(selected_frame["adapter_statuses"]) == {primary.id, secondary.id}
+                ws.send_json({"type": "state", "buttons": ["A", "LEFT"], "right": [1, 0]})
+                ws.send_json({"type": "select_adapter", "adapter_id": secondary.id})
+                assert ws.receive_json()["adapter_id"] == secondary.id
+                state = fx.manager.mix_manual_input(NEUTRAL)
+                assert state == ControllerState(Button.A | Button.LEFT, right=(1, 0))
+                assert primary.output_input(state) == state
+                assert secondary.output_input(NEUTRAL) == state
+                assert other.mix_manual_input(NEUTRAL) == NEUTRAL
+                ws.send_json({
+                    "type": "macro", "op": "start", "macro": {
+                        "version": 1, "repeat": 0, "actions": [
+                            {"do": "stick", "side": "right", "x": 1, "y": 0},
+                            {"do": "wait", "ms": 100},
+                        ],
+                    },
+                })
+                assert ws.receive_json()["mode"] == "macro"
+                assert [
+                    entry["macro_mode"] for entry in client.get("/api/adapters").json()["adapters"]
+                ] == [True, True]
+                ws.send_json({"type": "macro", "op": "cancel"})
+                assert ws.receive_json()["mode"] == "manual"
+
+            assert client.put(output, json={"controller_type": "joycon_l"}).status_code == 200
+            assert primary.combined_partner is secondary.combined_partner is None
+            assert secondary.output_input(NEUTRAL) == NEUTRAL
+            incompatible_macro = {
+                "version": 1, "actions": [{
+                    "do": "loop", "count": 2,
+                    "actions": [{"do": "stick", "side": "right", "x": 1, "y": 0}],
+                }],
+            }
+            assert client.put(
+                "/api/macros/right-stick",
+                json={"contents": json.dumps(incompatible_macro)},
+            ).status_code == 200
+            with client.websocket_connect("/ws") as ws:
+                assert ws.receive_json()["type"] == "status"
+                assert ws.receive_json()["type"] == "controllers"
+                for payload in ({"macro": incompatible_macro}, {"name": "right-stick"}):
+                    ws.send_json({"type": "macro", "op": "start", **payload})
+                    error = ws.receive_json()
+                    assert error["code"] == "macro_capability"
+                    assert error["detail"] == "Joy-Con (L) has no right stick."
+                    assert fx.manager.status()["mode"] == "manual"
+
+            # Pair two Joy-Con adapters via /api/adapters/pair, toggle Combined/Individual, and unpair.
+            assert client.put("/api/adapters/primary/type", json={"controller_type": "joycon_l"}).status_code == 200
+            assert client.put("/api/adapters/adapter-2/type", json={"controller_type": "pro"}).status_code == 200
+            # Pairing fails while secondary is a Pro Controller.
+            assert client.post("/api/adapters/pair", json={"adapter_ids": [primary.id, secondary.id]}).status_code == 400
+            assert client.put("/api/adapters/adapter-2/type", json={"controller_type": "joycon_r"}).status_code == 200
+
+            pair_resp = client.post("/api/adapters/pair", json={"adapter_ids": [secondary.id, primary.id]})
+            assert pair_resp.status_code == 200
+            assert [
+                (entry["controller_type"], entry["combined_with"], entry["combined_input_mode"])
+                for entry in pair_resp.json()["adapters"]
+            ] == [
+                ("joycon_l", secondary.id, "combined"),
+                ("joycon_r", primary.id, "combined"),
+            ]
+            assert secondary.input_owner is primary
+
+            # Switch to individual mode (allowed even while connected/pairing).
+            assert client.put("/api/bluetooth", json={"pairing": True}).status_code == 200
+            mode_resp = client.put(
+                f"/api/adapters/{primary.id}/pair-mode",
+                json={"input_mode": "individual"},
+            )
+            assert mode_resp.status_code == 200
+            assert [
+                entry["combined_input_mode"] for entry in mode_resp.json()["adapters"]
+            ] == ["individual", "individual"]
+            assert primary.input_owner is primary
+            assert secondary.input_owner is secondary
+            left_state = ControllerState(Button.UP, left=(1, 0))
+            right_state = ControllerState(Button.A, right=(0, 1))
+            assert primary.output_input(left_state) == left_state
+            assert secondary.output_input(right_state) == right_state
+
+            # In individual mode, selecting either adapter selects both and splits macro inputs per Joy-Con.
+            while not fx.command_queue.empty():
+                fx.command_queue.get_nowait()
+            while not other.command_queue.empty():
+                other.command_queue.get_nowait()
+            with client.websocket_connect("/ws") as ws:
+                assert set(ws.receive_json()["adapter_statuses"]) == {primary.id, secondary.id}
+                assert ws.receive_json()["type"] == "controllers"
+                ws.send_json({"type": "select_adapter", "adapter_id": secondary.id})
+                assert set(ws.receive_json()["adapter_statuses"]) == {primary.id, secondary.id}
+                ws.send_json({
+                    "type": "macro", "op": "start", "macro": {
+                        "version": 1, "repeat": 0, "actions": [
+                            {"do": "press", "button": "UP"},
+                            {"do": "stick", "side": "left", "x": 1, "y": 0},
+                            {"do": "press", "button": "A"},
+                            {"do": "stick", "side": "right", "x": 0, "y": 1},
+                            {"do": "wait", "ms": 100},
+                        ],
+                    },
+                })
+                while True:
+                    frame = ws.receive_json()
+                    if (
+                        frame["type"] == "status"
+                        and all(s["mode"] == "macro" for s in frame["adapter_statuses"].values())
+                    ):
+                        break
+                import time
+
+                deadline = time.monotonic() + 2.0
+                left_states: list[ControllerState] = []
+                right_states: list[ControllerState] = []
+                while time.monotonic() < deadline and (
+                    ControllerState(Button.UP, left=(1.0, 0.0)) not in left_states
+                    or ControllerState(Button.A, right=(0.0, 1.0)) not in right_states
+                ):
+                    try:
+                        left_states.append(fx.command_queue.get_nowait())
+                    except queue.Empty:
+                        pass
+                    try:
+                        right_states.append(other.command_queue.get_nowait())
+                    except queue.Empty:
+                        pass
+                    time.sleep(0.005)
+                assert ControllerState(Button.UP, left=(1.0, 0.0)) in left_states
+                assert all(not (s.buttons & Button.A) and s.right == (0.0, 0.0) for s in left_states)
+                assert ControllerState(Button.A, right=(0.0, 1.0)) in right_states
+                assert all(not (s.buttons & Button.UP) and s.left == (0.0, 0.0) for s in right_states)
+                ws.send_json({"type": "macro", "op": "cancel"})
+                while True:
+                    frame = ws.receive_json()
+                    if (
+                        frame["type"] == "status"
+                        and all(s["mode"] == "manual" for s in frame["adapter_statuses"].values())
+                    ):
+                        break
+
+            # Unpair requires stopping pairing first.
+            assert client.delete(f"/api/adapters/{primary.id}/pair").status_code == 409
+            assert client.put("/api/bluetooth", json={"pairing": False}).status_code == 200
+            unpair_resp = client.delete(f"/api/adapters/{secondary.id}/pair")
+            assert unpair_resp.status_code == 200
+            assert [
+                (entry["controller_type"], entry["combined_with"], entry["combined_input_mode"])
+                for entry in unpair_resp.json()["adapters"]
+            ] == [
+                ("joycon_l", None, "combined"),
+                ("joycon_r", None, "combined"),
+            ]
+            assert primary.combined_partner is secondary.combined_partner is None
+    finally:
+        other.shutdown()
+
+
 
 def test_macro_list_get(fx):
     with fx.client() as c:
@@ -335,6 +590,69 @@ def test_macro_list_get(fx):
         r = c.get("/api/macros/example")
         assert r.status_code == 200
         assert "press" in r.json()["contents"]
+
+
+def test_default_grip_macro_is_editable_and_stays_deleted(fx):
+    seed_default_macros(fx.macros_dir)
+    path = fx.macros_dir / "Press SL and SR.json"
+    macro = load_macro(path)
+    for variant in (ControllerVariant.LEFT, ControllerVariant.RIGHT):
+        validate_macro_capabilities(macro, variant)
+    with fx.client() as client:
+        url = "/api/macros/Press%20SL%20and%20SR"
+        macro["actions"][2]["ms"] = 500
+        assert client.put(url, json={"contents": json.dumps(macro)}).status_code == 200
+        seed_default_macros(fx.macros_dir)
+        assert load_macro(path)["actions"][2]["ms"] == 500
+        assert client.delete(url).status_code == 200
+        seed_default_macros(fx.macros_dir)
+        assert client.get(url).status_code == 404
+
+
+def test_ws_macro_adaptive_shoulder_buttons_use_adapter_variant(fx):
+    macro = {
+        "version": 1,
+        "actions": [
+            {"do": "press", "button": "SL_OR_L"},
+            {"do": "press", "button": "SR_OR_R"},
+            {"do": "release", "button": "SR_OR_R"},
+            {"do": "release", "button": "SL_OR_L"},
+        ],
+    }
+    other = InputManager(queue.Queue(), fx.macros_dir)
+    primary = AdapterSession("primary", "usb:0", fx.manager.command_queue, None, input_manager=fx.manager)
+    secondary = AdapterSession("adapter-2", "usb:1", other.command_queue, None, input_manager=other)
+    primary.bluetooth.set_controller_type(ControllerVariant.LEFT)
+    secondary.bluetooth.set_controller_type(ControllerVariant.PRO)
+
+    try:
+        with fx.client() as client:
+            client.app.state.adapter_sessions = {primary.id: primary, secondary.id: secondary}
+            client.app.state.input_managers = {primary.id: fx.manager, secondary.id: other}
+            with client.websocket_connect("/ws") as ws:
+                assert ws.receive_json()["type"] == "status"
+                assert ws.receive_json()["type"] == "controllers"
+                ws.send_json({"type": "select_adapters", "adapter_ids": [primary.id, secondary.id]})
+                assert ws.receive_json()["type"] == "status"
+                ws.send_json({"type": "macro", "op": "start", "macro": macro})
+                while fx.manager.status()["mode"] == "macro" or other.status()["mode"] == "macro":
+                    ws.receive_json()
+
+        primary_buttons = []
+        while not fx.manager.command_queue.empty():
+            primary_buttons.append(fx.manager.command_queue.get_nowait().buttons)
+        secondary_buttons = []
+        while not other.command_queue.empty():
+            secondary_buttons.append(other.command_queue.get_nowait().buttons)
+
+        assert Button.SL in primary_buttons
+        assert (Button.SL | Button.SR) in primary_buttons
+        assert Button.L not in primary_buttons
+        assert Button.L in secondary_buttons
+        assert (Button.L | Button.R) in secondary_buttons
+        assert Button.SL not in secondary_buttons
+    finally:
+        other.shutdown()
 
 
 def test_bluetooth_unavailable_and_validation(fx):
@@ -429,29 +747,33 @@ def test_macro_delete_running_conflict(fx, monkeypatch):
 
 
 
-def test_controllers_get_and_select(fx):
+def test_controllers_get_and_motion_config(fx):
     with fx.client() as c:
         r = c.get("/api/controllers").json()
         assert r["active"] == "g1"
         assert len(r["controllers"]) == 2
+        assert r["controllers"][0]["has_gyro"] is True
+        assert r["controllers"][1]["has_gyro"] is False
+        # Deprecated single-controller select endpoint removed.
+        assert c.put("/api/controllers/active", json={"guid": "g2"}).status_code == 404
 
-        r = c.put("/api/controllers/active", json={"guid": "g2"})
-        assert r.status_code == 200
-        assert r.json()["active"] == "g2"
-        # Persisted.
-        assert fx.config_store.config.controller_guid == "g2"
+        patched = c.patch("/api/config", json={"motion_enabled": False})
+        assert patched.status_code == 200
+        assert fx.config_store.config.motion_enabled is False
+        assert not fx.config_store.config.allows_controller_motion("g1")
 
-        assert c.put("/api/controllers/active", json={"guid": "nope"}).status_code == 404
-
-
-def test_controller_select_refused_during_macro(fx, monkeypatch):
-    def boom(ident):
-        raise MacroActiveError("macro running")
-
-    monkeypatch.setattr(fx.manager, "select_controller", boom)
-    with fx.client() as c:
-        r = c.put("/api/controllers/active", json={"guid": "g2"})
-        assert r.status_code == 409
+        patched = c.patch(
+            "/api/config",
+            json={"motion_enabled": True, "controller_motion": {"g1": False}},
+        )
+        assert patched.status_code == 200
+        assert not fx.config_store.config.allows_controller_motion("g1")
+        assert fx.config_store.config.allows_controller_motion("g2")
+        assert c.patch("/api/config", json={"motion_enabled": "yes"}).status_code == 400
+        assert (
+            c.patch("/api/config", json={"controller_motion": {"g1": "no"}}).status_code
+            == 400
+        )
 
 
 
@@ -459,10 +781,19 @@ def test_presets_list(fx):
     with fx.client() as c:
         r = c.get("/api/presets").json()
         names = {p["name"] for p in r["presets"]}
-        assert {"Xbox", "PlayStation", "Switch Pro Controller"} <= names
+        assert {"Xbox", "PlayStation", "Switch"} <= names
         filenames = {p["filename"] for p in r["presets"]}
-        assert {"xbox", "playstation", "switch_pro"} <= filenames
+        assert {"xbox", "playstation", "switch", "steam"} <= filenames
         assert r["active"] == "xbox"
+
+
+def test_switch_metadata_comes_from_bundled_preset_when_custom_directory_is_empty(fx):
+    (fx.presets_dir / "switch.json").unlink()
+    with fx.client() as client:
+        presets = client.get("/api/presets").json()["presets"]
+    switch = next(preset for preset in presets if preset["filename"] == "switch")
+    assert switch["name"] == "Switch"
+    assert switch["description"] == "Default Switch Pro Controller / Joy-Con mapping"
 
 
 def test_preset_builtin_guards(fx):
@@ -472,10 +803,10 @@ def test_preset_builtin_guards(fx):
 
 
 def test_preset_custom_crud_and_activate(fx):
-    contents = (
-        '{"name": "Custom", "buttons": {"0": "A"}, '
-        '"left_stick": {"x_axis": 0, "y_axis": 1}}'
-    )
+    contents = json.dumps({
+        "name": "Custom", "version": 2,
+        "mappings": {"pro": {"buttons": {"east": "A"}}, "joycon_l": {}, "joycon_r": {}, "combined": {}},
+    })
     with fx.client() as c:
         assert c.put("/api/presets/my-pad", json={"contents": contents}).status_code == 200
         listed = c.get("/api/presets").json()["presets"]
@@ -509,10 +840,13 @@ def test_preset_validation_path(fx):
     with fx.client() as c:
         r = c.put(
             "/api/presets/bad-pad",
-            json={"contents": '{"buttons": {"0": "NOT_A_BUTTON"}}'},
+            json={"contents": json.dumps({
+                "version": 2,
+                "mappings": {"pro": {"buttons": {"0": "NOT_A_BUTTON"}}, "joycon_l": {}, "joycon_r": {}, "combined": {}},
+            })},
         )
         assert r.status_code == 400
-        assert r.json()["path"] == ["buttons", "0"]
+        assert r.json()["path"] == ["mappings", "pro", "buttons", "0"]
 
 
 def test_preset_name_rejects_path_traversal(fx):
@@ -677,9 +1011,9 @@ def test_ws_handshake_and_status(fx):
 def test_ws_threadsafety_of_broadcast(fx):
     """Broadcasts from a foreign thread must not raise even without a
     bound asyncio loop."""
-    fx.manager._emit_status()  # no subscribers: no-op path
+    fx.manager.broadcast_status()  # no subscribers: no-op path
     fx.manager.subscribe()
-    thread = threading.Thread(target=fx.manager._emit_status)
+    thread = threading.Thread(target=fx.manager.broadcast_status)
     thread.start()
     thread.join()
 
@@ -997,3 +1331,26 @@ def test_debug_regenerates_only_the_target_adapter(
                 CONFIG_HEADER + bytes.fromhex(address.replace(":", ""))[::-1]
             )
             assert saved.bt_address == primary_address
+
+
+def test_adapters_get_returns_adapters_when_controller_status_unavailable(fx):
+    from unittest.mock import Mock
+
+    broken_controller = Mock()
+    broken_controller.status.side_effect = RuntimeError("controller service did not answer 'status' in time")
+    primary = AdapterSession("primary", "usb:0", fx.command_queue, broken_controller)
+    secondary = AdapterSession("adapter-2", "usb:1", queue.Queue(), None)
+    app = build_app(
+        fx.manager,
+        fx.config_store,
+        Path("/nonexistent-dist"),
+        bluetooth=primary.bluetooth,
+        adapter_sessions={slot.id: slot for slot in (primary, secondary)},
+    )
+    with TestClient(app) as client:
+        response = client.get("/api/adapters")
+        assert response.status_code == 200
+        body = response.json()
+        assert [item["id"] for item in body["adapters"]] == ["primary", "adapter-2"]
+        assert body["controllers"] == []
+        assert body["controllers_available"] is False

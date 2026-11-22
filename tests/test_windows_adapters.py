@@ -80,3 +80,84 @@ def test_winusb_detection_respects_explicit_transports(
     )
     _, args = application.load_options()
     assert args.auto_adapters is expected
+
+
+def test_open_usb_device_enumerates_concurrently_outside_open_lock(monkeypatch):
+    import threading
+
+    both_enumerating = threading.Barrier(2, timeout=2)
+
+    class _FakeHandle:
+        def setAutoDetachKernelDriver(self, _value):
+            pass
+
+        def getConfiguration(self):
+            return 1
+
+    class _FakeDevice:
+        def __init__(self, vid: int, pid: int):
+            self._vid = vid
+            self._pid = pid
+            self.closed = False
+
+        def getVendorID(self):
+            return self._vid
+
+        def getProductID(self):
+            return self._pid
+
+        def open(self):
+            return _FakeHandle()
+
+        def close(self):
+            self.closed = True
+
+    created_devices: list[list[_FakeDevice]] = []
+
+    class _FakeContext:
+        def open(self):
+            pass
+
+        def close(self):
+            pass
+
+        def getDeviceList(self, skip_on_error=False):
+            # Both worker threads must reach enumeration concurrently.
+            both_enumerating.wait()
+            pair = [_FakeDevice(0x2357, 0x0604), _FakeDevice(0x0BDA, 0x8771)]
+            created_devices.append(pair)
+            return pair
+
+    monkeypatch.setattr(bluetooth_transport, "load_libusb", lambda: None)
+    monkeypatch.setattr(bluetooth_transport.usb1, "USBContext", _FakeContext)
+    monkeypatch.setattr(bluetooth_transport.usb1, "hasCapability", lambda _cap: False)
+    monkeypatch.setattr(
+        bluetooth_transport,
+        "find_endpoints",
+        lambda _dev, forced_mode=False: (1, None, None, None, None, None, None, None),
+    )
+
+    results = []
+    errors = []
+
+    def worker(vid: int):
+        try:
+            results.append(
+                bluetooth_transport._open_usb_device(lambda d: d.getVendorID() == vid, 0)
+            )
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    t1 = threading.Thread(target=worker, args=(0x2357,))
+    t2 = threading.Thread(target=worker, args=(0x0BDA,))
+    t1.start()
+    t2.start()
+    t1.join(timeout=3)
+    t2.join(timeout=3)
+    assert errors == []
+    assert len(results) == 2
+    # Each scan must close the unmatched device while keeping the matched USBDevice alive
+    # so its child USBDeviceHandle is not finalized before UsbTransport uses it.
+    assert len(created_devices) == 2
+    for pair in created_devices:
+        assert sorted(device.closed for device in pair) == [False, True]

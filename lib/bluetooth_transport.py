@@ -12,17 +12,17 @@ import usb1
 from bumble.device import Device
 from bumble.hci import HCI_Reset_Command
 from bumble.host import Host
-from bumble.transport import _wrap_transport, open_transport as open_bumble_transport
+from bumble.transport import _wrap_transport
+from bumble.transport import open_transport as open_bumble_transport
 from bumble.transport.common import TransportInitError
 from bumble.transport.usb import (
     UsbPacketSink,
     UsbPacketSource,
     UsbTransport,
     find_endpoints,
-    load_libusb,
 )
 
-from lib.windows_adapters import is_bluetooth_usb
+from lib.windows_adapters import is_bluetooth_usb, load_libusb
 
 logger = logging.getLogger(__name__)
 _usb_open_lock = Lock()
@@ -60,38 +60,57 @@ def _open_usb_device(matches: Callable[[usb1.USBDevice], bool], index: int):
     """Return a configured native handle without creating asyncio packet tasks."""
     load_libusb()
     context = usb1.USBContext()
+    devices: list[usb1.USBDevice] = []
     try:
         context.open()
-        for device in context.getDeviceIterator(skip_on_error=True):
-            if matches(device):
-                if index == 0:
-                    break
-                index -= 1
-            device.close()
-        else:
-            raise TransportInitError("device not found")
+        # Enumerate outside _usb_open_lock so multiple adapters scan concurrently.
+        devices = context.getDeviceList(skip_on_error=True)
+        # Serial lookups and device.open() may briefly open the same WinUSB device.
+        with _usb_open_lock:
+            matched: usb1.USBDevice | None = None
+            for device in devices:
+                if matched is None and matches(device):
+                    if index == 0:
+                        matched = device
+                        continue
+                    index -= 1
+                device.close()
+            devices = [matched] if matched is not None else []
+            if matched is None:
+                raise TransportInitError("device not found")
 
-        endpoints = find_endpoints(device, forced_mode=False)
-        if endpoints is None:
-            raise TransportInitError("no compatible interface found for device")
-        metadata = {"vendor_id": device.getVendorID(), "product_id": device.getProductID()}
-        handle = device.open()
-        if usb1.hasCapability(usb1.CAP_SUPPORTS_DETACH_KERNEL_DRIVER):
+            endpoints = find_endpoints(matched, forced_mode=False)
+            if endpoints is None:
+                raise TransportInitError("no compatible interface found for device")
+            metadata = {
+                "vendor_id": matched.getVendorID(),
+                "product_id": matched.getProductID(),
+            }
+            handle = matched.open()
+            # Keep `matched` open: USBDeviceHandle registers its finalizer on
+            # `matched`, so closing `matched` would immediately libusb_close(handle).
+            devices = []
+            if usb1.hasCapability(usb1.CAP_SUPPORTS_DETACH_KERNEL_DRIVER):
+                try:
+                    handle.setAutoDetachKernelDriver(True)
+                except usb1.USBError as error:
+                    logger.warning("Unable to auto-detach USB kernel driver: %s", error)
             try:
-                handle.setAutoDetachKernelDriver(True)
-            except usb1.USBError as error:
-                logger.warning("Unable to auto-detach USB kernel driver: %s", error)
-        try:
-            current_configuration = handle.getConfiguration()
-        except usb1.USBError:
-            current_configuration = None
-        if current_configuration != endpoints[0]:
-            try:
-                handle.setConfiguration(endpoints[0])
-            except usb1.USBError as error:
-                logger.warning("Unable to configure the USB device: %s", error)
-        return context, handle, metadata, endpoints
+                current_configuration = handle.getConfiguration()
+            except usb1.USBError:
+                current_configuration = None
+            if current_configuration != endpoints[0]:
+                try:
+                    handle.setConfiguration(endpoints[0])
+                except usb1.USBError as error:
+                    logger.warning("Unable to configure the USB device: %s", error)
+            return context, handle, metadata, endpoints
     except BaseException:
+        for device in devices:
+            try:
+                device.close()
+            except usb1.USBError:
+                logger.debug("Failed to close enumerated USB device", exc_info=True)
         context.close()
         raise
 
@@ -106,11 +125,9 @@ async def open_transport(spec: str):
     cancelled = Event()
 
     def open_device():
-        # Serial lookups may briefly open the same WinUSB device.
-        with _usb_open_lock:
-            if cancelled.is_set():
-                return None
-            return _open_usb_device(*selector)
+        if cancelled.is_set():
+            return None
+        return _open_usb_device(*selector)
 
     opening = asyncio.create_task(asyncio.to_thread(open_device))
     try:

@@ -18,6 +18,7 @@ wheels/
 
 # Macros
 **/macros/*.json
+!**/macros/Press SL and SR.json
 
 # Binaries
 *.bin

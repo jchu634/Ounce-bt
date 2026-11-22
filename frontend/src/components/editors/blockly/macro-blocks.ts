@@ -1,5 +1,14 @@
 import * as Blockly from "blockly/core";
-import { BUTTON_NAMES } from "@/src/lib/types";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import {
+  SwitchButtonL,
+  SwitchButtonR,
+  SwitchButtonSl,
+  SwitchButtonSr,
+} from "@/src/assets/input-prompts/switch";
+import { BUTTON_ICONS } from "@/src/assets/input-prompts/switch/button-icons";
+import { MACRO_BUTTON_NAMES, type MacroButtonName } from "@/src/lib/types";
 
 export const MACRO_BLOCK_TYPES = {
   root: "macro_root",
@@ -11,6 +20,85 @@ export const MACRO_BLOCK_TYPES = {
 } as const;
 
 const ACTION_CONNECTION = "MacroAction";
+const BUTTON_ICON_SIZE = 22;
+const COMPOSITE_BUTTON_ICON_WIDTH = 56;
+const BUTTON_ICON_FRAGMENT = "#macro-button-icon";
+
+const ADAPTIVE_BUTTON_ICONS = {
+  SL_OR_L: { primary: SwitchButtonSl, fallback: SwitchButtonL, alt: "SL or L" },
+  SR_OR_R: { primary: SwitchButtonSr, fallback: SwitchButtonR, alt: "SR or R" },
+} as const;
+
+function buildButtonOption(button: MacroButtonName) {
+  if (button in ADAPTIVE_BUTTON_ICONS) {
+    const { primary, fallback, alt } =
+      ADAPTIVE_BUTTON_ICONS[button as keyof typeof ADAPTIVE_BUTTON_ICONS];
+    const svg = renderToStaticMarkup(
+      createElement(
+        "svg",
+        {
+          xmlns: "http://www.w3.org/2000/svg",
+          width: COMPOSITE_BUTTON_ICON_WIDTH,
+          height: BUTTON_ICON_SIZE,
+          viewBox: "0 0 164 64",
+          color: "#fff",
+        },
+        createElement(primary, { x: 0, y: 0, width: 64, height: 64 }),
+        createElement(
+          "text",
+          {
+            x: 82,
+            y: 40,
+            fill: "#fff",
+            fontFamily: "sans-serif",
+            fontSize: 22,
+            fontWeight: 600,
+            textAnchor: "middle",
+          },
+          "/",
+        ),
+        createElement(fallback, { x: 100, y: 0, width: 64, height: 64 }),
+      ),
+    );
+    return [
+      {
+        src: `data:image/svg+xml,${encodeURIComponent(svg)}${BUTTON_ICON_FRAGMENT}`,
+        width: COMPOSITE_BUTTON_ICON_WIDTH,
+        height: BUTTON_ICON_SIZE,
+        alt,
+      },
+      button,
+    ];
+  }
+
+  const svg = renderToStaticMarkup(
+    createElement(BUTTON_ICONS[button as keyof typeof BUTTON_ICONS], {
+      color: "#fff",
+      width: BUTTON_ICON_SIZE,
+      height: BUTTON_ICON_SIZE,
+    }),
+  );
+  return [
+    {
+      src: `data:image/svg+xml,${encodeURIComponent(svg)}${BUTTON_ICON_FRAGMENT}`,
+      width: BUTTON_ICON_SIZE,
+      height: BUTTON_ICON_SIZE,
+      alt: button,
+    },
+    button,
+  ];
+}
+
+const buttonOptions = MACRO_BUTTON_NAMES.map(buildButtonOption);
+
+Blockly.Css.register(`
+  .blocklyDropdownMenu .blocklyMenuItem:has(img[src$="${BUTTON_ICON_FRAGMENT}"]) {
+    padding-inline: 10px;
+  }
+  .blocklyDropdownMenu .blocklyMenuItem:has(img[src$="${BUTTON_ICON_FRAGMENT}"]) .blocklyMenuItemCheckbox {
+    display: none;
+  }
+`);
 
 const durationUnitField = {
   type: "field_dropdown",
@@ -60,7 +148,7 @@ const blockDefinitions = [
       {
         type: "field_dropdown",
         name: "BUTTON",
-        options: BUTTON_NAMES.map((button) => [button, button]),
+        options: buttonOptions,
       },
     ],
     previousStatement: ACTION_CONNECTION,
@@ -76,7 +164,7 @@ const blockDefinitions = [
       {
         type: "field_dropdown",
         name: "BUTTON",
-        options: BUTTON_NAMES.map((button) => [button, button]),
+        options: buttonOptions,
       },
       { type: "field_number", name: "MS", value: 50, min: 0 },
       durationUnitField,
@@ -121,7 +209,8 @@ const blockDefinitions = [
     previousStatement: ACTION_CONNECTION,
     nextStatement: ACTION_CONNECTION,
     colour: 120,
-    tooltip: "Set one analog stick position. Values normally range from -1 to 1.",
+    tooltip:
+      "Set one analog stick position. Values normally range from -1 to 1.",
   },
   {
     type: MACRO_BLOCK_TYPES.loop,

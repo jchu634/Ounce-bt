@@ -123,7 +123,7 @@ function MacrosPage() {
   }, [createMacro, newName]);
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-6 py-8 sm:px-8 lg:px-4">
+    <div className="action-hover-group mx-auto flex w-full max-w-7xl flex-col gap-6 px-6 py-8 sm:px-8 lg:px-4">
       <header className="flex flex-wrap items-start justify-between gap-3 text-left">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">Macro Editor</h1>
@@ -169,7 +169,7 @@ function MacrosPage() {
           }
         }}
       >
-        <DialogContent>
+        <DialogContent className="action-hover-group">
           {overwriteName === null ? (
             <>
               <DialogHeader>

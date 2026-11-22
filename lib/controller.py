@@ -22,7 +22,7 @@
 # SOFTWARE.
 # ==============================================================================
 
-from enum import Enum
+from enum import Enum, StrEnum
 
 
 class ControllerTypes(Enum):
@@ -31,3 +31,30 @@ class ControllerTypes(Enum):
     JOYCON_L = 1
     JOYCON_R = 2
     PRO_CONTROLLER = 3
+
+
+class ControllerVariant(StrEnum):
+    PRO = "pro"
+    LEFT = "joycon_l"
+    RIGHT = "joycon_r"
+    COMBINED = "combined"
+
+    @property
+    def is_single_joycon(self) -> bool:
+        return self in (self.LEFT, self.RIGHT)
+
+    @property
+    def bluetooth_type(self) -> ControllerTypes:
+        return {
+            self.LEFT: ControllerTypes.JOYCON_L,
+            self.RIGHT: ControllerTypes.JOYCON_R,
+            self.PRO: ControllerTypes.PRO_CONTROLLER,
+        }[self]
+
+    @property
+    def bluetooth_name(self) -> str:
+        return {
+            self.LEFT: "Joy-Con (L)",
+            self.RIGHT: "Joy-Con (R)",
+            self.PRO: "Pro Controller",
+        }[self]

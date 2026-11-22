@@ -28,6 +28,9 @@ pnpm run build
 # Install Python deps
 uv sync
 
+# Build SDL3 with libusb support (required for wired Switch 2 Pro; run automatically by release builds)
+uv run python scripts/build-sdl3.py
+
 # Run Backend
 uv run main.py
 ```

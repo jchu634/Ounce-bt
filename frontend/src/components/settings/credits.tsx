@@ -18,11 +18,18 @@ const dependencyGroups = [
         description: "Bluetooth stack and controller communication",
       },
       {
-        name: "pygame-ce",
-        licenseSlug: "pygame-ce",
-        license: "LGPL-2.1-or-later",
-        url: "https://pyga.me/",
-        description: "Controller input and multimedia support",
+        name: "PySDL3",
+        licenseSlug: "pysdl3",
+        license: "MIT",
+        url: "https://github.com/Aermoss/PySDL3",
+        description: "Python bindings for SDL3",
+      },
+      {
+        name: "SDL3",
+        licenseSlug: "sdl3",
+        license: "Zlib",
+        url: "https://libsdl.org/",
+        description: "Controller input, motion sensors, rumble, and audio streams",
       },
       {
         name: "pywebview",

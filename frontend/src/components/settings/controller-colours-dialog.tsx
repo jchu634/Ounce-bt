@@ -17,7 +17,7 @@ import { getConfig, patchConfig } from "@/src/lib/api";
 import { requestAdapterColours } from "@/src/lib/adapters";
 import {
   COLOUR_FIELDS,
-  DEFAULT_CONTROLLER_COLOURS,
+  controllerColourDefaults,
   expandHexColour,
   parseControllerColourHistory,
   parseControllerColours,
@@ -27,10 +27,27 @@ import {
   sameColours,
   type ControllerColours,
 } from "@/src/lib/controller-colours";
+import {
+  CONTROLLER_VARIANT_NAMES,
+  type BluetoothControllerType,
+} from "@/src/lib/controller-variants";
 import { errorMessage } from "@/src/lib/errors";
 
-export function ControllerColoursDialog({ adapterId }: { adapterId?: string }) {
+export function ControllerColoursDialog({
+  adapterId,
+  variant,
+  upright,
+  combinedShared,
+}: {
+  adapterId?: string;
+  variant?: BluetoothControllerType;
+  upright?: boolean;
+  combinedShared?: boolean;
+}) {
   const id = useId();
+  const controllerType = variant ?? "pro";
+  const defaults = controllerColourDefaults(controllerType);
+  const fields = controllerType === "pro" ? COLOUR_FIELDS : COLOUR_FIELDS.slice(0, 2);
   const [open, setOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [saved, setSaved] = useState<ControllerColours | null>(null);
@@ -54,13 +71,13 @@ export function ControllerColoursDialog({ adapterId }: { adapterId?: string }) {
   useEffect(() => {
     let disposed = false;
     const load = adapterId
-      ? requestAdapterColours(adapterId).then((result) => result.colours)
+      ? requestAdapterColours(adapterId, undefined, variant).then((result) => result.colours)
       : Effect.runPromise(getConfig()).then(
           (config) => config.controller_colours,
         );
     void load
       .then((palette) => {
-        if (!disposed) setSaved(parseControllerColours(palette));
+        if (!disposed) setSaved(parseControllerColours(palette, variant));
       })
       .catch((cause: unknown) => {
         if (!disposed) setError(errorMessage(cause));
@@ -68,7 +85,7 @@ export function ControllerColoursDialog({ adapterId }: { adapterId?: string }) {
     return () => {
       disposed = true;
     };
-  }, [adapterId, loadAttempt]);
+  }, [adapterId, loadAttempt, variant]);
 
   useEffect(() => {
     try {
@@ -96,18 +113,18 @@ export function ControllerColoursDialog({ adapterId }: { adapterId?: string }) {
     setNotice(null);
     setError(null);
     try {
-      const submitted = { ...draft };
-      for (const { key } of COLOUR_FIELDS)
-        submitted[key] = expandHexColour(submitted[key]);
+      const submitted = Object.fromEntries(
+        fields.map(({ key }) => [key, expandHexColour(draft[key])]),
+      );
       const result = adapterId
-        ? await requestAdapterColours(adapterId, submitted)
+        ? await requestAdapterColours(adapterId, submitted, variant)
         : await Effect.runPromise(
             patchConfig({ controller_colours: submitted }),
           ).then((config) => ({
             colours: config.config.controller_colours,
             reconnectRequired: config.colours_reconnect_required,
           }));
-      const palette = parseControllerColours(result.colours);
+      const palette = parseControllerColours(result.colours, variant);
       setRecent((history) =>
         recordSavedControllerColours(history, saved, palette),
       );
@@ -151,20 +168,25 @@ export function ControllerColoursDialog({ adapterId }: { adapterId?: string }) {
         }
       >
         <span className="block size-full" aria-hidden="true">
-          <ControllerPreview colours={saved ?? DEFAULT_CONTROLLER_COLOURS} />
+          <ControllerPreview
+            colours={saved ?? defaults}
+            variant={combinedShared && controllerType !== "pro" ? "combined" : controllerType}
+            upright={upright}
+            activeSide={combinedShared && controllerType !== "pro" ? controllerType : undefined}
+          />
         </span>
       </DialogTrigger>
-      <DialogContent className="app-scrollbar max-h-[calc(100dvh-2rem)] gap-4 overflow-y-auto bg-background sm:max-w-2xl">
+      <DialogContent className="action-hover-group app-scrollbar max-h-[calc(100dvh-2rem)] gap-4 overflow-y-auto bg-background sm:max-w-2xl">
         <DialogHeader className="pr-8">
           <DialogTitle>Controller colours</DialogTitle>
           <DialogDescription>
-            Choose how your Pro Controller appears on the Switch.
+            Choose how your {CONTROLLER_VARIANT_NAMES[controllerType]} appears on the Switch.
           </DialogDescription>
         </DialogHeader>
         {colours && (
           <div className="grid items-center gap-3 sm:grid-cols-2">
             <div className="h-32 sm:h-40">
-              <ControllerPreview colours={colours} />
+              <ControllerPreview colours={colours} variant={controllerType} upright={upright} />
             </div>
             <fieldset
               disabled={saving}
@@ -172,7 +194,7 @@ export function ControllerColoursDialog({ adapterId }: { adapterId?: string }) {
               className="grid grid-cols-2"
             >
               <legend className="sr-only">Controller colours</legend>
-              {COLOUR_FIELDS.map(({ key, label }) => (
+              {fields.map(({ key, label }) => (
                 <ControllerColourChooser
                   key={key}
                   id={`${id}-${key}`}
@@ -185,7 +207,7 @@ export function ControllerColoursDialog({ adapterId }: { adapterId?: string }) {
                 />
               ))}
               <div className="col-span-2 mt-2 flex flex-wrap gap-2">
-                <Button
+                {controllerType === "pro" && <Button
                   variant="outline"
                   size="sm"
                   onClick={() =>
@@ -197,17 +219,12 @@ export function ControllerColoursDialog({ adapterId }: { adapterId?: string }) {
                   }
                 >
                   Randomise grips
-                </Button>
+                </Button>}
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() =>
-                    edit({
-                      body: randomColour(),
-                      buttons: randomColour(),
-                      left_grip: randomColour(),
-                      right_grip: randomColour(),
-                    })
+                    edit({ ...colours, ...Object.fromEntries(fields.map(({ key }) => [key, randomColour()])) })
                   }
                 >
                   Randomise all colours
@@ -244,9 +261,9 @@ export function ControllerColoursDialog({ adapterId }: { adapterId?: string }) {
             <Button
               variant="outline"
               disabled={
-                saving || sameColours(colours, DEFAULT_CONTROLLER_COLOURS)
+                saving || sameColours(colours, defaults)
               }
-              onClick={() => edit(DEFAULT_CONTROLLER_COLOURS)}
+              onClick={() => edit(defaults)}
             >
               Reset to default
             </Button>
@@ -264,7 +281,7 @@ export function ControllerColoursDialog({ adapterId }: { adapterId?: string }) {
           </DialogFooter>
         )}
         <Dialog open={discardOpen} onOpenChange={setDiscardOpen}>
-          <DialogContent showCloseButton={false}>
+          <DialogContent className="action-hover-group" showCloseButton={false}>
             <DialogHeader>
               <DialogTitle>Discard colour changes?</DialogTitle>
               <DialogDescription>

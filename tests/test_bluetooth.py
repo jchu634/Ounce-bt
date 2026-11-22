@@ -1,4 +1,5 @@
 import asyncio
+import queue
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -11,15 +12,260 @@ from bumble.keys import JsonKeyStore, MemoryKeyStore, PairingKeys
 
 import app.main as application
 from app.bluetooth import (
+    AdapterSession,
     BluetoothDisconnectingError,
     BluetoothPageTimeoutError,
     BluetoothService,
 )
+from app.input.macro_source import MacroPlayerThread
 from app.main import SessionState, make_l2cap_handler, run_until_disconnected
 from lib.bluetooth_transport import WindowsUsbHost
 from lib.config import Config
+from lib.controller import ControllerTypes, ControllerVariant
+from lib.input.imu import ImuBuffer
+from lib.input.sdl3_backend import STANDARD_GRAVITY, ImuSample
+from lib.input.state import NEUTRAL, Button, ControllerState, apply_to_protocol
+from lib.switch_protocol import ControllerProtocol
 
 ADDRESS = "12:34:56:78:90:AB"
+
+
+@pytest.mark.parametrize("variant", [ControllerVariant.LEFT, ControllerVariant.RIGHT])
+def test_solo_joycon_handshake_accepts_manual_input_before_player_lights(variant):
+    async def scenario():
+        slot = AdapterSession("primary", "usb:0", queue.Queue(), None)
+        slot.bluetooth.set_controller_type(variant)
+        slot.reset_grip(pairing=True)
+        protocol = ControllerProtocol(variant.bluetooth_type, ADDRESS)
+        incoming = asyncio.Queue()
+        for subcommand in ("02", "48 01", "03 30"):
+            header = bytes.fromhex("A2 01 00 00 00 00 00 00 00 00 00")
+            incoming.put_nowait((header + bytes.fromhex(subcommand)).ljust(50, b"\0"))
+        reports = []
+        await asyncio.wait_for(application.run_pairing_handshake(
+            protocol, SimpleNamespace(send_pdu=reports.append), incoming, slot.apply_pairing_grip,
+            single_joycon=True,
+        ), 2)
+        assert protocol.player_number is None
+        assert reports
+        assert all(report[4:7] == bytes(3) for report in reports)
+        protocol.process_commands(None)
+        apply_to_protocol(protocol, slot.map_manual_input(ControllerState(Button.SL | Button.SR)))
+        expected = (
+            Button.SL_L | Button.SR_L if variant == ControllerVariant.LEFT
+            else Button.SL_R | Button.SR_R
+        )
+        assert int.from_bytes(protocol.get_report()[4:7], "little") == int(expected)
+
+    asyncio.run(scenario())
+
+
+def test_paired_joycons_send_both_shoulders_together_and_release(monkeypatch):
+    left = AdapterSession("primary", "usb:0", queue.Queue(), None)
+    right = AdapterSession("adapter-2", "usb:1", queue.Queue(), None)
+    left.bluetooth.set_controller_type(ControllerVariant.LEFT)
+    right.bluetooth.set_controller_type(ControllerVariant.RIGHT)
+    left.combined_partner, right.combined_partner = right, left
+    for slot in (left, right):
+        slot.bluetooth.connection = SimpleNamespace(peer_address="switch")
+        slot.reset_grip(pairing=True)
+    protocol = SimpleNamespace(device_info_queried=True, mode="standard")
+    monotonic = Mock(return_value=10.0)
+    monkeypatch.setattr("app.bluetooth.monotonic", monotonic)
+    assert left.apply_pairing_grip(protocol, NEUTRAL) == NEUTRAL
+    assert right.apply_pairing_grip(protocol, NEUTRAL).buttons == Button.R
+    assert left.apply_pairing_grip(protocol, NEUTRAL).buttons == Button.L
+    monotonic.return_value = 11.0
+    assert left.apply_pairing_grip(protocol, NEUTRAL) == NEUTRAL
+    assert right.apply_pairing_grip(protocol, NEUTRAL) == NEUTRAL
+
+
+def test_universal_rail_macro_reaches_both_combined_joycon_reports():
+    left = AdapterSession("primary", "usb:0", queue.Queue(), None)
+    right = AdapterSession("adapter-2", "usb:1", queue.Queue(), None)
+    left.bluetooth.set_controller_type(ControllerVariant.LEFT)
+    right.bluetooth.set_controller_type(ControllerVariant.RIGHT)
+    left.combined_partner, right.combined_partner = right, left
+    protocols = [
+        ControllerProtocol(slot.bluetooth.controller_type.bluetooth_type, ADDRESS)
+        for slot in (left, right)
+    ]
+    for protocol in protocols:
+        protocol.process_commands(None)
+
+    states = queue.Queue()
+    MacroPlayerThread({"actions": [
+        {"do": "press", "button": "SL"},
+        {"do": "press", "button": "SR"},
+        {"do": "release", "button": "SL"},
+        {"do": "release", "button": "SR"},
+    ]}, states).run()
+    for left_buttons, right_buttons in [
+        (Button.SL_L, Button.SL_R),
+        (Button.SL_L | Button.SR_L, Button.SL_R | Button.SR_R),
+        (Button.SR_L, Button.SR_R),
+        (Button.NONE, Button.NONE),
+    ]:
+        apply_to_protocol(protocols[0], left.output_input(states.get_nowait()))
+        apply_to_protocol(protocols[1], right.output_input(NEUTRAL))
+        assert [protocol.get_report()[4:7] for protocol in protocols] == [
+            int(left_buttons).to_bytes(3, "little"),
+            int(right_buttons).to_bytes(3, "little"),
+        ]
+
+
+@pytest.mark.parametrize(
+    ("variant", "first", "both", "second"),
+    [
+        (ControllerVariant.LEFT, Button.SL_L, Button.SL_L | Button.SR_L, Button.SR_L),
+        (ControllerVariant.RIGHT, Button.SL_R, Button.SL_R | Button.SR_R, Button.SR_R),
+        (ControllerVariant.PRO, Button.L, Button.L | Button.R, Button.R),
+    ],
+)
+def test_adaptive_shoulder_macro_maps_to_sl_sr_on_sideways_joycon_and_l_r_otherwise(
+    variant, first, both, second
+):
+    protocol = ControllerProtocol(variant.bluetooth_type, ADDRESS)
+    protocol.process_commands(None)
+
+    states = queue.Queue()
+    MacroPlayerThread(
+        {
+            "actions": [
+                {"do": "press", "button": "SL_OR_L"},
+                {"do": "press", "button": "SR_OR_R"},
+                {"do": "release", "button": "SL_OR_L"},
+                {"do": "release", "button": "SR_OR_R"},
+            ]
+        },
+        states,
+        variant=variant,
+    ).run()
+
+    for expected in (first, both, second, Button.NONE):
+        apply_to_protocol(protocol, states.get_nowait())
+        assert protocol.get_report()[4:7] == int(expected).to_bytes(3, "little")
+
+
+def test_adaptive_shoulder_macro_maps_to_l_and_r_on_combined_joycons():
+    left = AdapterSession("primary", "usb:0", queue.Queue(), None)
+    right = AdapterSession("adapter-2", "usb:1", queue.Queue(), None)
+    left.bluetooth.set_controller_type(ControllerVariant.LEFT)
+    right.bluetooth.set_controller_type(ControllerVariant.RIGHT)
+    left.combined_partner, right.combined_partner = right, left
+    protocols = [
+        ControllerProtocol(slot.bluetooth.controller_type.bluetooth_type, ADDRESS)
+        for slot in (left, right)
+    ]
+    for protocol in protocols:
+        protocol.process_commands(None)
+
+    states = queue.Queue()
+    MacroPlayerThread(
+        {
+            "actions": [
+                {"do": "press", "button": "SL_OR_L"},
+                {"do": "press", "button": "SR_OR_R"},
+                {"do": "release", "button": "SL_OR_L"},
+                {"do": "release", "button": "SR_OR_R"},
+            ]
+        },
+        states,
+        variant=left.mapping_variant(),
+    ).run()
+
+    for left_buttons, right_buttons in [
+        (Button.L, Button.NONE),
+        (Button.L, Button.R),
+        (Button.NONE, Button.R),
+        (Button.NONE, Button.NONE),
+    ]:
+        apply_to_protocol(protocols[0], left.output_input(states.get_nowait()))
+        apply_to_protocol(protocols[1], right.output_input(NEUTRAL))
+        assert [protocol.get_report()[4:7] for protocol in protocols] == [
+            int(left_buttons).to_bytes(3, "little"),
+            int(right_buttons).to_bytes(3, "little"),
+        ]
+
+
+def test_paired_joycons_individual_mode_routes_inputs_and_imu_independently():
+    left = AdapterSession("primary", "usb:0", queue.Queue(), None)
+    right = AdapterSession("adapter-2", "usb:1", queue.Queue(), None)
+    left.bluetooth.set_controller_type(ControllerVariant.LEFT)
+    right.bluetooth.set_controller_type(ControllerVariant.RIGHT)
+    left.combined_partner, right.combined_partner = right, left
+
+    # Default combined mode shares left's input and IMU demand.
+    assert left.input_owner is left
+    assert right.input_owner is left
+    right.imu_active = True
+    assert left.imu_requested() is True
+    left_state = ControllerState(Button.L, left=(0.5, -0.5))
+    right_state = ControllerState(Button.A, right=(0.0, 1.0))
+    assert left.output_input(left_state) == left_state
+    assert right.output_input(right_state) == left_state
+
+    # Individual mode gives each Joy-Con its own input owner without horizontal stick rotation.
+    left.combined_input_mode = "individual"
+    right.combined_input_mode = "individual"
+    assert left.input_owner is left
+    assert right.input_owner is right
+    assert left.mapping_variant() == ControllerVariant.COMBINED
+    assert right.mapping_variant() == ControllerVariant.COMBINED
+    assert left.imu_requested() is False
+    assert right.imu_requested() is True
+    assert left.output_input(left_state) == left_state
+    assert right.output_input(right_state) == right_state
+
+
+def test_combined_macro_splits_buttons_and_sticks_per_joycon():
+    from lib.controller import ControllerTypes
+    from lib.input.state import filter_joycon_state
+    from lib.input.stick import PRO_LEFT, PRO_RIGHT, calibrate_stick
+
+    left = AdapterSession("primary", "usb:0", queue.Queue(), None)
+    right = AdapterSession("adapter-2", "usb:1", queue.Queue(), None)
+    left.bluetooth.set_controller_type(ControllerVariant.LEFT)
+    right.bluetooth.set_controller_type(ControllerVariant.RIGHT)
+    left.combined_partner, right.combined_partner = right, left
+
+    macro = {"actions": [
+        {"do": "press", "button": "UP"},
+        {"do": "stick", "side": "left", "x": 1.0, "y": 0.0},
+        {"do": "press", "button": "A"},
+        {"do": "stick", "side": "right", "x": 0.0, "y": 1.0},
+    ]}
+    # Combined mode: single macro stream splits cleanly across L and R protocols.
+    states = queue.Queue()
+    MacroPlayerThread(macro, states).run()
+    emitted = []
+    while not states.empty():
+        emitted.append(states.get_nowait())
+    peak = emitted[-2]
+
+    protocol_l = ControllerProtocol(ControllerTypes.JOYCON_L, ADDRESS)
+    protocol_r = ControllerProtocol(ControllerTypes.JOYCON_R, ADDRESS)
+    for protocol in (protocol_l, protocol_r):
+        protocol.device_info_queried = True
+        protocol.set_full_input_report()
+    apply_to_protocol(protocol_l, left.output_input(peak))
+    apply_to_protocol(protocol_r, right.output_input(NEUTRAL))
+    report_l = protocol_l.get_report()
+    report_r = protocol_r.get_report()
+    assert report_l[4:7] == int(Button.UP).to_bytes(3, "little")
+    assert report_l[7:10] == bytes(calibrate_stick((1.0, 0.0), PRO_LEFT))
+    assert report_l[10:13] == b"\x00\x00\x00"
+    assert report_r[4:7] == int(Button.A).to_bytes(3, "little")
+    assert report_r[7:10] == b"\x00\x00\x00"
+    assert report_r[10:13] == bytes(calibrate_stick((0.0, 1.0), PRO_RIGHT))
+
+    # Per-Joy-Con state filter strips opposite-side buttons and stick.
+    assert filter_joycon_state(peak, ControllerTypes.JOYCON_L) == ControllerState(
+        Button.UP, left=(1.0, 0.0), right=(0.0, 0.0)
+    )
+    assert filter_joycon_state(peak, ControllerTypes.JOYCON_R) == ControllerState(
+        Button.A, left=(0.0, 0.0), right=(0.0, 1.0)
+    )
 
 
 def test_adapter_reopens_after_status_only_capability_response(monkeypatch):
@@ -104,7 +350,7 @@ def test_old_channel_callbacks_cannot_stop_a_new_session():
 @pytest.mark.parametrize("headless", [False, True])
 @pytest.mark.parametrize("realtek", [False, True])
 def test_startup_pairing_requires_ui_action_unless_headless(
-    monkeypatch, headless, realtek
+    monkeypatch, tmp_path, headless, realtek
 ):
     async def scenario():
         powered = asyncio.Event()
@@ -157,6 +403,7 @@ def test_startup_pairing_requires_ui_action_unless_headless(
             "load",
             lambda _: Config(
                 input_specs=[],
+                macros_dir=str(tmp_path / "macros"),
                 transport_spec="usb:0" if realtek else "hci-socket:0",
                 bt_address=ADDRESS if realtek else "98:B6:E9:12:34:57",
                 web_host=None if headless else "127.0.0.1",
@@ -636,5 +883,152 @@ def test_forget_all_disconnects_before_deleting_pairing_keys():
         await service.forget_all()
         connection.disconnect.assert_awaited_once()
         assert await device.keystore.get_all() == []
+
+    asyncio.run(scenario())
+
+
+def _fake_acl_channel():
+    class _State:
+        OPEN = "open"
+
+    class _Queue:
+        def __init__(self):
+            self.pending = 0
+
+    class _Channel:
+        State = _State
+        state = _State.OPEN
+
+        def __init__(self):
+            self.queue = _Queue()
+            self.connection = SimpleNamespace(data_packet_queue=self.queue)
+            self.sent: list[bytes] = []
+
+        def send_pdu(self, pdu: bytes) -> None:
+            self.sent.append(pdu)
+            self.queue.pending += 1
+
+    return _Channel()
+
+
+def test_mainloop_caps_imu_backlog_and_prioritizes_button_presses(monkeypatch):
+    async def scenario():
+        protocol = ControllerProtocol(ControllerTypes.PRO_CONTROLLER, ADDRESS)
+        protocol.device_info_queried = True
+        protocol.imu_enabled = True
+        channel = _fake_acl_channel()
+        imu_buffer = ImuBuffer()
+        command_queue = queue.Queue()
+        stop = asyncio.Event()
+        now = [100.0]
+        tick = [0]
+
+        monkeypatch.setattr("app.main.perf_counter", lambda: now[0])
+
+        async def advance(_delay):
+            tick[0] += 1
+            now[0] += 0.020
+            # Push distinct IMU samples every tick to simulate continuous gyro noise.
+            imu_buffer.push([ImuSample((0.0, STANDARD_GRAVITY, 0.0), (0.05 * tick[0], 0.0, 0.0), tick[0])])
+            if tick[0] == 1:
+                # Tick 1: initial report is still unacknowledged (pending == 1);
+                # verify IMU-only updates do not queue behind it.
+                assert channel.queue.pending == 1
+            elif tick[0] == 3:
+                # After multiple congested ticks with continuous IMU noise, backlog stays capped at 1.
+                assert len(channel.sent) == 1
+                assert channel.queue.pending == 1
+                # Pressing Button A immediately takes the reserved priority slot (pending 1 -> 2).
+                command_queue.put(ControllerState(Button.A))
+            elif tick[0] == 4:
+                assert len(channel.sent) == 2
+                assert int.from_bytes(channel.sent[-1][4:7], "little") == int(Button.A)
+                assert channel.queue.pending == 2
+                # While pending == 2, intermediate state Button.X is deferred/coalesced.
+                command_queue.put(ControllerState(Button.X))
+            elif tick[0] == 5:
+                assert len(channel.sent) == 2
+                # Replace with latest state Button.B and ACK one in-flight packet.
+                command_queue.put(ControllerState(Button.B))
+                channel.queue.pending -= 1
+            elif tick[0] == 6:
+                assert len(channel.sent) == 3
+                assert int.from_bytes(channel.sent[-1][4:7], "little") == int(Button.B)
+                stop.set()
+
+        monkeypatch.setattr("app.main.asyncio.sleep", advance)
+        imu_buffer.push([ImuSample((0.0, STANDARD_GRAVITY, 0.0), (0.01, 0.0, 0.0), 0)])
+        await application.run_mainloop(
+            protocol,
+            channel,
+            asyncio.Queue(),
+            stop,
+            command_queue,
+            imu_source=SimpleNamespace(read_imu_since=imu_buffer.read_since),
+        )
+
+    asyncio.run(scenario())
+
+
+def test_mainloop_subcommand_reply_bypasses_acl_backpressure(monkeypatch):
+    async def scenario():
+        protocol = ControllerProtocol(ControllerTypes.PRO_CONTROLLER, ADDRESS)
+        protocol.device_info_queried = True
+        channel = _fake_acl_channel()
+        channel.queue.pending = 4  # Link already above control cap.
+        incoming = asyncio.Queue()
+        request = bytes.fromhex("A2 01 00 00 00 00 00 00 00 00 00 30 01").ljust(50, b"\x00")
+        incoming.put_nowait(request)
+        stop = asyncio.Event()
+
+        async def advance(_delay):
+            stop.set()
+
+        monkeypatch.setattr("app.main.asyncio.sleep", advance)
+        await application.run_mainloop(
+            protocol,
+            channel,
+            incoming,
+            stop,
+            queue.Queue(),
+        )
+        assert len(channel.sent) == 1
+        assert channel.sent[0][1] == 0x21
+
+    asyncio.run(scenario())
+
+
+def test_mainloop_sleep_accounts_only_for_work_not_prior_sleep(monkeypatch):
+    async def scenario():
+        protocol = ControllerProtocol(ControllerTypes.PRO_CONTROLLER, ADDRESS)
+        channel = _fake_acl_channel()
+        stop = asyncio.Event()
+        now = [10.0]
+        sleeps: list[float] = []
+
+        def fake_clock():
+            # Each tick's work consumes 0.5 ms.
+            now[0] += 0.00025
+            return now[0]
+
+        async def advance(delay):
+            sleeps.append(delay)
+            # Simulate a 2 ms Windows timer overshoot on every sleep.
+            now[0] += delay + 0.002
+            if len(sleeps) >= 3:
+                stop.set()
+
+        monkeypatch.setattr("app.main.perf_counter", fake_clock)
+        monkeypatch.setattr("app.main.asyncio.sleep", advance)
+        await application.run_mainloop(
+            protocol,
+            channel,
+            asyncio.Queue(),
+            stop,
+            queue.Queue(),
+            tick_rate_hz=100,
+        )
+        assert len(sleeps) == 3
+        assert all(delay > 0.008 for delay in sleeps)
 
     asyncio.run(scenario())

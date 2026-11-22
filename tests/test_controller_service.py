@@ -4,30 +4,106 @@ import queue
 from concurrent.futures import Future
 from unittest.mock import Mock
 
-import pygame
 import pytest
-from pygame import event
 
 from app.input.controller_service import ControllerInfo, ControllerService
+from lib.controller import ControllerVariant
 from lib.input.presets import (
     PresetConfig,
     PresetSelection,
     detect_controller_preset,
+    load_preset,
     resolve_controller_preset,
 )
+from lib.input.sdl3_backend import STANDARD_GRAVITY, ImuSample
 from lib.input.state import NEUTRAL, Button, ControllerState
 
 
-def test_controller_type_detection_uses_name_and_sdl_vendor_guid():
+class FakeDevice:
+    def __init__(self, info: ControllerInfo):
+        self.info = info
+        self.pressed: frozenset[str] = frozenset()
+        self.triggers: dict[str, float] = {}
+        self.left = (0.0, 0.0)
+        self.right = (0.0, 0.0)
+        self.imu: list[ImuSample] = []
+        self.sensors_enabled = False
+        self.closed = False
+        self.rumble_calls: list[tuple[float, float, int]] = []
+        self.stop_rumble_calls = 0
+
+    def read_state(self):
+        return self.pressed, self.triggers, self.left, self.right
+
+    def set_sensors_enabled(self, enabled: bool) -> None:
+        self.sensors_enabled = enabled
+
+    def drain_imu(self) -> list[ImuSample]:
+        out, self.imu = list(self.imu), []
+        return out
+
+    def rumble(self, low: float, high: float, duration_ms: int) -> bool:
+        self.rumble_calls.append((low, high, duration_ms))
+        return True
+
+    def stop_rumble(self) -> None:
+        self.stop_rumble_calls += 1
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakeHost:
+    def __init__(self, devices: list[ControllerInfo] | None = None):
+        self.devices: list[ControllerInfo] = list(devices or [])
+        self.pending_changed = False
+        self.pending_removed: set[int] = set()
+        self.opened: list[FakeDevice] = []
+        self.quit_called = False
+
+    def init(self) -> bool:
+        return True
+
+    def quit(self) -> None:
+        self.quit_called = True
+
+    def list_devices(self, open_devices=None) -> list[ControllerInfo]:
+        return list(self.devices)
+
+    def poll_events(self, open_devices):
+        changed, removed = self.pending_changed, set(self.pending_removed)
+        self.pending_changed = False
+        self.pending_removed.clear()
+        return changed, removed
+
+    def open_device(self, info: ControllerInfo) -> FakeDevice:
+        device = FakeDevice(info)
+        self.opened.append(device)
+        return device
+
+
+def test_controller_type_detection_uses_sdl_type_name_and_vendor_guid():
+    assert detect_controller_preset("Generic Pad", "", "ps5") == "playstation"
+    assert detect_controller_preset("Generic Pad", "", "switch_pro") == "switch"
+    assert detect_controller_preset("Generic Pad", "", "xboxone") == "xbox"
     assert detect_controller_preset("Xbox Wireless Controller") == "xbox"
     assert detect_controller_preset("DualSense Wireless Controller") == "playstation"
     assert detect_controller_preset("Sony Interactive Entertainment Pad") == "playstation"
-    assert detect_controller_preset("Nintendo Switch Pro Controller") == "switch_pro"
+    assert detect_controller_preset("Nintendo Switch Pro Controller") == "switch"
+    assert detect_controller_preset("Steam Controller") == "steam"
+    assert detect_controller_preset("Steam Deck") == "steam"
+    assert detect_controller_preset("Valve Software Steam Virtual Gamepad") == "steam"
     assert (
         detect_controller_preset(
             "Wireless Controller", "030000004c050000cc09000000000000"
         )
         == "playstation"
+    )
+    assert (
+        detect_controller_preset(
+            "Wireless Controller", "03000000de2800000512000000000000"
+        )
+        == "steam"
     )
 
 
@@ -48,107 +124,80 @@ def test_saved_guid_preset_overrides_detected_default(monkeypatch):
     assert selection.config.name == "PlayStation"
 
 
-def test_select_resolves_and_reports_controller_preset(monkeypatch):
+def test_assign_resolves_and_reports_controller_preset():
     reported = []
     preset = PresetConfig(name="PlayStation")
+    controller = ControllerInfo(10, "guid-1", "DualSense", "ps5", has_gyro=True)
+    host = FakeHost([controller])
     service = ControllerService(
         queue.Queue(),
-        preset_resolver=lambda guid, name: PresetSelection("playstation", preset),
+        preset_resolver=lambda guid, name, gtype="": PresetSelection("playstation", preset),
         on_preset_changed=reported.append,
+        host=host,
     )
-    controller = ControllerInfo("guid-1", 0, "DualSense", 6, 16, 0)
-    service._controllers = [controller]
+    service._refresh_controllers()
+    service._assign("primary", 10)
 
-    class Capture:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def start(self):
-            pass
-
-        def stop(self):
-            pass
-
-    monkeypatch.setattr("app.input.controller_service.PygameInputThread", Capture)
-
-    service._do_select(controller.guid)
-
-    assert service._preset is preset
+    assert service.primary.preset is preset
     assert reported == [PresetSelection("playstation", preset)]
+    assert len(host.opened) == 1
 
 
-def test_identical_controllers_keep_independent_routes_after_hotplug(monkeypatch):
-    service = ControllerService(queue.Queue())
-    first = ControllerInfo("same-guid", 0, "Pad", 4, 10, 1, instance_id=10)
-    second = ControllerInfo("same-guid", 1, "Pad", 4, 10, 1, instance_id=11)
-    service._controllers = [first, second]
+def test_identical_controllers_keep_independent_routes_after_hotplug():
+    first = ControllerInfo(10, "same-guid", "Pad", "standard")
+    second = ControllerInfo(11, "same-guid", "Pad", "standard")
+    host = FakeHost([first, second])
+    service = ControllerService(queue.Queue(), host=host)
     route = service.add_route("adapter-2")
+    service._refresh_controllers()
 
-    class Capture:
-        def __init__(self, output, *, instance_id, **kwargs):
-            self.output = output
-            self.instance_id = instance_id
-
-        def start(self):
-            pass
-
-        def stop(self):
-            pass
-
-        def join(self, timeout=None):
-            pass
-
-        def is_alive(self):
-            return False
-
-    monkeypatch.setattr("app.input.controller_service.PygameInputThread", Capture)
     service._assign("primary", 10)
     service._assign("adapter-2", 11)
     with pytest.raises(ValueError, match="already assigned"):
         service._assign("adapter-2", 10)
-    state = ControllerState(Button.A)
-    route.capture.output.put(state)
-    assert route.input_queue.get_nowait() == state
-    assert service._queue.get_nowait() == NEUTRAL
 
-    def refresh():
-        service._controllers = [
-            ControllerInfo("same-guid", 0, "Pad", 4, 10, 1, instance_id=11)
-        ]
-        return True
+    second_device = service._devices[11]
+    second_device.pressed = frozenset({"east"})
+    service._tick_sdl()
+    assert route.input_queue.get_nowait() == ControllerState(Button.A)
 
-    monkeypatch.setattr(event, "pump", lambda: None)
-    monkeypatch.setattr(
-        event, "get", lambda: [event.Event(pygame.JOYDEVICEREMOVED, instance_id=10)]
-    )
-    monkeypatch.setattr(service, "_refresh_controllers", refresh)
-    service._pump_and_handle_hotplug()
+    # Disconnect controller 10: surviving controller 11 is NOT closed or reopened!
+    host.devices = [second]
+    host.pending_changed = True
+    host.pending_removed = {10}
+    service._tick_sdl()
 
     assert service.active_guid is None
-    assert route.capture.instance_id == 11
-    assert route.controller.index == 0
+    assert route.controller == second
+    assert service._devices[11] is second_device
+    assert not second_device.closed
+    assert service.primary.input_queue.get_nowait() == NEUTRAL
+
     service._assign("adapter-2", None)
+    assert second_device.closed
     assert route.input_queue.get_nowait() == NEUTRAL
 
 
-def test_profile_controller_restore_requires_an_available_unambiguous_match(monkeypatch):
+def test_profile_controller_restore_requires_an_available_unambiguous_match():
     saved = Mock()
+    first = ControllerInfo(10, "shared", "Pad")
+    second = ControllerInfo(11, "shared", "Pad")
+    host = FakeHost([first, second])
     service = ControllerService(
         queue.Queue(),
         saved_assignments={"primary": "missing", "adapter-2": "shared"},
         on_assignment=saved,
+        host=host,
     )
     route = service.add_route("adapter-2")
-    first = ControllerInfo("shared", 0, "Pad", 4, 10, 1, instance_id=10)
-    second = ControllerInfo("shared", 1, "Pad", 4, 10, 1, instance_id=11)
-    service._controllers = [first, second]
-    monkeypatch.setattr("app.input.controller_service.PygameInputThread", Mock())
+    service._refresh_controllers()
 
     service._restore_assignments()
     assert service.active_guid is None
     assert route.controller is None
 
-    service._controllers = [second]
+    host.devices = [second]
+    service._refresh_controllers()
     service._restore_assignments()
     assert route.controller == second
     saved.assert_not_called()
@@ -161,134 +210,86 @@ def test_profile_controller_restore_requires_an_available_unambiguous_match(monk
     assert route.controller is None
 
 
-def test_poll_without_hotplug_does_not_reprobe_active_joystick(monkeypatch):
-    """Routine polling must not invalidate the active capture joystick."""
-    service = ControllerService(queue.Queue())
-    monkeypatch.setattr(event, "pump", lambda: None)
-    monkeypatch.setattr(event, "get", list)
-    monkeypatch.setattr(
-        service,
-        "_refresh_controllers",
-        lambda: (_ for _ in ()).throw(AssertionError("unexpected probe")),
-    )
-
-    service._pump_and_handle_hotplug()
-
-
-def test_hotplug_stops_capture_before_enumeration_and_reselects(monkeypatch):
-    """Hotplug enumeration must stop capture before probing and reopen it."""
-    service = ControllerService(queue.Queue())
-    controller = ControllerInfo("guid-1", 0, "Pad", 4, 10, 1)
-    service._controllers = [controller]
-    service._active_guid = controller.guid
-    service._capture = object()  # Only its presence matters to this test.
-    calls = []
-
-    monkeypatch.setattr(event, "pump", lambda: None)
-    monkeypatch.setattr(event, "get", lambda: [event.Event(pygame.JOYDEVICEADDED, device_index=0)])
-    monkeypatch.setattr(service, "_stop_capture", lambda: calls.append("stop"))
-    monkeypatch.setattr(
-        service, "_refresh_controllers", lambda: calls.append("refresh") or False
-    )
-    monkeypatch.setattr(
-        service, "_do_select", lambda ident: calls.append(("select", ident)) or controller
-    )
-
-    service._pump_and_handle_hotplug()
-
-    assert calls == ["stop", "refresh", ("select", controller.guid)]
-
-
-def test_service_initializes_event_queue_without_capture():
-    from pygame import display, joystick
-
-    display.quit()
-    joystick.quit()
-    service = ControllerService(queue.Queue())
-    try:
-        assert service._init_pygame()
-        event.pump()
-        event.get()
-    finally:
-        joystick.quit()
-        display.quit()
-
-
-@pytest.mark.parametrize("multiple_adapters", [False, True])
-def test_hotplug_connect_disconnect_reconnect(monkeypatch, multiple_adapters):
-    from app.input.pygame_source import PygameInputThread
-    from lib.input.state import NEUTRAL
-
+def test_hotplug_connect_disconnect_reconnect():
     notifications = []
-    service = ControllerService(
-        queue.Queue(), on_change=lambda devices, active: notifications.append((devices, active))
-    )
-    if multiple_adapters:
-        service.add_route("adapter-2")
     controller = ControllerInfo(
-        "0300b7e67e0500000920000000006803", 0,
-        "Nintendo Switch Pro Controller", 6, 20, 0, instance_id=1,
+        1,
+        "0300b7e67e0500000920000000006803",
+        "Nintendo Switch Pro Controller",
+        "switch_pro",
+        has_gyro=True,
+        has_accel=True,
+        has_rumble=True,
     )
-    connected = []
-    pending = []
-    captures = []
+    host = FakeHost([])
+    service = ControllerService(
+        queue.Queue(),
+        on_change=lambda devices, active: notifications.append((devices, active)),
+        host=host,
+    )
 
-    # Use actual Thread start/stop/join to exercise Python's thread lifecycle.
-    class Capture(PygameInputThread):
-        def run(self):
-            captures.append(self)
-            self._stop_event.wait()
+    for _ in range(2):
+        host.devices = [controller]
+        host.pending_changed = True
+        service._tick_sdl()
+        assert service.active_guid == controller.guid
+        assert notifications[-1] == ([controller.to_dict()], controller.guid)
 
-    def refresh():
-        changed = service._controllers != connected
-        service._controllers = list(connected)
-        return changed
+        host.devices = []
+        host.pending_changed = True
+        host.pending_removed = {1}
+        service._tick_sdl()
+        assert service.active_guid is None
+        assert notifications[-1] == ([], None)
+        assert service.primary.input_queue.get_nowait() == NEUTRAL
 
-    def get_events():
-        events = list(pending)
-        pending.clear()
-        return events
-
-    monkeypatch.setattr("app.input.controller_service.PygameInputThread", Capture)
-    monkeypatch.setattr(service, "_refresh_controllers", refresh)
-    monkeypatch.setattr(event, "pump", lambda: None)
-    monkeypatch.setattr(event, "get", get_events)
-
-    try:
-        for _ in range(2):
-            connected.append(controller)
-            pending.append(event.Event(pygame.JOYDEVICEADDED, device_index=0))
-            service._pump_and_handle_hotplug()
-            assert service._active_guid == controller.guid
-            assert service._capture.is_alive()
-            assert notifications[-1] == ([controller.to_dict()], controller.guid)
-
-            connected.clear()
-            pending.append(event.Event(pygame.JOYDEVICEREMOVED, instance_id=1))
-            service._pump_and_handle_hotplug()
-            assert service._active_guid is None
-            assert service._capture is None
-            assert notifications[-1] == ([], None)
-            assert service._queue.get_nowait() == NEUTRAL
-        assert len(captures) == 2
-        assert all(not capture.is_alive() for capture in captures)
-
-        service._assign("primary", None)
-        connected.append(controller)
-        pending.append(event.Event(pygame.JOYDEVICEADDED, device_index=0))
-        service._pump_and_handle_hotplug()
-        assert service._controllers == [controller]
-        assert service._active_guid is None
-        assert service._capture is None
-    finally:
-        service._shutdown_captures()
+    # Manual unassign disables auto-select on subsequent reconnect.
+    service._assign("primary", None)
+    host.devices = [controller]
+    host.pending_changed = True
+    service._tick_sdl()
+    assert service._controllers == [controller]
+    assert service.active_guid is None
 
 
-def test_service_can_stop_and_join_without_controllers(monkeypatch):
-    service = ControllerService(queue.Queue())
-    monkeypatch.setattr(service, "_init_pygame", lambda: True)
-    monkeypatch.setattr(service, "_refresh_controllers", lambda: False)
-    monkeypatch.setattr(service, "_pump_and_handle_hotplug", lambda: None)
+def test_on_demand_imu_sensors_and_live_variant_switching():
+    controller = ControllerInfo(5, "guid-pro", "Switch Pro", "switch_pro", has_gyro=True, has_accel=True)
+    host = FakeHost([controller])
+    out = queue.Queue()
+    service = ControllerService(out, preset=load_preset("switch"), host=host)
+    imu_on = [False]
+    variant = [ControllerVariant.PRO]
+    service.imu_requested = lambda: imu_on[0]
+    service.mapping_variant = lambda: variant[0]
+
+    service._refresh_controllers()
+    service._assign("primary", 5)
+    device = service._devices[5]
+    device.pressed = frozenset({"south"})
+
+    service._tick_sdl()
+    assert not device.sensors_enabled
+    assert out.get_nowait() == ControllerState(Button.B)
+
+    imu_on[0] = True
+    sample = ImuSample((0.0, STANDARD_GRAVITY, 0.0), (0.5, 0.0, 0.0), 100)
+    device.imu = [sample]
+    variant[0] = ControllerVariant.LEFT
+    service._tick_sdl()
+    assert device.sensors_enabled
+    assert out.get_nowait() == ControllerState(Button.LEFT)
+    cursor, read = service.read_imu_since(0)
+    assert cursor == 1
+    assert read == [sample]
+
+    imu_on[0] = False
+    service._tick_sdl()
+    assert not device.sensors_enabled
+
+
+def test_service_can_stop_and_join_without_controllers():
+    host = FakeHost([])
+    service = ControllerService(queue.Queue(), host=host)
     service.start()
     try:
         assert service.status()["controllers"] == []
@@ -296,3 +297,56 @@ def test_service_can_stop_and_join_without_controllers(monkeypatch):
         service.stop()
         service.join(timeout=2)
     assert not service.is_alive()
+    assert host.quit_called
+
+
+def test_status_returns_immediately_while_sdl_init_is_in_progress():
+    import threading
+    import time
+
+    init_started = threading.Event()
+    release_init = threading.Event()
+    raw = ControllerInfo(7, "guid-7", "Pro Pad", "switch_pro")
+    probed = ControllerInfo(
+        7, "guid-7", "Pro Pad", "switch_pro", has_gyro=True, has_accel=True, has_rumble=True
+    )
+
+    class BlockingInitHost(FakeHost):
+        def init(self) -> bool:
+            init_started.set()
+            release_init.wait(timeout=5)
+            return True
+
+        def open_device(self, info: ControllerInfo) -> FakeDevice:
+            device = FakeDevice(probed)
+            self.opened.append(device)
+            return device
+
+    service = ControllerService(queue.Queue(), host=BlockingInitHost([raw]))
+    service.add_route("adapter-2")
+    service.start()
+    try:
+        assert init_started.wait(timeout=2)
+        started = time.perf_counter()
+        snap = service.status()
+        assert time.perf_counter() - started < 0.5
+        assert snap == {
+            "controllers": [],
+            "active": None,
+            "assignments": {"primary": None, "adapter-2": None},
+            "available": False,
+        }
+
+        release_init.set()
+        deadline = time.monotonic() + 2.0
+        while not service.status()["available"] and time.monotonic() < deadline:
+            time.sleep(0.01)
+        ready = service.status()
+        assert ready["available"] is True
+        assert ready["active"] == "guid-7"
+        assert ready["assignments"] == {"primary": 7, "adapter-2": None}
+        assert ready["controllers"] == [probed.to_dict()]
+    finally:
+        release_init.set()
+        service.stop()
+        service.join(timeout=2)

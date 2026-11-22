@@ -1,5 +1,10 @@
 import * as Blockly from "blockly/core";
-import { BUTTON_NAMES, type ButtonName, type MacroAction, type MacroDoc } from "@/src/lib/types";
+import {
+  MACRO_BUTTON_NAMES,
+  type MacroAction,
+  type MacroButtonName,
+  type MacroDoc,
+} from "@/src/lib/types";
 import { MACRO_VERSION, type MacroPath } from "@/src/lib/macro-document";
 import {
   MACRO_BLOCK_TYPES,
@@ -210,8 +215,10 @@ function durationField(
   return { do: "wait", ms, unit };
 }
 
-function isButtonName(value: unknown): value is ButtonName {
-  return typeof value === "string" && BUTTON_NAMES.some((buttonName) => buttonName === value);
+function isMacroButtonName(value: unknown): value is MacroButtonName {
+  return (
+    typeof value === "string" && MACRO_BUTTON_NAMES.some((buttonName) => buttonName === value)
+  );
 }
 
 function readAction(
@@ -225,7 +232,7 @@ function readAction(
     case MACRO_BLOCK_TYPES.button: {
       const operation = fieldValue(block, "OPERATION");
       const button = fieldValue(block, "BUTTON");
-      if ((operation !== "press" && operation !== "release") || !isButtonName(button)) {
+      if ((operation !== "press" && operation !== "release") || !isMacroButtonName(button)) {
         context.issues.push({
           blockId: block.id,
           message: "Choose a valid button action.",
@@ -247,7 +254,7 @@ function readAction(
       }
       const button = fieldValue(block, "BUTTON");
       const wait = durationField(block, "Hold duration", context);
-      if (!isButtonName(button)) {
+      if (!isMacroButtonName(button)) {
         context.issues.push({ blockId: block.id, message: "Choose a valid button." });
         return null;
       }

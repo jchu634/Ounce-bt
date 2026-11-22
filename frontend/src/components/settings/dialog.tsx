@@ -39,6 +39,7 @@ import { Separator } from "@/src/components/ui/separator";
 import { Label } from "@/src/components/ui/label";
 
 import { AudioInputSettings } from "@/src/components/settings/audio-input-settings";
+import { AdvancedSettings } from "@/src/components/settings/advanced-settings";
 import type { PresetEditorHandle } from "@/src/components/editors/preset-editor";
 import { ControllerSettings } from "@/src/components/settings/controller-settings";
 import { CaptureDeviceSettings } from "@/src/components/settings/capture-device-settings";
@@ -53,6 +54,7 @@ import type { PresetInfo } from "@/src/lib/types";
 const SETTINGS_DESCRIPTIONS: Record<string, string> = {
   general: "General settings.",
   controller: "Manage mapping presets and vibration.",
+  advanced: "Experimental settings that are not quite stable.",
   credits: "Acknowledgements and Licenses",
   debug: "Inspect connection states and change debug settings.",
 };
@@ -215,7 +217,7 @@ export function SettingsDialog({ ref }: { ref?: Ref<SettingsDialogHandle> }) {
           General Settings
           <GearSixIcon weight="fill" className="size-5" />
         </DialogTrigger>
-        <DialogContent className="flex h-4/5 min-w-4/5 flex-col bg-background">
+        <DialogContent className="action-hover-group flex h-4/5 min-w-4/5 flex-col bg-background">
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
 
@@ -238,6 +240,7 @@ export function SettingsDialog({ ref }: { ref?: Ref<SettingsDialogHandle> }) {
             <TabsList className="shrink-0 max-sm:w-full max-sm:flex-row">
               <TabsTrigger value="general">General</TabsTrigger>
               <TabsTrigger value="controller">Controller</TabsTrigger>
+              <TabsTrigger value="advanced">Advanced</TabsTrigger>
               <TabsTrigger value="credits">Credits</TabsTrigger>
               {debugEnabled && <TabsTrigger value="debug">Debug</TabsTrigger>}
             </TabsList>
@@ -367,6 +370,12 @@ export function SettingsDialog({ ref }: { ref?: Ref<SettingsDialogHandle> }) {
             </TabsContent>
             <TabsContent
               className="app-scrollbar min-h-0 min-w-0 overflow-y-auto p-2"
+              value="advanced"
+            >
+              <AdvancedSettings />
+            </TabsContent>
+            <TabsContent
+              className="app-scrollbar min-h-0 min-w-0 overflow-y-auto p-2"
               value="credits"
             >
               <Credits onToggleDebug={() => void toggleDebug()} />
@@ -401,7 +410,7 @@ export function SettingsDialog({ ref }: { ref?: Ref<SettingsDialogHandle> }) {
           if (!nextOpen) pendingDiscard.current = null;
         }}
       >
-        <DialogContent showCloseButton={false}>
+        <DialogContent className="action-hover-group" showCloseButton={false}>
           <DialogHeader>
             <DialogTitle>Leave without saving?</DialogTitle>
             <DialogDescription>
