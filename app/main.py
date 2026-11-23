@@ -42,8 +42,10 @@ from lib.controller import ControllerVariant
 from lib.firmware import (
     CONFIG_NAME,
     FIRMWARE_NAME,
+    LINUX_SYSTEM_FIRMWARE_DIRS,
     missing_firmware,
     patch_address,
+    stage_linux_firmware,
 )
 from lib.input import NEUTRAL, apply_to_protocol, parse_rumble
 from lib.input import presets as presets_module
@@ -58,7 +60,7 @@ from lib.input.presets import (
 from lib.input.state import ControllerState
 from lib.sdp_records import DEVICE_CLASS_GAMEPAD, sdp_record
 from lib.switch_protocol import ControllerProtocol
-from lib.windows_adapters import discover_winusb_adapters
+from lib.windows_adapters import discover_linux_adapters, discover_winusb_adapters
 
 HID_CONTROL_PSM = 0x0011
 HID_INTERRUPT_PSM = 0x0013
@@ -613,7 +615,7 @@ def load_options():
     if args.adapter and not config.web_enabled:
         parser.error("Additional adapters require the Connections UI")
     args.auto_adapters = (
-        sys.platform == "win32"
+        sys.platform in ("win32", "linux")
         and not args.no_auto_adapters
         and args.transport_spec is None
         and config.transport_spec == "usb:0"
@@ -714,19 +716,30 @@ async def run_bluetooth(
     if getattr(args, "auto_adapters", False):
         if app is not None:
             app.state.startup_phase = "discovering_adapters"
+        discover = (
+            discover_winusb_adapters
+            if sys.platform == "win32"
+            else discover_linux_adapters
+        )
         try:
-            detected = await asyncio.to_thread(discover_winusb_adapters)
+            detected = await asyncio.to_thread(discover)
         except Exception as error:
-            logger.exception("WinUSB adapter discovery failed")
-            discovery_error = f"Could not detect WinUSB Bluetooth adapters: {error}"
+            logger.exception("USB Bluetooth adapter discovery failed")
+            discovery_error = f"Could not detect USB Bluetooth adapters: {error}"
         else:
             if detected:
                 transports = detected[:8] if config.web_enabled else detected[:1]
-                logger.info("Detected WinUSB Bluetooth adapters: %s", ", ".join(transports))
-            else:
+                logger.info("Detected USB Bluetooth adapters: %s", ", ".join(transports))
+            elif sys.platform == "win32":
                 discovery_error = (
                     "No USB Bluetooth adapter using WinUSB was detected. "
                     "Connect a dedicated Bluetooth adapter configured with the WinUSB driver."
+                )
+            else:
+                discovery_error = (
+                    "No accessible USB Bluetooth adapter was detected. "
+                    "Run setup-linux-udev.py to grant USB permissions for your Bluetooth adapter(s), "
+                    "or specify an explicit transport (for example: usb:0)."
                 )
 
     firmware_root = config.bluetooth_firmware_dir
@@ -922,6 +935,19 @@ async def run_bluetooth(
         try:
             if patch_firmware:
                 stage_adapter_firmware(session, firmware_root, firmware_dir)
+            elif sys.platform == "linux" and firmware_dir is not None:
+                profile_address = (
+                    explicit_address
+                    if session.primary and explicit_address
+                    else profiles[session.profile_index].address
+                )
+                target_dir = firmware_dir / session.id
+                if stage_linux_firmware(
+                    (firmware_root, *LINUX_SYSTEM_FIRMWARE_DIRS),
+                    target_dir,
+                    profile_address,
+                ):
+                    session.firmware_dir = target_dir
             await run_adapter(
                 session,
                 config_store,
@@ -952,7 +978,7 @@ async def run_bluetooth(
     tasks = []
     firmware_workspace = (
         tempfile.TemporaryDirectory(prefix="ounce-bt-firmware-")
-        if patch_firmware
+        if patch_firmware or sys.platform == "linux"
         else nullcontext()
     )
     with firmware_workspace as tmp:

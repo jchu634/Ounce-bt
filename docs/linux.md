@@ -7,14 +7,15 @@ public Bluetooth address.
 
 Download the Linux release ZIP for your architecture.\
 It contains the AppImage,
-`run-with-hci-caps.sh`, an AppImage checksum and launch instructions.\
+`run-with-hci-caps.sh`, `setup-linux-udev.py`, an AppImage checksum and launch instructions.\
 Extract it and run the launcher as your desktop user.
 
 e.g.
 ```bash
 unzip Ounce-bt-*-linux-x86_64.zip
 cd Ounce-bt-linux-x86_64
-chmod +x Ounce-bt-x86_64.AppImage run-with-hci-caps.sh
+chmod +x Ounce-bt-x86_64.AppImage run-with-hci-caps.sh setup-linux-udev.py
+./setup-linux-udev.py
 ./run-with-hci-caps.sh "$PWD/Ounce-bt-x86_64.AppImage" usb:0
 ```
 
@@ -58,7 +59,19 @@ The launcher shell is replaced during startup; the application retains these add
 ## USB device permissions
 
 The USB transport requires read/write permission on the selected `/dev/bus/usb` device.\
-If access is denied, create a udev rule for your adapter in
+You can configure this interactively with the bundled autodiscovery script:
+
+```bash
+# From an extracted release bundle:
+./setup-linux-udev.py
+
+# Or from the repository root:
+./scripts/setup-linux-udev.py
+```
+
+The script detects connected USB Bluetooth adapters (grouped by vendor/product ID), lets you choose which ones to allow, writes `/etc/udev/rules.d/70-ounce-bt.rules` (preserving any existing entries), and reloads/triggers udev. Use `--all` to select all discovered adapters or `--dry-run` to preview the generated rules.
+
+Alternatively, to configure it manually, create a udev rule for your adapter in
 `/etc/udev/rules.d/70-ounce-bt.rules`:
 
 ```udev
@@ -112,7 +125,7 @@ lists the system packages used by CI. Then run:
 The script builds the frontend, creates an isolated Python 3.12 build
 environment, and packages the app with PyInstaller and PySide6's WebEngine
 hooks. It generates `dist/Ounce-bt-<version>-linux-<arch>.zip`, containing
-`Ounce-bt-<arch>.AppImage`, `run-with-hci-caps.sh`,
+`Ounce-bt-<arch>.AppImage`, `run-with-hci-caps.sh`, `setup-linux-udev.py`,
 `Ounce-bt-<arch>.AppImage.sha256` and launch instructions in an
 `Ounce-bt-linux-<arch>` folder. The build uses appimagetool 1.9.1 and retains the
 loose AppImage in `dist/` for local testing.

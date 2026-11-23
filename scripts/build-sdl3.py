@@ -199,7 +199,18 @@ def build_sdl3(work_dir: Path, output_dir: Path, *, force: bool = False) -> Path
             f"-DLibUSB_LIBRARY={implib}",
         ]
     else:
-        cmake_args += ["-DCMAKE_BUILD_TYPE=Release"]
+        # Linux only uses SDL3 for gamepad/joystick/HIDAPI input; disable unused
+        # graphics/audio/UI subsystems so builds do not depend on X11/Wayland dev headers.
+        cmake_args += [
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DSDL_VIDEO=OFF",
+            "-DSDL_AUDIO=OFF",
+            "-DSDL_CAMERA=OFF",
+            "-DSDL_GPU=OFF",
+            "-DSDL_RENDER=OFF",
+            "-DSDL_DIALOG=OFF",
+            "-DSDL_TRAY=OFF",
+        ]
         if shutil.which("ninja"):
             cmake_args += ["-G", "Ninja"]
 

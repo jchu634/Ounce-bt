@@ -142,9 +142,11 @@ export function SettingsDialog({ ref }: { ref?: Ref<SettingsDialogHandle> }) {
     useCaptureInput();
   const [draftAudioInputId, setDraftAudioInputId] =
     useState(selectedAudioInputId);
-  const [draftCaptureInputId, setDraftCaptureInputId] = useState(
-    selectedCameraInputId,
-  );
+  const [draftCaptureInputOverride, setDraftCaptureInputOverride] = useState<
+    string | null
+  >(null);
+  const draftCaptureInputId =
+    draftCaptureInputOverride ?? selectedCameraInputId;
   const { stop, starting } = useCaptureControls();
   const hasUnsavedInputChanges =
     draftAudioInputId !== selectedAudioInputId ||
@@ -154,7 +156,7 @@ export function SettingsDialog({ ref }: { ref?: Ref<SettingsDialogHandle> }) {
     setOpen(true);
     setDraftControlsOnlyHomepage(controlsOnlyHomepage);
     setDraftAudioInputId(selectedAudioInputId);
-    setDraftCaptureInputId(selectedCameraInputId);
+    setDraftCaptureInputOverride(null);
   }
 
   useImperativeHandle(ref, () => ({
@@ -261,7 +263,7 @@ export function SettingsDialog({ ref }: { ref?: Ref<SettingsDialogHandle> }) {
                 <CaptureDeviceSettings
                   disabled={draftControlsOnlyHomepage}
                   draftInputId={draftCaptureInputId}
-                  onDraftInputChange={setDraftCaptureInputId}
+                  onDraftInputChange={setDraftCaptureInputOverride}
                 />
                 <Button
                   disabled={
@@ -274,6 +276,7 @@ export function SettingsDialog({ ref }: { ref?: Ref<SettingsDialogHandle> }) {
                       audioDeviceId: draftAudioInputId,
                       videoDeviceId: draftCaptureInputId,
                     });
+                    setDraftCaptureInputOverride(null);
                   }}
                   className="w-50 max-w-full"
                 >

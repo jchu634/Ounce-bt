@@ -198,6 +198,59 @@ def test_build_sdl3_verify_libusb_requires_expected_version(tmp_path):
     verify_libusb(fresh)
 
 
+def test_build_sdl3_linux_disables_unused_video_and_audio_subsystems(
+    tmp_path, monkeypatch
+):
+    script = Path(__file__).resolve().parents[1] / "scripts" / "build-sdl3.py"
+    ns = runpy.run_path(str(script))
+    build_sdl3 = ns["build_sdl3"]
+    version = ns["SDL3_VERSION"]
+
+    work_dir = tmp_path / "work"
+    output_dir = tmp_path / "out"
+    src_dir = work_dir / f"SDL3-{version}"
+    src_dir.mkdir(parents=True)
+    (src_dir / "CMakeLists.txt").write_text("# stub\n", encoding="utf-8")
+    archive = work_dir / f"SDL3-{version}.tar.gz"
+    archive.write_bytes(b"stub")
+
+    commands: list[list[str]] = []
+
+    def fake_run(cmd, check=False):
+        commands.append(list(cmd))
+        build_dir = work_dir / "cmake-build"
+        build_dir.mkdir(parents=True, exist_ok=True)
+        if len(commands) == 1:
+            (build_dir / "CMakeCache.txt").write_text(
+                "HAVE_HIDAPI_LIBUSB:INTERNAL=1\n", encoding="utf-8"
+            )
+        else:
+            (build_dir / "libSDL3.so.0.4.20").write_bytes(
+                b"ELF HIDAPI_SWITCH2 libusb-1.0"
+            )
+
+    monkeypatch.setattr(ns["sys"], "platform", "linux")
+    monkeypatch.setitem(build_sdl3.__globals__, "_download", lambda *a, **kw: archive)
+    monkeypatch.setitem(build_sdl3.__globals__, "_extract_tar", lambda *a, **kw: None)
+    monkeypatch.setattr(ns["subprocess"], "run", fake_run)
+
+    built = build_sdl3(work_dir, output_dir)
+    assert built == output_dir / "libSDL3.so.0"
+    configure_cmd = commands[0]
+    for flag in (
+        "-DSDL_VIDEO=OFF",
+        "-DSDL_AUDIO=OFF",
+        "-DSDL_CAMERA=OFF",
+        "-DSDL_GPU=OFF",
+        "-DSDL_RENDER=OFF",
+        "-DSDL_DIALOG=OFF",
+        "-DSDL_TRAY=OFF",
+        "-DSDL_HIDAPI=ON",
+        "-DSDL_HIDAPI_LIBUSB=ON",
+    ):
+        assert flag in configure_cmd
+
+
 def test_list_devices_defers_capability_probe_until_open_device():
     import ctypes
 
@@ -293,3 +346,80 @@ def test_sdl3_loader_prefers_bundled_binary_and_fails_packaged_when_missing(
     assert sdl3_loader.os.environ["SDL_BINARY_PATH"] == str(bundled)
     assert sdl3_loader.os.environ["SDL_DOWNLOAD_BINARIES"] == "0"
     assert sdl3_loader.os.environ["SDL_FIND_BINARIES"] == "0"
+
+
+def test_sdl3_loader_uses_capable_system_linux_binary_when_unpackaged(
+    tmp_path, monkeypatch
+):
+    monkeypatch.delenv("SDL_BINARY_PATH", raising=False)
+    monkeypatch.delenv("SDL_DISABLE_METADATA", raising=False)
+    monkeypatch.delenv("SDL_DOWNLOAD_BINARIES", raising=False)
+    monkeypatch.delenv("SDL_FIND_BINARIES", raising=False)
+    monkeypatch.setattr(sdl3_loader, "application_dir", lambda: tmp_path)
+    monkeypatch.setattr(sdl3_loader, "_is_packaged", lambda: False)
+    monkeypatch.setattr(sdl3_loader.sys, "platform", "linux")
+
+    weak_dir = tmp_path / "weak"
+    weak_dir.mkdir()
+    (weak_dir / "libSDL3.so.0").write_bytes(b"SDL3 without libusb")
+
+    capable_dir = tmp_path / "capable"
+    capable_dir.mkdir()
+    (capable_dir / "libSDL3.so.0").write_bytes(b"SDL3 HIDAPI_SWITCH2 libusb-1.0")
+
+    monkeypatch.setattr(
+        sdl3_loader, "_LINUX_SYSTEM_LIB_DIRS", (weak_dir, capable_dir)
+    )
+    sdl3_loader.configure_sdl3_environment()
+    assert sdl3_loader.os.environ["SDL_BINARY_PATH"] == str(capable_dir)
+    assert sdl3_loader.os.environ["SDL_DOWNLOAD_BINARIES"] == "0"
+    assert sdl3_loader.os.environ["SDL_FIND_BINARIES"] == "0"
+
+
+def test_sdl3_host_init_sets_libusb_and_switch2_hints():
+    hints: list[tuple[bytes, bytes]] = []
+
+    class _FakeSdl:
+        SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS = b"SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS"
+        SDL_HINT_JOYSTICK_ENHANCED_REPORTS = b"SDL_JOYSTICK_ENHANCED_REPORTS"
+        SDL_HINT_HIDAPI_LIBUSB = b"SDL_HIDAPI_LIBUSB"
+        SDL_HINT_JOYSTICK_HIDAPI_SWITCH2 = b"SDL_JOYSTICK_HIDAPI_SWITCH2"
+        SDL_INIT_GAMEPAD = 1
+        SDL_INIT_JOYSTICK = 2
+
+        def SDL_SetHint(self, name: bytes, value: bytes) -> bool:
+            hints.append((name, value))
+            return True
+
+        def SDL_InitSubSystem(self, _flags: int) -> bool:
+            return True
+
+        def SDL_QuitSubSystem(self, _flags: int) -> None:
+            pass
+
+    host = Sdl3Host(sdl=_FakeSdl())
+    assert host.init() is True
+    assert (b"SDL_HIDAPI_LIBUSB", b"1") in hints
+    assert (b"SDL_JOYSTICK_HIDAPI_SWITCH2", b"1") in hints
+    host.quit()
+
+
+def test_linux_udev_rules_include_switch2_and_hidraw_controllers(tmp_path):
+    script = Path(__file__).resolve().parents[1] / "scripts" / "setup-linux-udev.py"
+    ns = runpy.run_path(str(script))
+    adapter_cls = ns["UsbBluetoothAdapter"]
+    build_rules = ns["build_rules_content"]
+    read_existing = ns["read_existing_rule_ids"]
+
+    selected = [adapter_cls(vid="2357", pid="0604", product="TP-Link")]
+    content = build_rules(selected)
+    assert 'SUBSYSTEM=="usb", ATTR{idVendor}=="057e", ATTR{idProduct}=="2069", TAG+="uaccess"' in content
+    assert 'KERNEL=="hidraw*", ATTRS{idVendor}=="057e", TAG+="uaccess"' in content
+    assert 'KERNEL=="hidraw*", ATTRS{idVendor}=="054c", TAG+="uaccess"' in content
+
+    rules_file = tmp_path / "70-ounce-bt.rules"
+    rules_file.write_text(content, encoding="utf-8")
+    existing = read_existing(rules_file)
+    # Re-running must not duplicate Switch 2 controller rules.
+    rerun = build_rules(selected, existing)
+    assert rerun == content

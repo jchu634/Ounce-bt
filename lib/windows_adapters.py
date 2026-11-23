@@ -1,6 +1,7 @@
 """Find present USB Bluetooth radios backed by the Windows WinUSB driver."""
 
 import ctypes
+import os
 import re
 import threading
 from collections import Counter
@@ -100,6 +101,57 @@ def discover_winusb_adapters() -> list[str]:
                 )
             )
     return _transport_specs(radios, locations)
+
+
+def _linux_usb_device_accessible(bus: int, address: int) -> bool:
+    return os.access(f"/dev/bus/usb/{bus:03d}/{address:03d}", os.R_OK | os.W_OK)
+
+
+def _linux_transport_specs(radios: list[UsbRadio]) -> list[str]:
+    ordered = sorted(radios, key=lambda radio: (radio.bus, radio.ports))
+    serials = Counter((radio.vendor, radio.product, radio.serial) for radio in ordered)
+    specs = []
+    for radio in ordered:
+        if not radio.ports:
+            continue
+        serial = radio.serial
+        if (
+            serial
+            and serials[radio.vendor, radio.product, serial] == 1
+            and re.fullmatch(r"[a-zA-Z0-9_-]+", serial)
+        ):
+            specs.append(f"usb:{radio.vendor:04x}:{radio.product:04x}/{serial}")
+        else:
+            port_path = ".".join(str(port) for port in radio.ports)
+            specs.append(f"usb:{radio.bus}-{port_path}")
+    return specs
+
+
+def discover_linux_adapters() -> list[str]:
+    load_libusb()
+    radios = []
+    with usb1.USBContext() as context:
+        for device in context.getDeviceIterator(skip_on_error=True):
+            if not is_bluetooth_usb(device):
+                continue
+            if not _linux_usb_device_accessible(
+                device.getBusNumber(), device.getDeviceAddress()
+            ):
+                continue
+            try:
+                serial = device.getSerialNumber()
+            except usb1.USBError:
+                serial = None
+            radios.append(
+                UsbRadio(
+                    device.getVendorID(),
+                    device.getProductID(),
+                    device.getBusNumber(),
+                    tuple(device.getPortNumberList()),
+                    serial,
+                )
+            )
+    return _linux_transport_specs(radios)
 
 
 def is_bluetooth_usb(device: usb1.USBDevice) -> bool:

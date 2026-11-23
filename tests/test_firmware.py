@@ -202,3 +202,24 @@ def test_missing_firmware_never_opens_transport(
     else:
         asyncio.run(application.main())
         assert served == [str(tmp_path / missing)]
+
+
+def test_stage_linux_firmware_decompresses_xz_and_patches_address(tmp_path):
+    import lzma
+
+    from lib.firmware import stage_linux_firmware
+
+    src = tmp_path / "sys_fw"
+    src.mkdir()
+    (src / f"{FIRMWARE_NAME}.xz").write_bytes(lzma.compress(b"realtek-fw-bytes"))
+    (src / f"{CONFIG_NAME}.xz").write_bytes(
+        lzma.compress(bytes.fromhex("55ab23870000"))
+    )
+
+    target = tmp_path / "staged" / "adapter-2"
+    assert stage_linux_firmware((tmp_path / "missing", src), target, "98:B6:E9:11:22:33")
+    assert (target / FIRMWARE_NAME).read_bytes() == b"realtek-fw-bytes"
+    assert (target / CONFIG_NAME).read_bytes() == CONFIG_HEADER + bytes.fromhex(
+        "332211e9b698"
+    )
+    assert not stage_linux_firmware((tmp_path / "missing",), tmp_path / "none", "98:B6:E9:11:22:33")

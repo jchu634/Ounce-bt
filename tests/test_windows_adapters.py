@@ -8,7 +8,7 @@ import pytest
 import app.main as application
 from lib import bluetooth_transport
 from lib.config import Config
-from lib.windows_adapters import UsbRadio, _transport_specs
+from lib.windows_adapters import UsbRadio, _linux_transport_specs, _transport_specs
 
 
 def test_usb_open_leaves_application_loop_free_and_cleans_up_on_cancel(monkeypatch):
@@ -65,7 +65,12 @@ def test_winusb_discovery_uses_unique_serials_and_disambiguates_usb_locations():
         ("win32", ["--adapter", "usb:1"], "usb:0", False),
         ("win32", ["--no-auto-adapters"], "usb:0", False),
         ("win32", [], "usb:2", False),
-        ("linux", [], "usb:0", False),
+        ("linux", [], "usb:0", True),
+        ("linux", ["usb:0"], "usb:0", False),
+        ("linux", ["--adapter", "usb:1"], "usb:0", False),
+        ("linux", ["--no-auto-adapters"], "usb:0", False),
+        ("linux", [], "usb:2", False),
+        ("darwin", [], "usb:0", False),
     ],
 )
 def test_winusb_detection_respects_explicit_transports(
@@ -80,6 +85,19 @@ def test_winusb_detection_respects_explicit_transports(
     )
     _, args = application.load_options()
     assert args.auto_adapters is expected
+
+
+def test_linux_discovery_orders_by_port_and_disambiguates_shared_serials():
+    second = UsbRadio(0x0BDA, 0x8771, 3, (9, 4, 2), "SHARED")
+    first = UsbRadio(0x2357, 0x0604, 3, (9, 2, 2), "UNIQUE")
+    third = UsbRadio(0x0BDA, 0x8771, 3, (9, 4, 3, 2), "SHARED")
+    no_ports = UsbRadio(0x0BDA, 0x8771, 3, (), "IGNORED")
+
+    assert _linux_transport_specs([third, second, no_ports, first]) == [
+        "usb:2357:0604/UNIQUE",
+        "usb:3-9.4.2",
+        "usb:3-9.4.3.2",
+    ]
 
 
 def test_open_usb_device_enumerates_concurrently_outside_open_lock(monkeypatch):

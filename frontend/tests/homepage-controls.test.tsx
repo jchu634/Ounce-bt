@@ -55,6 +55,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
   Reflect.deleteProperty(navigator, "mediaDevices");
+  Reflect.deleteProperty(navigator, "permissions");
   localStorage.removeItem("ounce-bt.audio-input");
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -517,7 +518,12 @@ it.each([
 
   await act(async () => button("Start capture input").click());
   expect(getUserMedia).toHaveBeenCalledWith({
-    video: { deviceId: { exact: "capture-card" } },
+    video: {
+      deviceId: { exact: "capture-card" },
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      frameRate: { ideal: 60 },
+    },
     audio: {
       ...(audioId ? { deviceId: { exact: audioId } } : {}),
       echoCancellation: { exact: false },
@@ -580,7 +586,12 @@ it("opens the settings camera preview without capturing audio", async () => {
   ));
   await act(async () => button("Show preview").click());
   expect(getUserMedia).toHaveBeenCalledWith({
-    video: { deviceId: { exact: "capture-card" } },
+    video: {
+      deviceId: { exact: "capture-card" },
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      frameRate: { ideal: 60 },
+    },
     audio: false,
   });
   await act(async () => button("Hide preview").click());
@@ -1176,4 +1187,71 @@ it("pairs and unpairs two Joy-Con adapters and switches between Combined and Ind
     expect.objectContaining({ method: "DELETE" }),
   );
   expect(container.querySelector('[aria-label="Paired Joy-Con input mode"]')).toBeNull();
+});
+
+it("syncs settings camera selection after requesting camera access and surfaces request errors", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string) => {
+      if (path === "/api/config") return Response.json({ debug_enabled: false });
+      return Response.json({}, { status: 404 });
+    }),
+  );
+  const stop = vi.fn();
+  const getUserMedia = vi
+    .fn()
+    .mockRejectedValueOnce(new DOMException("No camera", "NotFoundError"))
+    .mockResolvedValueOnce({ getTracks: () => [{ stop }] });
+  let granted = false;
+  Object.defineProperty(navigator, "permissions", {
+    configurable: true,
+    value: {
+      query: vi.fn(async () => ({ state: "prompt", onchange: null })),
+    },
+  });
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: {
+      getUserMedia: vi.fn(async (constraints: MediaStreamConstraints) => {
+        const stream = await getUserMedia(constraints);
+        granted = true;
+        return stream;
+      }),
+      enumerateDevices: vi.fn(async () =>
+        granted
+          ? [{ kind: "videoinput", deviceId: "usb-capture", label: "USB Video" }]
+          : [{ kind: "videoinput", deviceId: "", label: "" }],
+      ),
+    },
+  });
+
+  await act(async () => {
+    root.render(
+      <CaptureProvider>
+        <SettingsDialog />
+      </CaptureProvider>,
+    );
+  });
+
+  await act(async () => button("General Settings").click());
+  expect(button("Show preview").disabled).toBe(true);
+  expect(button("Request camera access").getAttribute("type")).toBe("button");
+
+  // A non-permission failure shows an alert without marking permission denied.
+  await act(async () => button("Request camera access").click());
+  expect(document.querySelector('[role="alert"]')?.textContent).toBe(
+    "No matching camera found.",
+  );
+  expect(button("Request camera access").disabled).toBe(false);
+
+  // Once camera access succeeds, the dropdown and preview update cleanly with no unsaved diff.
+  await act(async () => button("Request camera access").click());
+  expect(stop).toHaveBeenCalledOnce();
+  expect(button("Show preview").disabled).toBe(false);
+  expect(button("Save input settings").disabled).toBe(true);
+  expect(document.body.textContent).toContain("USB Video");
+
+  // Closing settings does not trigger the unsaved changes confirmation.
+  await act(async () => button("Close").click());
+  expect(document.body.textContent).not.toContain("Leave without saving?");
 });

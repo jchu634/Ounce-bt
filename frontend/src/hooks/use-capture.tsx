@@ -161,18 +161,21 @@ export function CaptureProvider({
     try {
       await Effect.runPromise(requestPermission);
       setPermission("granted");
+      await refreshCameras();
     } catch (cause: unknown) {
       const captureError = cause instanceof CameraError ? cause : null;
       setError(
         captureError ? describeError(captureError) : "Unable to access camera.",
       );
-      setPermission(
-        captureError?.reason === "unsupported" ? "unsupported" : "denied",
-      );
+      if (captureError?.reason === "unsupported") {
+        setPermission("unsupported");
+      } else if (captureError?.reason === "denied") {
+        setPermission("denied");
+      }
     } finally {
       setRequestingPermission(false);
     }
-  }, []);
+  }, [refreshCameras]);
 
   const selectInput = (deviceId: string) => {
     setSelectedCameraInputId(deviceId);
