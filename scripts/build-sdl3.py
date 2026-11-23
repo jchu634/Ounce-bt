@@ -203,6 +203,7 @@ def build_sdl3(work_dir: Path, output_dir: Path, *, force: bool = False) -> Path
         # graphics/audio/UI subsystems so builds do not depend on X11/Wayland dev headers.
         cmake_args += [
             "-DCMAKE_BUILD_TYPE=Release",
+            "-DSDL_UNIX_CONSOLE_BUILD=ON",
             "-DSDL_VIDEO=OFF",
             "-DSDL_AUDIO=OFF",
             "-DSDL_CAMERA=OFF",
