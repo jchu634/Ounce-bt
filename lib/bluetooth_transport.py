@@ -116,7 +116,7 @@ def _open_usb_device(matches: Callable[[usb1.USBDevice], bool], index: int):
 
 
 async def open_transport(spec: str):
-    if sys.platform != "win32" or not spec.startswith("usb:"):
+    if sys.platform not in ("win32", "linux") or not spec.startswith("usb:"):
         return await open_bumble_transport(spec)
     selector = _usb_selector(spec[4:])
     if selector is None:
