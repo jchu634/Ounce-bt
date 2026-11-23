@@ -15,10 +15,13 @@ def package_appimage(appimage: Path, version: str) -> Path:
     bundle_name = f"{name}-linux-{architecture}"
     output = appimage.parent / f"{name}-{version}-linux-{architecture}.zip"
     launcher = appimage.parent / "run-with-hci-caps.sh"
+    udev_script = appimage.parent / "setup-linux-udev.py"
     shutil.copy2(Path(__file__).resolve().with_name(launcher.name), launcher)
+    shutil.copy2(Path(__file__).resolve().with_name(udev_script.name), udev_script)
     # Keep the loose files executable when packaging on Linux.
     appimage.chmod(appimage.stat().st_mode | 0o111)
     launcher.chmod(0o755)
+    udev_script.chmod(0o755)
     with appimage.open("rb") as source:
         checksum = hashlib.file_digest(source, "sha256").hexdigest()
     checksum_file = appimage.with_name(f"{appimage.name}.sha256")
@@ -30,12 +33,16 @@ def package_appimage(appimage: Path, version: str) -> Path:
 Extract this ZIP, open a terminal in the extracted {bundle_name} folder,
 and run as your desktop user:
 
-chmod +x {appimage.name} run-with-hci-caps.sh
+chmod +x {appimage.name} run-with-hci-caps.sh setup-linux-udev.py
+./setup-linux-udev.py
 ./run-with-hci-caps.sh "$PWD/{appimage.name}" usb:0
+
+setup-linux-udev.py discovers connected USB Bluetooth adapters and installs
+/etc/udev/rules.d/70-ounce-bt.rules so the app has read/write USB permissions.
+You only need to run it once (or when adding a new adapter model).
 
 The launcher uses sudo setpriv (util-linux) for CAP_NET_RAW and CAP_NET_ADMIN.
 It keeps the application running under your desktop user and graphical session.
-The selected USB adapter also needs read/write device permissions.
 usb:0 selects the first Bluetooth USB adapter. To select a specific adapter,
 use its USB vendor/product ID instead, for example usb:2357:0604.
 
@@ -49,7 +56,7 @@ sha256sum -c {checksum_file.name}
     try:
         # AppImages are already compressed. Store them without recompression.
         with ZipFile(temporary, "w") as archive:
-            for path in (appimage, launcher, checksum_file):
+            for path in (appimage, launcher, udev_script, checksum_file):
                 entry = ZipInfo.from_file(path, f"{bundle_name}/{path.name}")
                 # Windows file modes cannot represent Unix executable permissions.
                 entry.create_system = 3

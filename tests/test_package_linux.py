@@ -28,6 +28,7 @@ def test_release_zip_keeps_version_out_of_bundled_filenames(
         assert set(archive.namelist()) == {
             f"{bundle_name}/{appimage.name}",
             f"{bundle_name}/run-with-hci-caps.sh",
+            f"{bundle_name}/setup-linux-udev.py",
             f"{bundle_name}/{checksum_name}",
             f"{bundle_name}/README.txt",
         }
@@ -36,14 +37,22 @@ def test_release_zip_keeps_version_out_of_bundled_filenames(
             f"{hashlib.sha256(contents).hexdigest()}  {appimage.name}\n"
         )
         instructions = archive.read(f"{bundle_name}/README.txt").decode()
+        assert "./setup-linux-udev.py" in instructions
         assert f'./run-with-hci-caps.sh "$PWD/{appimage.name}" usb:0' in instructions
         assert f"sha256sum -c {checksum_name}" in instructions
         assert version not in instructions
-        for filename in (appimage.name, "run-with-hci-caps.sh", checksum_name, "README.txt"):
+        for filename in (
+            appimage.name,
+            "run-with-hci-caps.sh",
+            "setup-linux-udev.py",
+            checksum_name,
+            "README.txt",
+        ):
             entry = archive.getinfo(f"{bundle_name}/{filename}")
             assert entry.create_system == 3
             expected_mode = (
-                0o100755 if filename in (appimage.name, "run-with-hci-caps.sh")
+                0o100755
+                if filename in (appimage.name, "run-with-hci-caps.sh", "setup-linux-udev.py")
                 else 0o100644
             )
             assert entry.external_attr >> 16 == expected_mode
