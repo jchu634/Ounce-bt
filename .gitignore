@@ -19,6 +19,7 @@ wheels/
 # Macros
 **/macros/*.json
 !**/macros/Press SL and SR.json
+**/macros/.grip-macro-initialized
 
 # Binaries
 *.bin
