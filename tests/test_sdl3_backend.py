@@ -198,6 +198,59 @@ def test_build_sdl3_verify_libusb_requires_expected_version(tmp_path):
     verify_libusb(fresh)
 
 
+def test_build_sdl3_linux_disables_unused_video_and_audio_subsystems(
+    tmp_path, monkeypatch
+):
+    script = Path(__file__).resolve().parents[1] / "scripts" / "build-sdl3.py"
+    ns = runpy.run_path(str(script))
+    build_sdl3 = ns["build_sdl3"]
+    version = ns["SDL3_VERSION"]
+
+    work_dir = tmp_path / "work"
+    output_dir = tmp_path / "out"
+    src_dir = work_dir / f"SDL3-{version}"
+    src_dir.mkdir(parents=True)
+    (src_dir / "CMakeLists.txt").write_text("# stub\n", encoding="utf-8")
+    archive = work_dir / f"SDL3-{version}.tar.gz"
+    archive.write_bytes(b"stub")
+
+    commands: list[list[str]] = []
+
+    def fake_run(cmd, check=False):
+        commands.append(list(cmd))
+        build_dir = work_dir / "cmake-build"
+        build_dir.mkdir(parents=True, exist_ok=True)
+        if len(commands) == 1:
+            (build_dir / "CMakeCache.txt").write_text(
+                "HAVE_HIDAPI_LIBUSB:INTERNAL=1\n", encoding="utf-8"
+            )
+        else:
+            (build_dir / "libSDL3.so.0.4.20").write_bytes(
+                b"ELF HIDAPI_SWITCH2 libusb-1.0"
+            )
+
+    monkeypatch.setattr(ns["sys"], "platform", "linux")
+    monkeypatch.setitem(build_sdl3.__globals__, "_download", lambda *a, **kw: archive)
+    monkeypatch.setitem(build_sdl3.__globals__, "_extract_tar", lambda *a, **kw: None)
+    monkeypatch.setattr(ns["subprocess"], "run", fake_run)
+
+    built = build_sdl3(work_dir, output_dir)
+    assert built == output_dir / "libSDL3.so.0"
+    configure_cmd = commands[0]
+    for flag in (
+        "-DSDL_VIDEO=OFF",
+        "-DSDL_AUDIO=OFF",
+        "-DSDL_CAMERA=OFF",
+        "-DSDL_GPU=OFF",
+        "-DSDL_RENDER=OFF",
+        "-DSDL_DIALOG=OFF",
+        "-DSDL_TRAY=OFF",
+        "-DSDL_HIDAPI=ON",
+        "-DSDL_HIDAPI_LIBUSB=ON",
+    ):
+        assert flag in configure_cmd
+
+
 def test_list_devices_defers_capability_probe_until_open_device():
     import ctypes
 
