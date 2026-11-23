@@ -518,7 +518,12 @@ it.each([
 
   await act(async () => button("Start capture input").click());
   expect(getUserMedia).toHaveBeenCalledWith({
-    video: { deviceId: { exact: "capture-card" } },
+    video: {
+      deviceId: { exact: "capture-card" },
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      frameRate: { ideal: 60 },
+    },
     audio: {
       ...(audioId ? { deviceId: { exact: audioId } } : {}),
       echoCancellation: { exact: false },
@@ -581,7 +586,12 @@ it("opens the settings camera preview without capturing audio", async () => {
   ));
   await act(async () => button("Show preview").click());
   expect(getUserMedia).toHaveBeenCalledWith({
-    video: { deviceId: { exact: "capture-card" } },
+    video: {
+      deviceId: { exact: "capture-card" },
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      frameRate: { ideal: 60 },
+    },
     audio: false,
   });
   await act(async () => button("Hide preview").click());

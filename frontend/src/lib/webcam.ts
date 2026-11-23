@@ -73,6 +73,13 @@ export const enumerateCameras = Effect.gen(function* () {
     })) satisfies ReadonlyArray<CameraDevice>;
 });
 
+export const captureVideoConstraints = (deviceId: string): MediaTrackConstraints => ({
+  ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+  width: { ideal: 1920 },
+  height: { ideal: 1080 },
+  frameRate: { ideal: 60 },
+});
+
 export const captureAudioConstraints = (deviceId: string): MediaTrackConstraints => ({
   ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
   echoCancellation: { exact: false },
@@ -89,7 +96,7 @@ export const acquireStream = (deviceId: string, audioDeviceId: string | false) =
     return yield* Effect.tryPromise({
       try: () =>
         md.getUserMedia({
-          video: deviceId ? { deviceId: { exact: deviceId } } : true,
+          video: captureVideoConstraints(deviceId),
           audio: audioDeviceId === false ? false : captureAudioConstraints(audioDeviceId),
         }),
       catch: (e) => toCameraError(e),
