@@ -133,6 +133,7 @@ def test_web_server_serves_startup_while_adapter_discovery_is_blocked(
         monkeypatch.setattr(application, "discover_winusb_adapters", discover)
         monkeypatch.setattr(application, "discover_linux_adapters", discover)
         monkeypatch.setattr(application, "application_dir", lambda: tmp_path)
+        monkeypatch.setattr("lib.config.config_path", lambda: tmp_path / "config.json")
         monkeypatch.setattr(application, "setup_logging", lambda _: None)
         frontend = tmp_path / "frontend" / "dist"
         frontend.mkdir(parents=True)

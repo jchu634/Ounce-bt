@@ -42,8 +42,10 @@ from lib.controller import ControllerVariant
 from lib.firmware import (
     CONFIG_NAME,
     FIRMWARE_NAME,
+    LINUX_SYSTEM_FIRMWARE_DIRS,
     missing_firmware,
     patch_address,
+    stage_linux_firmware,
 )
 from lib.input import NEUTRAL, apply_to_protocol, parse_rumble
 from lib.input import presets as presets_module
@@ -933,6 +935,19 @@ async def run_bluetooth(
         try:
             if patch_firmware:
                 stage_adapter_firmware(session, firmware_root, firmware_dir)
+            elif sys.platform == "linux" and firmware_dir is not None:
+                profile_address = (
+                    explicit_address
+                    if session.primary and explicit_address
+                    else profiles[session.profile_index].address
+                )
+                target_dir = firmware_dir / session.id
+                if stage_linux_firmware(
+                    (firmware_root, *LINUX_SYSTEM_FIRMWARE_DIRS),
+                    target_dir,
+                    profile_address,
+                ):
+                    session.firmware_dir = target_dir
             await run_adapter(
                 session,
                 config_store,
@@ -963,7 +978,7 @@ async def run_bluetooth(
     tasks = []
     firmware_workspace = (
         tempfile.TemporaryDirectory(prefix="ounce-bt-firmware-")
-        if patch_firmware
+        if patch_firmware or sys.platform == "linux"
         else nullcontext()
     )
     with firmware_workspace as tmp:

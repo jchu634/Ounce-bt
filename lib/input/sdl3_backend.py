@@ -244,7 +244,10 @@ class Sdl3Host:
             self._sdl = sdl
             sdl.SDL_SetHint(sdl.SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, b"1")
             sdl.SDL_SetHint(sdl.SDL_HINT_JOYSTICK_ENHANCED_REPORTS, b"1")
-            sdl.SDL_SetHint(b"SDL_JOYSTICK_HIDAPI_LIBUSB", b"1")
+            sdl.SDL_SetHint(
+                getattr(sdl, "SDL_HINT_HIDAPI_LIBUSB", b"SDL_HIDAPI_LIBUSB"),
+                b"1",
+            )
             if hasattr(sdl, "SDL_HINT_JOYSTICK_HIDAPI_SWITCH2"):
                 sdl.SDL_SetHint(sdl.SDL_HINT_JOYSTICK_HIDAPI_SWITCH2, b"1")
             subsystems = sdl.SDL_INIT_GAMEPAD | sdl.SDL_INIT_JOYSTICK

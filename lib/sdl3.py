@@ -33,6 +33,35 @@ def _is_packaged() -> bool:
     )
 
 
+_LINUX_SYSTEM_LIB_DIRS = (
+    Path("/usr/lib64"),
+    Path("/usr/lib"),
+    Path("/usr/lib/x86_64-linux-gnu"),
+    Path("/usr/lib/aarch64-linux-gnu"),
+)
+
+
+def _has_libusb_switch2_support(path: Path) -> bool:
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return False
+    return b"HIDAPI_SWITCH2" in data and b"libusb-1.0" in data
+
+
+def _resolve_system_linux_binary_dir() -> Path | None:
+    if sys.platform != "linux":
+        return None
+    for directory in _LINUX_SYSTEM_LIB_DIRS:
+        if not directory.is_dir():
+            continue
+        for name in ("libSDL3.so.0", "libSDL3.so"):
+            candidate = directory / name
+            if candidate.is_file() and _has_libusb_switch2_support(candidate):
+                return directory
+    return None
+
+
 def _resolve_binary_dir() -> Path | None:
     root = application_dir()
     for candidate in (root / "sdl3" / "bin", root / "build" / "sdl3" / "bin"):
@@ -73,6 +102,11 @@ def configure_sdl3_environment() -> None:
             raise RuntimeError(
                 f"Bundled libusb-enabled SDL3 binary is missing under {application_dir() / 'sdl3' / 'bin'}."
             )
+        elif (system_dir := _resolve_system_linux_binary_dir()) is not None:
+            os.environ["SDL_BINARY_PATH"] = str(system_dir)
+            os.environ.setdefault("SDL_DISABLE_METADATA", "1")
+            os.environ.setdefault("SDL_DOWNLOAD_BINARIES", "0")
+            os.environ.setdefault("SDL_FIND_BINARIES", "0")
 
     if sys.platform == "win32" and (bundled is None or not (bundled / "libusb-1.0.dll").is_file()):
         try:
