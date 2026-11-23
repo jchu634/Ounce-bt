@@ -9,7 +9,11 @@ import pytest
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from app.desktop import DesktopBridge, run_application
+from app.desktop import (
+    DesktopBridge,
+    _configure_linux_media_permissions,
+    run_application,
+)
 from app.input.manager import InputManager
 from app.server import build_app
 from lib.config import Config, ConfigStore
@@ -236,7 +240,11 @@ def test_window_close_requests_graceful_backend_shutdown(monkeypatch, platform):
             return self
 
     closed = Event()
-    window = SimpleNamespace(events=SimpleNamespace(closed=closed), destroy=Mock())
+    before_show = Event()
+    window = SimpleNamespace(
+        events=SimpleNamespace(closed=closed, before_show=before_show),
+        destroy=Mock(),
+    )
     monkeypatch.setattr(webview, "create_window", Mock(return_value=window))
     start = Mock(side_effect=lambda *args, **kwargs: closed.callback())
     monkeypatch.setattr(webview, "start", start)
@@ -269,9 +277,125 @@ def test_window_close_requests_graceful_backend_shutdown(monkeypatch, platform):
 
         assert QGuiApplication.applicationName() == "Ounce-bt"
         assert QGuiApplication.desktopFileName() == "ounce-bt"
+        assert callable(before_show.callback)
     else:
         assert "gui" not in start.call_args.kwargs
         assert "icon" not in start.call_args.kwargs
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Qt WebEngine is Linux-only")
+def test_linux_media_permissions_grant_local_origin_and_deny_external():
+    from PySide6 import QtCore, QtWebEngineCore
+
+    QWebEnginePage = QtWebEngineCore.QWebEnginePage
+    QWebEnginePermission = QtWebEngineCore.QWebEnginePermission
+
+    class Signal:
+        def __init__(self):
+            self.slots = []
+
+        def connect(self, slot):
+            self.slots.append(slot)
+
+        def disconnect(self, slot):
+            self.slots.remove(slot)
+
+    class FakePermission:
+        def __init__(self, origin, ptype, valid=True):
+            self._origin = QtCore.QUrl(origin)
+            self._ptype = ptype
+            self._valid = valid
+            self.granted = False
+            self.denied = False
+
+        def isValid(self):
+            return self._valid
+
+        def origin(self):
+            return self._origin
+
+        def permissionType(self):
+            return self._ptype
+
+        def grant(self):
+            self.granted = True
+
+        def deny(self):
+            self.denied = True
+
+    queried = []
+
+    class FakeProfile:
+        def queryPermission(self, origin, ptype):
+            perm = FakePermission(origin.toString(), ptype)
+            queried.append(perm)
+            return perm
+
+    broken = Mock()
+    feature_signal = Signal()
+    feature_signal.connect(broken)
+    permission_signal = Signal()
+    page = SimpleNamespace(
+        featurePermissionRequested=feature_signal,
+        permissionRequested=permission_signal,
+        onFeaturePermissionRequested=broken,
+        profile=lambda: None,
+    )
+    profile = FakeProfile()
+    window = SimpleNamespace(
+        native=SimpleNamespace(webview=SimpleNamespace(page=lambda: page), profile=profile)
+    )
+
+    _configure_linux_media_permissions(window, ("http", "127.0.0.1:9127"))
+
+    assert broken not in feature_signal.slots
+    assert [(p.origin().toString(), p.permissionType(), p.granted) for p in queried] == [
+        ("http://127.0.0.1:9127", QWebEnginePermission.PermissionType.MediaVideoCapture, True),
+        ("http://127.0.0.1:9127", QWebEnginePermission.PermissionType.MediaAudioCapture, True),
+    ]
+    assert len(permission_signal.slots) == 1
+    handler = permission_signal.slots[0]
+
+    local_cam = FakePermission(
+        "http://127.0.0.1:9127/", QWebEnginePermission.PermissionType.MediaVideoCapture
+    )
+    local_geo = FakePermission(
+        "http://127.0.0.1:9127/", QWebEnginePermission.PermissionType.Geolocation
+    )
+    external_cam = FakePermission(
+        "https://example.com/", QWebEnginePermission.PermissionType.MediaVideoCapture
+    )
+    handler(local_cam)
+    handler(local_geo)
+    handler(external_cam)
+    assert local_cam.granted and not local_cam.denied
+    assert local_geo.denied and not local_geo.granted
+    assert external_cam.denied and not external_cam.granted
+
+    # Fallback path (without permissionRequested) uses QWebEnginePage.PermissionPolicy enum.
+    calls = []
+    legacy_signal = Signal()
+    legacy_signal.connect(broken)
+    legacy_page = SimpleNamespace(
+        featurePermissionRequested=legacy_signal,
+        onFeaturePermissionRequested=broken,
+        profile=lambda: None,
+        setFeaturePermission=lambda url, feature, policy: calls.append((url, feature, policy)),
+    )
+    legacy_window = SimpleNamespace(
+        native=SimpleNamespace(webview=SimpleNamespace(page=lambda: legacy_page), profile=None)
+    )
+    _configure_linux_media_permissions(legacy_window, ("http", "127.0.0.1:9127"))
+    assert broken not in legacy_signal.slots
+    legacy_handler = legacy_signal.slots[0]
+    legacy_handler(
+        QtCore.QUrl("http://127.0.0.1:9127/"), QWebEnginePage.Feature.MediaVideoCapture
+    )
+    legacy_handler(
+        QtCore.QUrl("https://example.com/"), QWebEnginePage.Feature.MediaVideoCapture
+    )
+    assert calls[0][2] == QWebEnginePage.PermissionPolicy.PermissionGrantedByUser
+    assert calls[1][2] == QWebEnginePage.PermissionPolicy.PermissionDeniedByUser
 
 
 def test_backend_failure_prevents_window_open(monkeypatch):

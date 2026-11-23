@@ -76,6 +76,88 @@ class WindowsDesktopBridge(DesktopBridge):
         self._audio.stop(session)
 
 
+def _configure_linux_media_permissions(window, expected_origin):
+    """Grant camera and microphone access for the local app origin in Qt WebEngine.
+
+    pywebview's Qt backend passes raw ints to ``QWebEnginePage.setFeaturePermission``
+    (which raises ``TypeError`` in PySide6) and relies on ``--use-fake-ui-for-media-stream``
+    without updating Qt's permission store, leaving ``navigator.permissions.query``
+    stuck in ``"prompt"``.
+    """
+    native = getattr(window, "native", None)
+    webview_widget = getattr(native, "webview", None)
+    if webview_widget is None:
+        return
+    page = webview_widget.page()
+    if page is None:
+        return
+
+    from PySide6 import QtCore, QtWebEngineCore
+
+    QWebEnginePage = QtWebEngineCore.QWebEnginePage
+
+    def is_app_origin(url):
+        parsed = urlsplit(url.toString())
+        return (parsed.scheme, parsed.netloc) == expected_origin
+
+    broken_handler = getattr(page, "onFeaturePermissionRequested", None)
+    if broken_handler is not None:
+        try:
+            page.featurePermissionRequested.disconnect(broken_handler)
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+
+    permission_cls = getattr(QtWebEngineCore, "QWebEnginePermission", None)
+    profile = getattr(native, "profile", None) or page.profile()
+    if permission_cls is not None:
+        media_permission_types = (
+            permission_cls.PermissionType.MediaVideoCapture,
+            permission_cls.PermissionType.MediaAudioCapture,
+            permission_cls.PermissionType.MediaAudioVideoCapture,
+        )
+        if profile is not None and hasattr(profile, "queryPermission"):
+            origin_url = QtCore.QUrl(f"{expected_origin[0]}://{expected_origin[1]}")
+            for permission_type in (
+                permission_cls.PermissionType.MediaVideoCapture,
+                permission_cls.PermissionType.MediaAudioCapture,
+            ):
+                permission = profile.queryPermission(origin_url, permission_type)
+                if permission.isValid():
+                    permission.grant()
+
+        if hasattr(page, "permissionRequested"):
+
+            def on_permission_requested(permission):
+                if (
+                    is_app_origin(permission.origin())
+                    and permission.permissionType() in media_permission_types
+                ):
+                    permission.grant()
+                else:
+                    permission.deny()
+
+            page._ounce_permission_handler = on_permission_requested
+            page.permissionRequested.connect(on_permission_requested)
+            return
+
+    media_features = (
+        QWebEnginePage.Feature.MediaAudioCapture,
+        QWebEnginePage.Feature.MediaVideoCapture,
+        QWebEnginePage.Feature.MediaAudioVideoCapture,
+    )
+
+    def on_feature_permission_requested(url, feature):
+        policy = (
+            QWebEnginePage.PermissionPolicy.PermissionGrantedByUser
+            if is_app_origin(url) and feature in media_features
+            else QWebEnginePage.PermissionPolicy.PermissionDeniedByUser
+        )
+        page.setFeaturePermission(url, feature, policy)
+
+    page._ounce_feature_permission_handler = on_feature_permission_requested
+    page.featurePermissionRequested.connect(on_feature_permission_requested)
+
+
 def run_application(config, args, backend):
     restart_requested = threading.Event()
 
@@ -99,9 +181,10 @@ def run_application(config, args, backend):
     # Cache busting nonce to prevent fetching a stale build
     launch_nonce = secrets.token_hex(16)
     host = f"[{config.web_host}]" if ":" in config.web_host else config.web_host
+    expected_origin = ("http", f"{host}:{config.web_port}")
     url = f"http://{host}:{config.web_port}/?launch={launch_nonce}"
     bridge_class = WindowsDesktopBridge if sys.platform == "win32" else DesktopBridge
-    bridge = bridge_class(token, ("http", f"{host}:{config.web_port}"))
+    bridge = bridge_class(token, expected_origin)
     ready = threading.Event()
     finished = threading.Event()
     closed = threading.Event()
@@ -168,6 +251,10 @@ def run_application(config, args, backend):
 
             QGuiApplication.setApplicationName("Ounce-bt")
             QGuiApplication.setDesktopFileName("ounce-bt")
+            if hasattr(window.events, "before_show"):
+                window.events.before_show += (
+                    lambda: _configure_linux_media_permissions(window, expected_origin)
+                )
             options["gui"] = "qt"
             options["icon"] = str(application_dir() / "frontend/public/icon-512.png")
         webview.start(monitor_backend, private_mode=False, **options)

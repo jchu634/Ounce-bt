@@ -54,7 +54,7 @@ function CaptureDeviceSettingsContent({
   const [previewError, setPreviewError] = useState<string | null>(null);
   const previewRequestedRef = useRef(false);
   const previewStreamRef = useRef<MediaStream | null>(null);
-  const { permission, requestAccess, requestingPermission } =
+  const { error, permission, requestAccess, requestingPermission } =
     useCaptureControls();
   const { cameras } = useCaptureInput();
   const selectedInputLabel = cameras.find(
@@ -166,6 +166,7 @@ function CaptureDeviceSettingsContent({
         </Button>
         {permission !== "granted" && permission !== "unsupported" && (
           <Button
+            type="button"
             variant="outline"
             disabled={disabled || requestingPermission}
             onClick={() => void requestAccess()}
@@ -176,6 +177,12 @@ function CaptureDeviceSettingsContent({
           </Button>
         )}
       </div>
+
+      {!disabled && error && (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      )}
 
       <div className="aspect-video w-full max-w-sm overflow-hidden rounded-lg border border-border bg-black">
         {!disabled && visible && previewStream ? (

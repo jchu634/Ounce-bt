@@ -66,7 +66,7 @@ export const enumerateCameras = Effect.gen(function* () {
     catch: (e) => toCameraError(e),
   });
   return devices
-    .filter((d) => d.kind === "videoinput")
+    .filter((d) => d.kind === "videoinput" && d.deviceId)
     .map((d, i) => ({
       deviceId: d.deviceId,
       label: d.label || `Camera ${i + 1}`,
