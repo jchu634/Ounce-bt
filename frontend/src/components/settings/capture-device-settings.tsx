@@ -121,17 +121,6 @@ function CaptureDeviceSettingsContent({
 
   return (
     <div className="flex flex-col items-start gap-3">
-      {permission !== "granted" && permission !== "unsupported" && (
-        <Button
-          variant="outline"
-          disabled={disabled || requestingPermission}
-          onClick={() => void requestAccess()}
-        >
-          {requestingPermission
-            ? "Requesting camera access..."
-            : "Request camera access"}
-        </Button>
-      )}
       <div className="flex w-full flex-wrap items-center gap-2">
         <Select
           disabled={disabled}
@@ -175,6 +164,17 @@ function CaptureDeviceSettingsContent({
           )}
           {visible ? "Hide preview" : "Show preview"}
         </Button>
+        {permission !== "granted" && permission !== "unsupported" && (
+          <Button
+            variant="outline"
+            disabled={disabled || requestingPermission}
+            onClick={() => void requestAccess()}
+          >
+            {requestingPermission
+              ? "Requesting camera access..."
+              : "Request camera access"}
+          </Button>
+        )}
       </div>
 
       <div className="aspect-video w-full max-w-sm overflow-hidden rounded-lg border border-border bg-black">
