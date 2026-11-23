@@ -16,7 +16,7 @@ unzip Ounce-bt-*-linux-x86_64.zip
 cd Ounce-bt-linux-x86_64
 chmod +x Ounce-bt-x86_64.AppImage run-with-hci-caps.sh setup-linux-udev.py
 ./setup-linux-udev.py
-./run-with-hci-caps.sh "$PWD/Ounce-bt-x86_64.AppImage" usb:0
+./run-with-hci-caps.sh "$PWD/Ounce-bt-x86_64.AppImage"
 ```
 
 `usb:0` selects the first adapter in Bumble's USB enumeration.\
