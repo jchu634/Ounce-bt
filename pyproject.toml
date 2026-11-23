@@ -1,6 +1,6 @@
 [project]
 name = "ounce-bt"
-version = "0.3.1"
+version = "0.3.2"
 description = "Crossplatform control of your Nintendo Switch"
 readme = "README.md"
 requires-python = ">=3.12"
