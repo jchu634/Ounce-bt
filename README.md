@@ -10,6 +10,9 @@
   <img src="./assets/Appearance.png" alt="Controller Appearance" width="33%" />
 </p>
 
+## Hardware Requirements
+- A USB adapter with a RTL8761B family chipset (RTL8761B, RTL8761BU, RTL8761BUV, RTL8761BUE)
+
 ## Setup Instructions
 
 ### Windows
